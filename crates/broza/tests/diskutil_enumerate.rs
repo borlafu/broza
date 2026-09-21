@@ -7,14 +7,18 @@
 //!
 //! The snapshot is the `disks[]` of `docs/cli-spec.md` §4.2 as JSON: it is the
 //! contract, so a change in it has to be reviewed as a change in the contract.
+//!
+//! Only the `test-support` feature exposes `broza::testing`; without it this file
+//! compiles to nothing.
+#![cfg(feature = "test-support")]
 
 use std::sync::Arc;
 
 use broza::BrozaError;
 use broza::adapters::diskutil::{DISKUTIL, DiskutilEnumerator};
 use broza::model::{FsKind, VolumeRole};
-use broza::ports::DiskEnumerator;
-use broza::testing::{FakeRunner, FakeSpace};
+use broza::ports::{DiskEnumerator, EnumerationReport, FileOps, ProcessRunner, SpaceProvider};
+use broza::testing::{FakeFileOps, FakeRunner, FakeSpace};
 
 /// Fixture directory of the macOS major this test replays.
 const MACOS_MAJOR: &str = "macos26";
@@ -44,13 +48,21 @@ fn recorded_runner() -> FakeRunner {
     runner
 }
 
-fn enumerator(runner: FakeRunner) -> DiskutilEnumerator<Arc<FakeRunner>> {
+fn enumerator(runner: FakeRunner) -> DiskutilEnumerator {
     let space = FakeSpace::new().with_purgeable(DATA_MOUNT_POINT, PURGEABLE_BYTES);
-    DiskutilEnumerator::new(Arc::new(runner), Arc::new(space))
+    DiskutilEnumerator::new(
+        Arc::new(runner) as Arc<dyn ProcessRunner>,
+        Arc::new(space) as Arc<dyn SpaceProvider>,
+        Arc::new(FakeFileOps::new()) as Arc<dyn FileOps>,
+    )
+}
+
+fn recorded_report() -> EnumerationReport {
+    enumerator(recorded_runner()).enumerate().unwrap_or_else(|error| panic!("{error}"))
 }
 
 fn recorded_disks() -> Vec<broza::model::Disk> {
-    enumerator(recorded_runner()).enumerate().unwrap_or_else(|error| panic!("{error}"))
+    recorded_report().disks
 }
 
 #[test]
@@ -160,8 +172,44 @@ fn a_mounted_disk_image_reports_the_space_diskutil_info_measured() {
 
     assert_eq!(image.used_bytes + image.free_bytes, image.size_bytes);
     assert_eq!(image.volumes.len(), 1);
-    assert_eq!(image.volumes[0].role, VolumeRole::User);
     assert!(image.volumes[0].mount_point.is_some());
+}
+
+#[test]
+fn a_read_only_installer_image_is_never_writable_however_it_is_mounted() {
+    let disks = recorded_disks();
+
+    let images: Vec<&broza::model::Volume> = disks[1..]
+        .iter()
+        .flat_map(|disk| &disk.containers)
+        .flat_map(|container| &container.volumes)
+        .collect();
+
+    assert!(!images.is_empty(), "the recording has mounted disk images");
+    for volume in images {
+        assert_eq!(volume.role, VolumeRole::Unknown, "{}: WritableVolume is false", volume.id);
+        assert!(!volume.writable_by_broza, "{}", volume.id);
+    }
+}
+
+#[test]
+fn every_writable_volume_of_the_recorded_machine_is_the_data_volume_and_nothing_else() {
+    let disks = recorded_disks();
+
+    let writable: Vec<&str> = disks
+        .iter()
+        .flat_map(|disk| &disk.containers)
+        .flat_map(|container| &container.volumes)
+        .filter(|volume| volume.writable_by_broza)
+        .map(|volume| volume.id.as_str())
+        .collect();
+
+    assert_eq!(writable, vec!["disk3s5"]);
+}
+
+#[test]
+fn a_recording_broza_understands_end_to_end_produces_no_warnings() {
+    assert!(recorded_report().warnings.is_empty());
 }
 
 #[test]

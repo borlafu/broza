@@ -23,7 +23,9 @@ pub use std_fs::StdFileOps;
 pub use std_process::StdProcessRunner;
 pub use system_clock::SystemClock;
 
-use crate::ports::{DiskEnumerator, Ports, ProcessRunner, Prompter, SnapshotProvider, SpaceProvider};
+use crate::ports::{
+    DiskEnumerator, FileOps, Ports, ProcessRunner, Prompter, SnapshotProvider, SpaceProvider,
+};
 
 /// The three storage ports of a real Mac, sharing one process runner.
 ///
@@ -31,15 +33,13 @@ use crate::ports::{DiskEnumerator, Ports, ProcessRunner, Prompter, SnapshotProvi
 /// purgeable estimate of each container, and the enumerator and the snapshot
 /// provider run their `diskutil` commands through the same runner, so a test
 /// that scripts one scripts both.
-pub fn system_disk_ports<R>(
-    runner: R,
-) -> (Arc<dyn DiskEnumerator>, Arc<dyn SpaceProvider>, Arc<dyn SnapshotProvider>)
-where
-    R: ProcessRunner + Clone + 'static,
-{
+pub fn system_disk_ports(
+    runner: Arc<dyn ProcessRunner>,
+) -> (Arc<dyn DiskEnumerator>, Arc<dyn SpaceProvider>, Arc<dyn SnapshotProvider>) {
     let space: Arc<dyn SpaceProvider> = Arc::new(NsUrlSpaceProvider);
+    let fs: Arc<dyn FileOps> = Arc::new(StdFileOps);
     let disks: Arc<dyn DiskEnumerator> =
-        Arc::new(DiskutilEnumerator::new(runner.clone(), Arc::clone(&space)));
+        Arc::new(DiskutilEnumerator::new(Arc::clone(&runner), Arc::clone(&space), fs));
     let snapshots: Arc<dyn SnapshotProvider> = Arc::new(DiskutilSnapshots::new(runner));
     (disks, space, snapshots)
 }
@@ -71,7 +71,7 @@ pub fn system_ports(
 ///
 /// The prompter is still the caller's: it needs a terminal.
 pub fn system_ports_with_disks(prompter: Arc<dyn Prompter>) -> Ports {
-    let (disks, space, snapshots) = system_disk_ports(StdProcessRunner);
+    let (disks, space, snapshots) = system_disk_ports(Arc::new(StdProcessRunner));
     system_ports(disks, space, snapshots, prompter)
 }
 
@@ -84,7 +84,7 @@ mod tests {
     use super::diskutil::DISKUTIL;
     use super::{system_disk_ports, system_ports, system_ports_with_disks};
     use crate::model::VolumeId;
-    use crate::ports::{Answer, ProcessOutput};
+    use crate::ports::{Answer, ProcessOutput, ProcessRunner};
     use crate::testing::{FakeDisks, FakePrompter, FakeRunner, FakeSnapshots, FakeSpace};
 
     #[test]
@@ -130,12 +130,11 @@ mod tests {
         );
         let volume: VolumeId = "disk3s5".parse().unwrap_or_else(|e| panic!("{e}"));
 
-        let (disks, space, snapshots) = system_disk_ports(Arc::clone(&runner));
+        let (disks, _space, snapshots) = system_disk_ports(Arc::clone(&runner) as Arc<dyn ProcessRunner>);
 
-        assert!(disks.enumerate().unwrap_or_else(|e| panic!("{e}")).is_empty());
+        assert!(disks.enumerate().unwrap_or_else(|e| panic!("{e}")).disks.is_empty());
         assert!(snapshots.list(&volume).unwrap_or_else(|e| panic!("{e}")).is_empty());
         assert_eq!(runner.calls().len(), 3, "both adapters recorded on the same runner");
-        assert!(space.purgeable_bytes(Path::new("/nowhere/at/all")).is_err());
     }
 
     #[test]

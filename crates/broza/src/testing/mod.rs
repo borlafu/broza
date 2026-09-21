@@ -119,7 +119,7 @@ mod tests {
     fn a_fresh_bundle_knows_no_disks_and_no_purgeable_space() {
         let (ports, _handles) = fake_ports();
 
-        assert!(ports.disks.enumerate().unwrap_or_else(|e| panic!("{e}")).is_empty());
+        assert!(ports.disks.enumerate().unwrap_or_else(|e| panic!("{e}")).disks.is_empty());
         assert_eq!(ports.space.purgeable_bytes(Path::new("/")).unwrap_or_else(|e| panic!("{e}")), 0);
     }
 }

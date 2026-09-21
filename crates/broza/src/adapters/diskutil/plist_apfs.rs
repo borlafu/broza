@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 
-use super::parse::{optional_text, parse_plist};
+use super::parse::{lenient_u64, optional_text, parse_plist};
 use crate::BrozaError;
 
 /// Command this module parses, for error messages.
@@ -30,8 +30,10 @@ pub struct ApfsContainer {
     /// BSD identifier of the synthesized container device (`disk3`).
     pub container_reference: String,
     /// Capacity of the container in bytes.
+    #[serde(deserialize_with = "lenient_u64")]
     pub capacity_ceiling: u64,
     /// Bytes still free in the container.
+    #[serde(deserialize_with = "lenient_u64")]
     pub capacity_free: u64,
     /// Partitions the container is built from.
     pub physical_stores: Vec<ApfsPhysicalStore>,
@@ -57,6 +59,7 @@ pub struct ApfsPhysicalStore {
     /// BSD identifier of the partition (`disk0s2`).
     pub device_identifier: String,
     /// Capacity of the partition in bytes.
+    #[serde(deserialize_with = "lenient_u64")]
     pub size: u64,
 }
 
@@ -75,6 +78,7 @@ pub struct ApfsVolume {
     /// Roles macOS assigned to the volume, verbatim (`System`, `Data`, `VM`, …).
     pub roles: Vec<String>,
     /// Bytes this volume occupies in the shared container space.
+    #[serde(deserialize_with = "lenient_u64")]
     pub capacity_in_use: u64,
     /// `true` when the volume is encrypted.
     pub encryption: bool,

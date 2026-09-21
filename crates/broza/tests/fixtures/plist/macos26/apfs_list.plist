@@ -10,7 +10,7 @@
 			<key>CapacityCeiling</key>
 			<integer>524288000</integer>
 			<key>CapacityFree</key>
-			<integer>504475648</integer>
+			<integer>504479744</integer>
 			<key>ContainerReference</key>
 			<string>disk1</string>
 			<key>DesignatedPhysicalStore</key>
@@ -84,7 +84,7 @@
 					<key>APFSVolumeUUID</key>
 					<string>00000005-1111-4222-8333-000000000005</string>
 					<key>CapacityInUse</key>
-					<integer>2646016</integer>
+					<integer>2641920</integer>
 					<key>CapacityQuota</key>
 					<integer>0</integer>
 					<key>CapacityReserve</key>
@@ -218,7 +218,7 @@
 			<key>CapacityCeiling</key>
 			<integer>494384795648</integer>
 			<key>CapacityFree</key>
-			<integer>42088288256</integer>
+			<integer>38527500288</integer>
 			<key>ContainerReference</key>
 			<string>disk3</string>
 			<key>DesignatedPhysicalStore</key>
@@ -318,7 +318,7 @@
 					<key>APFSVolumeUUID</key>
 					<string>00000010-1111-4222-8333-000000000010</string>
 					<key>CapacityInUse</key>
-					<integer>800051200</integer>
+					<integer>801103872</integer>
 					<key>CapacityQuota</key>
 					<integer>0</integer>
 					<key>CapacityReserve</key>
@@ -344,7 +344,7 @@
 					<key>APFSVolumeUUID</key>
 					<string>00000011-1111-4222-8333-000000000011</string>
 					<key>CapacityInUse</key>
-					<integer>407183564800</integer>
+					<integer>410743300096</integer>
 					<key>CapacityQuota</key>
 					<integer>0</integer>
 					<key>CapacityReserve</key>

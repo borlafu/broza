@@ -9,24 +9,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::BrozaError;
-use crate::model::{Disk, Snapshot, VolumeId};
-use crate::ports::{DiskEnumerator, SnapshotProvider, SpaceProvider};
+use crate::model::{Disk, Snapshot, VolumeId, Warning};
+use crate::ports::{DiskEnumerator, EnumerationReport, SnapshotProvider, SpaceProvider};
 use crate::testing::sync::lock;
 
 /// Purgeable bytes reported for a mount point nobody configured.
 const UNKNOWN_PURGEABLE_BYTES: u64 = 0;
 
-/// A [`DiskEnumerator`] returning a configured list of disks.
+/// A [`DiskEnumerator`] returning a configured report.
 #[derive(Debug, Default)]
 pub struct FakeDisks {
-    /// Disks handed to every caller.
-    disks: Mutex<Vec<Disk>>,
+    /// Report handed to every caller.
+    report: Mutex<EnumerationReport>,
 }
 
 impl FakeDisks {
-    /// An enumerator that reports `disks`.
+    /// An enumerator that reports `disks` and no warnings.
     pub fn new(disks: Vec<Disk>) -> Self {
-        Self { disks: Mutex::new(disks) }
+        Self { report: Mutex::new(EnumerationReport { disks, warnings: Vec::new() }) }
     }
 
     /// An enumerator that reports nothing.
@@ -34,15 +34,20 @@ impl FakeDisks {
         Self::default()
     }
 
-    /// Replace the disks reported from now on.
+    /// Replace the disks reported from now on, keeping the warnings.
     pub fn set_disks(&self, disks: Vec<Disk>) {
-        *lock(&self.disks) = disks;
+        lock(&self.report).disks = disks;
+    }
+
+    /// Replace the warnings reported from now on, keeping the disks.
+    pub fn set_warnings(&self, warnings: Vec<Warning>) {
+        lock(&self.report).warnings = warnings;
     }
 }
 
 impl DiskEnumerator for FakeDisks {
-    fn enumerate(&self) -> Result<Vec<Disk>, BrozaError> {
-        Ok(lock(&self.disks).clone())
+    fn enumerate(&self) -> Result<EnumerationReport, BrozaError> {
+        Ok(lock(&self.report).clone())
     }
 }
 
@@ -118,7 +123,7 @@ mod tests {
     use std::path::Path;
 
     use super::{FakeDisks, FakeSnapshots, FakeSpace, UNKNOWN_PURGEABLE_BYTES};
-    use crate::model::{Disk, Snapshot, VolumeId};
+    use crate::model::{Disk, Snapshot, VolumeId, Warning};
     use crate::ports::{DiskEnumerator, SnapshotProvider, SpaceProvider};
 
     fn volume_id(id: &str) -> VolumeId {
@@ -137,19 +142,25 @@ mod tests {
 
     #[test]
     fn the_enumerator_returns_the_disks_it_was_given() {
-        let disks = FakeDisks::new(vec![disk()]).enumerate().unwrap_or_else(|e| panic!("{e}"));
+        let report = FakeDisks::new(vec![disk()]).enumerate().unwrap_or_else(|e| panic!("{e}"));
 
-        assert_eq!(disks, vec![disk()]);
-        assert!(FakeDisks::empty().enumerate().unwrap_or_else(|e| panic!("{e}")).is_empty());
+        assert_eq!(report.disks, vec![disk()]);
+        assert!(report.warnings.is_empty());
+        let empty = FakeDisks::empty().enumerate().unwrap_or_else(|e| panic!("{e}"));
+        assert!(empty.disks.is_empty());
     }
 
     #[test]
     fn the_enumerator_can_be_reconfigured_through_a_shared_reference() {
         let fake = FakeDisks::empty();
+        let warning = Warning { code: "x".to_owned(), message: "y".to_owned(), path: None };
 
         fake.set_disks(vec![disk()]);
+        fake.set_warnings(vec![warning.clone()]);
 
-        assert_eq!(fake.enumerate().unwrap_or_else(|e| panic!("{e}")).len(), 1);
+        let report = fake.enumerate().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(report.disks.len(), 1);
+        assert_eq!(report.warnings, vec![warning]);
     }
 
     #[test]

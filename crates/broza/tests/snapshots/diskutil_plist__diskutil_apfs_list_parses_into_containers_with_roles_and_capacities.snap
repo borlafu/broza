@@ -10,7 +10,7 @@ ApfsList {
             ),
             container_reference: "disk1",
             capacity_ceiling: 524288000,
-            capacity_free: 504475648,
+            capacity_free: 504479744,
             physical_stores: [
                 ApfsPhysicalStore {
                     device_identifier: "disk0s1",
@@ -61,7 +61,7 @@ ApfsList {
                     roles: [
                         "Hardware",
                     ],
-                    capacity_in_use: 2646016,
+                    capacity_in_use: 2641920,
                     encryption: false,
                     file_vault: false,
                     locked: false,
@@ -138,7 +138,7 @@ ApfsList {
             ),
             container_reference: "disk3",
             capacity_ceiling: 494384795648,
-            capacity_free: 42088288256,
+            capacity_free: 38527500288,
             physical_stores: [
                 ApfsPhysicalStore {
                     device_identifier: "disk0s2",
@@ -205,7 +205,7 @@ ApfsList {
                     roles: [
                         "Update",
                     ],
-                    capacity_in_use: 800051200,
+                    capacity_in_use: 801103872,
                     encryption: false,
                     file_vault: false,
                     locked: false,
@@ -221,7 +221,7 @@ ApfsList {
                     roles: [
                         "Data",
                     ],
-                    capacity_in_use: 407183564800,
+                    capacity_in_use: 410743300096,
                     encryption: true,
                     file_vault: true,
                     locked: false,

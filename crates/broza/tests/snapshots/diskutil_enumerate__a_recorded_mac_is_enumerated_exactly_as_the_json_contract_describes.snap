@@ -13,8 +13,8 @@ expression: recorded_disks()
         "id": "disk1",
         "type": "apfs",
         "size_bytes": 524288000,
-        "used_bytes": 19812352,
-        "free_bytes": 504475648,
+        "used_bytes": 19808256,
+        "free_bytes": 504479744,
         "purgeable_bytes": 0,
         "volumes": [
           {
@@ -24,7 +24,7 @@ expression: recorded_disks()
             "mount_point": "/System/Volumes/iSCPreboot",
             "used_bytes": 5877760,
             "writable_by_broza": false,
-            "purpose": "Boot loader data that macOS needs before the system volume is available."
+            "purpose": "Boot loader data for the internal storage controller, managed entirely by macOS."
           },
           {
             "id": "disk1s2",
@@ -33,16 +33,16 @@ expression: recorded_disks()
             "mount_point": "/System/Volumes/xarts",
             "used_bytes": 6311936,
             "writable_by_broza": false,
-            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+            "purpose": "Secure counters used by the Secure Enclave to detect rollback attacks."
           },
           {
             "id": "disk1s3",
             "name": "Hardware",
             "role": "unknown",
             "mount_point": "/System/Volumes/Hardware",
-            "used_bytes": 2646016,
+            "used_bytes": 2641920,
             "writable_by_broza": false,
-            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+            "purpose": "Hardware-specific data written by the firmware of this Mac."
           },
           {
             "id": "disk1s4",
@@ -77,7 +77,7 @@ expression: recorded_disks()
             "role": "unknown",
             "used_bytes": 2461696,
             "writable_by_broza": false,
-            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+            "purpose": "Staging area for macOS updates, written and cleared by the installer."
           }
         ]
       },
@@ -85,8 +85,8 @@ expression: recorded_disks()
         "id": "disk3",
         "type": "apfs",
         "size_bytes": 494384795648,
-        "used_bytes": 452296507392,
-        "free_bytes": 42088288256,
+        "used_bytes": 455857295360,
+        "free_bytes": 38527500288,
         "purgeable_bytes": 84140000000,
         "volumes": [
           {
@@ -120,16 +120,16 @@ expression: recorded_disks()
             "name": "Update",
             "role": "unknown",
             "mount_point": "/System/Volumes/Update",
-            "used_bytes": 800051200,
+            "used_bytes": 801103872,
             "writable_by_broza": false,
-            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+            "purpose": "Staging area for macOS updates, written and cleared by the installer."
           },
           {
             "id": "disk3s5",
             "name": "Data",
             "role": "data",
             "mount_point": "/System/Volumes/Data",
-            "used_bytes": 407183564800,
+            "used_bytes": 410743300096,
             "writable_by_broza": true,
             "purpose": "The writable volume that holds your home folder, your applications and your settings."
           },
@@ -163,11 +163,11 @@ expression: recorded_disks()
           {
             "id": "disk4s1",
             "name": "Kiro CLI",
-            "role": "user",
+            "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI",
             "used_bytes": 1875832832,
-            "writable_by_broza": true,
-            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
           }
         ]
       }
@@ -190,11 +190,11 @@ expression: recorded_disks()
           {
             "id": "disk5s2",
             "name": "Docker",
-            "role": "user",
-            "mount_point": "/private/var/folders/aa/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
+            "role": "unknown",
+            "mount_point": "/private/var/folders/dd/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
             "used_bytes": 2304745472,
-            "writable_by_broza": true,
-            "purpose": "Docker is a volume of your own, outside the macOS system group."
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
           }
         ]
       }
@@ -217,11 +217,11 @@ expression: recorded_disks()
           {
             "id": "disk6s1",
             "name": "Kiro CLI",
-            "role": "user",
+            "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI 1",
             "used_bytes": 1257394176,
-            "writable_by_broza": true,
-            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
           }
         ]
       }
@@ -244,11 +244,11 @@ expression: recorded_disks()
           {
             "id": "disk7s1",
             "name": "Kiro CLI",
-            "role": "user",
+            "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI 2",
             "used_bytes": 1119182848,
-            "writable_by_broza": true,
-            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
           }
         ]
       }
@@ -271,11 +271,11 @@ expression: recorded_disks()
           {
             "id": "disk8s1",
             "name": "Kiro CLI",
-            "role": "user",
+            "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI 3",
             "used_bytes": 1120415744,
-            "writable_by_broza": true,
-            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
           }
         ]
       }

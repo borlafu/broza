@@ -52,6 +52,36 @@ pub fn purpose_for(role: VolumeRole, name: &str) -> String {
     }
 }
 
+/// One sentence for a volume, preferring what its role token or name says.
+///
+/// Several volumes of a normal macOS install carry a role Broza does not model
+/// — `Update`, `Hardware`, `xART` — and one, `iSCPreboot`, is only
+/// recognisable by its name. Their *role* stays `unknown`, because that is what
+/// decides write protection, but "a volume with a role Broza does not
+/// recognise" is a poor thing to print four times in one `scan`. When a token
+/// or the name is one Broza can name, it supplies the sentence instead.
+pub fn purpose_for_volume(role: VolumeRole, roles: &[String], name: &str) -> String {
+    roles
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(name))
+        .find_map(purpose_for_token)
+        .map_or_else(|| purpose_for(role, name), ToOwned::to_owned)
+}
+
+/// The sentence for a role token or volume name Broza can name but not model.
+pub fn purpose_for_token(token: &str) -> Option<&'static str> {
+    match token {
+        "Update" => Some("Staging area for macOS updates, written and cleared by the installer."),
+        "Hardware" => Some("Hardware-specific data written by the firmware of this Mac."),
+        "xART" => Some("Secure counters used by the Secure Enclave to detect rollback attacks."),
+        "iSCPreboot" => {
+            Some("Boot loader data for the internal storage controller, managed entirely by macOS.")
+        }
+        _ => None,
+    }
+}
+
 /// The three paragraphs of `broza explain` for a role.
 pub fn explain_role(role: VolumeRole) -> RoleExplanation {
     match role {
@@ -155,7 +185,7 @@ safe reading of \"I do not know what this is\" is \"do not touch it\".",
 
 #[cfg(test)]
 mod tests {
-    use super::{explain_role, purpose_for};
+    use super::{explain_role, purpose_for, purpose_for_token, purpose_for_volume};
     use crate::model::VolumeRole;
 
     /// Every role the JSON contract defines (`docs/cli-spec.md` §4.1).
@@ -210,6 +240,33 @@ mod tests {
     #[test]
     fn a_name_the_user_padded_with_spaces_is_trimmed() {
         assert!(purpose_for(VolumeRole::User, "  Scratch  ").starts_with("Scratch "));
+    }
+
+    #[test]
+    fn a_role_token_broza_can_name_but_not_model_supplies_its_own_sentence() {
+        let cases = [("Update", "macOS updates"), ("Hardware", "firmware"), ("xART", "Secure Enclave")];
+
+        for (token, expected) in cases {
+            let purpose = purpose_for_volume(VolumeRole::Unknown, &[token.to_owned()], "whatever");
+
+            assert!(purpose.contains(expected), "{token}: {purpose}");
+            assert_eq!(purpose_for_token(token).map(ToOwned::to_owned), Some(purpose));
+        }
+    }
+
+    #[test]
+    fn a_volume_recognisable_only_by_its_name_is_named_too() {
+        let purpose = purpose_for_volume(VolumeRole::Preboot, &["Preboot".to_owned()], "iSCPreboot");
+
+        assert!(purpose.contains("internal storage controller"), "{purpose}");
+    }
+
+    #[test]
+    fn a_volume_with_a_modelled_role_keeps_the_sentence_of_that_role() {
+        let purpose = purpose_for_volume(VolumeRole::Data, &["Data".to_owned()], "Macintosh HD - Data");
+
+        assert_eq!(purpose, purpose_for(VolumeRole::Data, "Macintosh HD - Data"));
+        assert_eq!(purpose_for_token("Data"), None, "a modelled role is not a token exception");
     }
 
     #[test]

@@ -4,6 +4,10 @@
 //! by `scripts/capture-diskutil-fixtures.sh`. Snapshotting what the parsers make
 //! of them is how Broza notices that a macOS release changed the shape of the
 //! output (`docs/implementation-plan.md` §3.6).
+//!
+//! Only the `test-support` feature exposes `broza::testing`; without it this file
+//! compiles to nothing.
+#![cfg(feature = "test-support")]
 
 use broza::adapters::diskutil::{parse_apfs_list, parse_info, parse_list, parse_snapshots};
 use broza::testing::FakeRunner;

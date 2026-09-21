@@ -5,11 +5,11 @@
 //! roles come from `diskutil apfs list -plist` instead
 //! ([`super::plist_apfs`]), because `list` does not report them.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use super::parse::{optional_path, optional_text, parse_plist};
+use super::parse::{lenient_u64, optional_path, optional_text, parse_plist};
 use crate::BrozaError;
 
 /// Command this module parses, for error messages.
@@ -18,6 +18,10 @@ const COMMAND: &str = "diskutil list -plist";
 pub const APFS_CONTAINER_CONTENT: &str = "Apple_APFS_Container";
 /// `Content` of an `HFS+` partition.
 pub const HFS_PARTITION_CONTENT: &str = "Apple_HFS";
+/// Value of `Sealed` on a mounted snapshot whose seal is intact.
+const SEALED_YES: &str = "Yes";
+/// The only mount point a sealed system snapshot may stand in for.
+const ROOT_MOUNT_POINT: &str = "/";
 
 /// The whole output of `diskutil list -plist`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -51,6 +55,7 @@ pub struct ListDevice {
     /// Partition scheme, or the marker of a synthesized container device.
     pub content: String,
     /// Capacity of the device in bytes.
+    #[serde(deserialize_with = "lenient_u64")]
     pub size: u64,
     /// `true` for devices macOS hides from the user.
     #[serde(rename = "OSInternal")]
@@ -83,6 +88,7 @@ pub struct ListPartition {
     /// Partition type (`Apple_APFS`, `Apple_HFS`, `EFI`, …).
     pub content: String,
     /// Capacity of the partition in bytes.
+    #[serde(deserialize_with = "lenient_u64")]
     pub size: u64,
     /// Volume name, when the partition carries a mountable filesystem.
     #[serde(deserialize_with = "optional_text")]
@@ -112,6 +118,7 @@ pub struct ListApfsVolume {
     #[serde(deserialize_with = "optional_path")]
     pub mount_point: Option<PathBuf>,
     /// Capacity of the container the volume lives in, not of the volume.
+    #[serde(deserialize_with = "lenient_u64")]
     pub size: u64,
     /// `true` for volumes macOS hides from the user.
     #[serde(rename = "OSInternal")]
@@ -121,16 +128,24 @@ pub struct ListApfsVolume {
 }
 
 impl ListApfsVolume {
-    /// Where this volume is reachable from, snapshots included.
+    /// Where this volume is reachable from, the sealed system snapshot included.
     ///
     /// On a sealed macOS the system volume is not mounted at `/`: the signed
     /// snapshot of it is, and the volume itself sits at
-    /// `/System/Volumes/Update/mnt1`. The path a user can name is the snapshot's,
-    /// so it wins (`docs/cli-spec.md` §4.2 shows the system volume at `/`).
+    /// `/System/Volumes/Update/mnt1`. The path a user can name is the
+    /// snapshot's, so it wins — but only for that one case
+    /// (`docs/cli-spec.md` §4.2 shows the system volume at `/`).
+    ///
+    /// The conditions are deliberately narrow: an intact seal *and* the root
+    /// itself. Any other mounted snapshot — a Time Machine snapshot browsed
+    /// under `/Volumes/com.apple.TimeMachine.…`, a snapshot a user mounted by
+    /// hand — describes a point in the past, not the volume, and letting it
+    /// supply the mount point would attribute live paths to it.
     pub fn effective_mount_point(&self) -> Option<PathBuf> {
         self.mounted_snapshots
             .iter()
-            .find_map(|snapshot| snapshot.snapshot_mount_point.clone())
+            .find(|snapshot| snapshot.stands_in_for_the_volume())
+            .and_then(|snapshot| snapshot.snapshot_mount_point.clone())
             .or_else(|| self.mount_point.clone())
     }
 }
@@ -145,9 +160,20 @@ pub struct ListMountedSnapshot {
     /// BSD identifier the snapshot is mounted as (`disk3s1s1`).
     #[serde(rename = "SnapshotBSD", deserialize_with = "optional_text")]
     pub snapshot_bsd: Option<String>,
+    /// Seal state of the snapshot: `Yes`, `No`, or absent.
+    #[serde(deserialize_with = "optional_text")]
+    pub sealed: Option<String>,
     /// Where the snapshot is mounted.
     #[serde(deserialize_with = "optional_path")]
     pub snapshot_mount_point: Option<PathBuf>,
+}
+
+impl ListMountedSnapshot {
+    /// `true` only for the sealed system snapshot mounted at `/`.
+    pub fn stands_in_for_the_volume(&self) -> bool {
+        self.sealed.as_deref() == Some(SEALED_YES)
+            && self.snapshot_mount_point.as_deref() == Some(Path::new(ROOT_MOUNT_POINT))
+    }
 }
 
 /// Parse the output of `diskutil list -plist`.
@@ -203,6 +229,7 @@ mod tests {
           <key>MountedSnapshots</key>
           <array>
             <dict>
+              <key>Sealed</key><string>Yes</string>
               <key>SnapshotBSD</key><string>disk3s1s1</string>
               <key>SnapshotMountPoint</key><string>/</string>
               <key>SnapshotName</key><string>com.apple.os.update-abc</string>
@@ -214,6 +241,21 @@ mod tests {
           <key>MountPoint</key><string></string>
           <key>Size</key><integer>494384795648</integer>
           <key>VolumeName</key><string>Recovery</string>
+        </dict>
+        <dict>
+          <key>DeviceIdentifier</key><string>disk3s5</string>
+          <key>MountPoint</key><string>/System/Volumes/Data</string>
+          <key>Size</key><integer>494384795648</integer>
+          <key>VolumeName</key><string>Data</string>
+          <key>MountedSnapshots</key>
+          <array>
+            <dict>
+              <key>Sealed</key><string>No</string>
+              <key>SnapshotBSD</key><string>disk3s5s1</string>
+              <key>SnapshotMountPoint</key><string>/Volumes/com.apple.TimeMachine.localsnapshots</string>
+              <key>SnapshotName</key><string>com.apple.TimeMachine.2026-09-20-101530.local</string>
+            </dict>
+          </array>
         </dict>
       </array>
     </dict>
@@ -253,6 +295,35 @@ mod tests {
 
         assert_eq!(volume.mount_point.as_deref(), Some(Path::new("/System/Volumes/Update/mnt1")));
         assert_eq!(volume.effective_mount_point().as_deref(), Some(Path::new("/")));
+    }
+
+    #[test]
+    fn a_snapshot_that_is_not_the_sealed_root_never_supplies_the_mount_point() {
+        let list = sample();
+
+        let data = list.apfs_volume("disk3s5").unwrap_or_else(|| panic!("disk3s5 missing"));
+
+        assert_eq!(
+            data.effective_mount_point().as_deref(),
+            Some(Path::new("/System/Volumes/Data")),
+            "a browsed Time Machine snapshot is a view of the past, not the volume"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_at_the_root_without_an_intact_seal_is_ignored_too() {
+        let mut list = sample();
+        let volume = list
+            .all_disks_and_partitions
+            .iter_mut()
+            .flat_map(|device| &mut device.apfs_volumes)
+            .find(|volume| volume.device_identifier == "disk3s1")
+            .unwrap_or_else(|| panic!("disk3s1 missing"));
+        volume.mounted_snapshots[0].sealed = Some("Broken".to_owned());
+
+        let volume = list.apfs_volume("disk3s1").unwrap_or_else(|| panic!("disk3s1 missing"));
+
+        assert_eq!(volume.effective_mount_point().as_deref(), Some(Path::new("/System/Volumes/Update/mnt1")));
     }
 
     #[test]

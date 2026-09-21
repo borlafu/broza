@@ -36,14 +36,3 @@ pub trait ProcessRunner: Send + Sync {
     /// Run `program` with `args`, capturing output.
     fn run(&self, program: &str, args: &[&str], timeout: Duration) -> Result<ProcessOutput, BrozaError>;
 }
-
-/// A shared runner is a runner.
-///
-/// Adapters that own a runner are generic over it rather than boxed, so two of
-/// them sharing one runner — the disk enumerator and the snapshot provider do —
-/// need `Arc<R>` to satisfy the same bound as `R`.
-impl<T: ProcessRunner + ?Sized> ProcessRunner for std::sync::Arc<T> {
-    fn run(&self, program: &str, args: &[&str], timeout: Duration) -> Result<ProcessOutput, BrozaError> {
-        (**self).run(program, args, timeout)
-    }
-}

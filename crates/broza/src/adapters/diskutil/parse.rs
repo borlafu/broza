@@ -40,13 +40,51 @@ where
     Ok(raw.filter(|value| !value.is_empty()))
 }
 
+/// Read a byte count without letting a surprising shape end the scan.
+///
+/// Every size in the contract is a `u64` (`AGENTS.md` §6), but a property list
+/// can hold a negative integer, a real, or a string where a count is expected —
+/// `diskutil` has shipped all three over the years for devices it cannot
+/// measure. None of them is a size, and refusing to enumerate the machine
+/// because one field is odd would be worse than reporting that field as zero.
+/// The value is clamped, never guessed: nothing here invents a number.
+pub(crate) fn lenient_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(as_u64(&plist::Value::deserialize(deserializer)?))
+}
+
+/// The byte count a property-list value represents, or zero.
+fn as_u64(value: &plist::Value) -> u64 {
+    match value {
+        plist::Value::Integer(number) => {
+            number.as_unsigned().or_else(|| number.as_signed().map(|_| 0)).unwrap_or(0)
+        }
+        plist::Value::Real(number) => {
+            if number.is_finite() && *number >= 0.0 {
+                // `as` saturates at u64::MAX for anything larger, which is the
+                // clamp this function promises.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    *number as u64
+                }
+            } else {
+                0
+            }
+        }
+        plist::Value::String(text) => text.trim().parse().unwrap_or(0),
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use serde::Deserialize;
 
-    use super::{optional_path, optional_text, parse_plist};
+    use super::{lenient_u64, optional_path, optional_text, parse_plist};
     use crate::BrozaError;
 
     /// A plist with one key of each shape the helpers have to survive.
@@ -80,6 +118,54 @@ mod tests {
         assert_eq!(parsed.mount_point, None);
         assert_eq!(parsed.volume_name.as_deref(), Some("Data"));
         assert_eq!(parsed.media_name, None, "a missing key is not an error");
+    }
+
+    /// Every shape a size has been seen in, valid or not.
+    const SIZES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+    <key>Plain</key><integer>1024</integer>
+    <key>Negative</key><integer>-1</integer>
+    <key>Text</key><string> 2048 </string>
+    <key>Nonsense</key><string>a lot</string>
+    <key>Real</key><real>4096.7</real>
+    <key>NegativeReal</key><real>-4096.0</real>
+    <key>Flag</key><true/>
+</dict>
+</plist>"#;
+
+    #[derive(Debug, Default, Deserialize)]
+    #[serde(rename_all = "PascalCase", default)]
+    struct Sizes {
+        #[serde(deserialize_with = "lenient_u64")]
+        plain: u64,
+        #[serde(deserialize_with = "lenient_u64")]
+        negative: u64,
+        #[serde(deserialize_with = "lenient_u64")]
+        text: u64,
+        #[serde(deserialize_with = "lenient_u64")]
+        nonsense: u64,
+        #[serde(deserialize_with = "lenient_u64")]
+        real: u64,
+        #[serde(deserialize_with = "lenient_u64")]
+        negative_real: u64,
+        #[serde(deserialize_with = "lenient_u64")]
+        flag: u64,
+        #[serde(deserialize_with = "lenient_u64")]
+        absent: u64,
+    }
+
+    #[test]
+    fn a_size_that_is_not_a_positive_number_is_read_as_zero() {
+        let parsed: Sizes = parse_plist(SIZES, "diskutil info").unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(parsed.plain, 1024);
+        assert_eq!(parsed.text, 2048, "a number written as a string is still a number");
+        assert_eq!(parsed.real, 4096);
+        assert_eq!(
+            (parsed.negative, parsed.nonsense, parsed.negative_real, parsed.flag, parsed.absent),
+            (0, 0, 0, 0, 0)
+        );
     }
 
     #[test]

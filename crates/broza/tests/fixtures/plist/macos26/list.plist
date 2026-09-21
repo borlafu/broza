@@ -133,7 +133,7 @@
 				</dict>
 				<dict>
 					<key>CapacityInUse</key>
-					<integer>2646016</integer>
+					<integer>2641920</integer>
 					<key>DeviceIdentifier</key>
 					<string>disk1s3</string>
 					<key>DiskUUID</key>
@@ -342,7 +342,7 @@
 				</dict>
 				<dict>
 					<key>CapacityInUse</key>
-					<integer>800051200</integer>
+					<integer>801103872</integer>
 					<key>DeviceIdentifier</key>
 					<string>disk3s4</string>
 					<key>DiskUUID</key>
@@ -362,7 +362,7 @@
 				</dict>
 				<dict>
 					<key>CapacityInUse</key>
-					<integer>407183540224</integer>
+					<integer>410743279616</integer>
 					<key>DeviceIdentifier</key>
 					<string>disk3s5</string>
 					<key>DiskUUID</key>
@@ -472,7 +472,7 @@
 					<key>DiskUUID</key>
 					<string>0000001A-1111-4222-8333-00000000001A</string>
 					<key>MountPoint</key>
-					<string>/private/var/folders/aa/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018</string>
+					<string>/private/var/folders/dd/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018</string>
 					<key>Size</key>
 					<integer>2484035584</integer>
 					<key>VolumeName</key>

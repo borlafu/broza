@@ -18,8 +18,11 @@ use warnings;
 use constant FAKE_SHORT_NAME    => 'testuser';
 use constant FAKE_FULL_NAME     => 'Test User';
 use constant FAKE_COMPUTER_NAME => 'test-mac';
-# Per-user temporary directory hash, which is as identifying as a user name.
-use constant FAKE_TEMP_DIR => '/private/var/folders/aa/bb00000000000000000000000000gn/';
+# Replacement for the per-user hash of a temporary directory, which is as
+# identifying as a user name. The two-character prefix directory in front of it
+# is derived from the hash and is kept, so a redacted path still has the shape
+# `/private/var/folders/<xx>/<hash>/` a reader expects.
+use constant FAKE_TEMP_HASH => 'bb00000000000000000000000000gn';
 # Value written over any serial number.
 use constant FAKE_SERIAL => 'REDACTED-SERIAL';
 
@@ -56,8 +59,8 @@ sub redact {
     $text =~ s{(<key>[^<]*Serial[^<]*</key>\s*<string>)[^<]*(</string>)}
               {$1 . FAKE_SERIAL . $2}gse;
 
-    $text =~ s{/private/var/folders/[^/<\s]+/[^/<\s]+/}{${\ FAKE_TEMP_DIR }}g;
-    $text =~ s{(?<!private)/var/folders/[^/<\s]+/[^/<\s]+/}{${\ FAKE_TEMP_DIR }}g;
+    # Keep the prefix directory, replace only the hash that identifies the user.
+    $text =~ s{(/var/folders/[^/<\s]+/)[^/<\s]+/}{$1 . FAKE_TEMP_HASH . q{/}}ge;
 
     $text = replace_literal( $text, $ENV{BROZA_FULL_NAME},     FAKE_FULL_NAME );
     $text = replace_literal( $text, $ENV{BROZA_COMPUTER_NAME}, FAKE_COMPUTER_NAME );

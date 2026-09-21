@@ -11,6 +11,11 @@ DeviceInfo {
     solid_state: false,
     total_size: 2012860928,
     free_space: 0,
+    writable_volume: false,
+    content: Some(
+        "GUID_partition_scheme",
+    ),
+    volume_name: None,
     mount_point: None,
     sealed: None,
     filesystem_type: None,

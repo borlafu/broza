@@ -9,6 +9,13 @@ DeviceInfo {
     solid_state: true,
     total_size: 494384795648,
     free_space: 0,
+    writable_volume: true,
+    content: Some(
+        "00000016-1111-4222-8333-000000000016",
+    ),
+    volume_name: Some(
+        "Data",
+    ),
     mount_point: Some(
         "/System/Volumes/Data",
     ),

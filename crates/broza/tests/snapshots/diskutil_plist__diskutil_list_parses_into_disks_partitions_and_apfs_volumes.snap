@@ -145,6 +145,9 @@ DiskList {
                             snapshot_bsd: Some(
                                 "disk3s1s1",
                             ),
+                            sealed: Some(
+                                "Yes",
+                            ),
                             snapshot_mount_point: Some(
                                 "/",
                             ),
@@ -266,7 +269,7 @@ DiskList {
                         "Docker",
                     ),
                     mount_point: Some(
-                        "/private/var/folders/aa/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
+                        "/private/var/folders/dd/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
                     ),
                 },
             ],

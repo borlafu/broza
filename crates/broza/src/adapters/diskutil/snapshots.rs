@@ -7,34 +7,43 @@
 //! the picture in M4, for deletion
 //! (`docs/adr/0002-diskutil-plist-over-diskarbitration.md`).
 
+use std::sync::Arc;
+
 use crate::BrozaError;
-use crate::adapters::diskutil::{DISKUTIL, DISKUTIL_TIMEOUT, parse_snapshots};
+use crate::adapters::diskutil::{DISKUTIL, DISKUTIL_TIMEOUT, first_line, parse_snapshots};
 use crate::model::{Snapshot, VolumeId};
 use crate::ports::{ProcessRunner, SnapshotProvider};
 
 /// [`SnapshotProvider`] backed by `diskutil`.
-#[derive(Debug, Clone)]
-pub struct DiskutilSnapshots<R: ProcessRunner> {
+#[derive(Clone)]
+pub struct DiskutilSnapshots {
     /// Runs `diskutil` with a hard timeout.
-    runner: R,
+    runner: Arc<dyn ProcessRunner>,
 }
 
-impl<R: ProcessRunner> DiskutilSnapshots<R> {
+impl std::fmt::Debug for DiskutilSnapshots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DiskutilSnapshots { .. }")
+    }
+}
+
+impl DiskutilSnapshots {
     /// A provider running commands through `runner`.
-    pub fn new(runner: R) -> Self {
+    pub fn new(runner: Arc<dyn ProcessRunner>) -> Self {
         Self { runner }
     }
 }
 
-impl<R: ProcessRunner> SnapshotProvider for DiskutilSnapshots<R> {
+impl SnapshotProvider for DiskutilSnapshots {
     fn list(&self, volume: &VolumeId) -> Result<Vec<Snapshot>, BrozaError> {
         let args = ["apfs", "listSnapshots", "-plist", volume.as_str()];
         let output = self.runner.run(DISKUTIL, &args, DISKUTIL_TIMEOUT)?;
         if !output.success {
-            return Err(BrozaError::Other(format!(
-                "`diskutil apfs listSnapshots -plist {volume}` failed: {}",
-                output.stderr_text().lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or_default()
-            )));
+            return Err(crate::adapters::diskutil::classify(
+                &args,
+                output.code,
+                &first_line(&output.stderr_text()),
+            ));
         }
         parse_snapshots(&output.stdout)
     }
@@ -48,7 +57,7 @@ mod tests {
     use crate::BrozaError;
     use crate::adapters::diskutil::{DISKUTIL, DISKUTIL_TIMEOUT};
     use crate::model::VolumeId;
-    use crate::ports::{ProcessOutput, SnapshotProvider};
+    use crate::ports::{ProcessOutput, ProcessRunner, SnapshotProvider};
     use crate::testing::FakeRunner;
 
     /// One purgeable snapshot, as `diskutil` writes it.
@@ -82,8 +91,9 @@ mod tests {
             ProcessOutput { success: true, code: Some(0), stdout: ONE_SNAPSHOT.to_vec(), stderr: Vec::new() },
         ));
 
-        let listed =
-            DiskutilSnapshots::new(Arc::clone(&runner)).list(&volume()).unwrap_or_else(|e| panic!("{e}"));
+        let listed = DiskutilSnapshots::new(Arc::clone(&runner) as Arc<dyn ProcessRunner>)
+            .list(&volume())
+            .unwrap_or_else(|e| panic!("{e}"));
 
         assert_eq!(listed.len(), 1);
         assert!(listed[0].purgeable);
@@ -104,9 +114,11 @@ mod tests {
             },
         ));
 
-        let err = DiskutilSnapshots::new(Arc::clone(&runner)).list(&volume()).err();
+        let err = DiskutilSnapshots::new(Arc::clone(&runner) as Arc<dyn ProcessRunner>).list(&volume()).err();
 
-        let Some(BrozaError::Other(message)) = err else { panic!("expected BrozaError::Other") };
+        let Some(BrozaError::TargetNotFound(message)) = err else {
+            panic!("a volume diskutil cannot find is a missing target, got {err:?}")
+        };
         assert!(message.contains("Could not find disk"), "{message}");
         assert_eq!(runner.calls().len(), 1, "no second command is attempted");
     }
@@ -115,7 +127,7 @@ mod tests {
     fn a_command_that_cannot_be_run_keeps_its_own_error() {
         let runner = FakeRunner::new().with_failure(DISKUTIL, &args(), "timed out");
 
-        let err = DiskutilSnapshots::new(runner).list(&volume()).err();
+        let err = DiskutilSnapshots::new(Arc::new(runner) as Arc<dyn ProcessRunner>).list(&volume()).err();
 
         assert!(matches!(err, Some(BrozaError::Other(message)) if message == "timed out"));
     }
@@ -128,7 +140,7 @@ mod tests {
             ProcessOutput { success: true, code: Some(0), stdout: b"nope".to_vec(), stderr: Vec::new() },
         );
 
-        let err = DiskutilSnapshots::new(runner).list(&volume()).err();
+        let err = DiskutilSnapshots::new(Arc::new(runner) as Arc<dyn ProcessRunner>).list(&volume()).err();
 
         let Some(BrozaError::Other(message)) = err else { panic!("expected BrozaError::Other") };
         assert!(message.contains("listSnapshots"), "{message}");

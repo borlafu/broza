@@ -34,7 +34,8 @@
 #   * user identity     the short user name, the full name and the computer name,
 #                       wherever they appear (including inside volume names and
 #                       mount points such as /Users/<you>).
-#   * temp directories  the per-user hash in /private/var/folders/<a>/<b>/.
+#   * temp directories  the per-user hash in /private/var/folders/<xx>/<hash>/,
+#                       keeping the prefix directory so the path keeps its shape.
 #
 # What is deliberately kept
 #   * every size, capacity and byte count, so the fixtures exercise real numbers.
@@ -111,8 +112,14 @@ capture_all() {
   "${DISKUTIL}" list -plist >"${raw_dir}/list.plist"
   "${DISKUTIL}" apfs list -plist >"${raw_dir}/apfs_list.plist"
 
+  # An array, not word splitting: a BSD name never contains a space, but a
+  # `diskutil` that one day prints something else must not turn into arguments.
+  local devices=()
   local device
-  for device in $(whole_disks "${raw_dir}/list.plist") $(hfs_partitions "${raw_dir}/list.plist"); do
+  while IFS= read -r device; do
+    [[ -n "${device}" ]] && devices+=("${device}")
+  done < <(whole_disks "${raw_dir}/list.plist"; hfs_partitions "${raw_dir}/list.plist")
+  for device in "${devices[@]}"; do
     "${DISKUTIL}" info -plist "${device}" >"${raw_dir}/info_${device}.plist"
   done
 
@@ -142,7 +149,10 @@ capture_one() {
 
 # Print the BSD name of every whole disk listed in the plist "${1}", one per line.
 whole_disks() {
-  "${PLUTIL}" -extract WholeDisks json -o - "$1" | tr -d '[]"' | tr ',' '\n'
+  # `awk NF` drops the empty record and, more importantly, terminates the last
+  # line: `tr` does not, and an unterminated line would glue the last whole
+  # disk to whatever the next producer prints.
+  "${PLUTIL}" -extract WholeDisks json -o - "$1" | tr -d '[]"' | tr ',' '\n' | awk 'NF'
 }
 
 # Print the BSD name of every Apple_HFS partition in the plist "${1}".

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use super::parse::{optional_path, optional_text, parse_plist};
+use super::parse::{lenient_u64, optional_path, optional_text, parse_plist};
 use crate::BrozaError;
 
 /// Command this module parses, for error messages.
@@ -31,9 +31,25 @@ pub struct DeviceInfo {
     /// `true` for flash storage. Absent on disk images, and then `false`.
     pub solid_state: bool,
     /// Capacity of the device in bytes.
+    #[serde(deserialize_with = "lenient_u64")]
     pub total_size: u64,
     /// Bytes free on the mounted filesystem; `0` when nothing is mounted.
+    #[serde(deserialize_with = "lenient_u64")]
     pub free_space: u64,
+    /// `true` when macOS reports the *mounted volume* as writable.
+    ///
+    /// Distinct from `Writable`, which describes the medium: a read-only disk
+    /// image is `WritableMedia: false`, while a mounted installer volume on a
+    /// writable medium can still be `WritableVolume: false`. Only this one says
+    /// whether writing to the mount point could work, so it is the one the role
+    /// decision uses (`AGENTS.md` §2.3).
+    pub writable_volume: bool,
+    /// Partition type of the device (`Apple_HFS`, `Apple_APFS`, …).
+    #[serde(deserialize_with = "optional_text")]
+    pub content: Option<String>,
+    /// Volume name as Finder shows it, when the device carries a filesystem.
+    #[serde(deserialize_with = "optional_text")]
+    pub volume_name: Option<String>,
     /// Where the device is mounted, when it is.
     #[serde(deserialize_with = "optional_path")]
     pub mount_point: Option<PathBuf>,
@@ -89,6 +105,9 @@ mod tests {
   <key>MediaName</key><string>Disk Image</string>
   <key>MountPoint</key><string>/Volumes/Installer</string>
   <key>TotalSize</key><integer>1878605824</integer>
+  <key>VolumeName</key><string>Installer</string>
+  <key>Writable</key><true/>
+  <key>WritableVolume</key><false/>
 </dict>
 </plist>"#;
 
@@ -109,6 +128,24 @@ mod tests {
     fn a_missing_solid_state_key_is_not_a_solid_state_disk() {
         assert!(!disk_image().solid_state);
         assert!(!disk_image().internal);
+    }
+
+    #[test]
+    fn a_read_only_installer_volume_is_not_a_writable_volume() {
+        let info = disk_image();
+
+        assert!(!info.writable_volume, "the medium may be writable while the volume is not");
+        assert_eq!(info.volume_name.as_deref(), Some("Installer"));
+    }
+
+    #[test]
+    fn a_missing_writable_volume_key_is_not_writable() {
+        let without = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>DeviceIdentifier</key><string>disk9</string></dict></plist>"#;
+
+        let info = parse_info(without).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(!info.writable_volume, "an absent flag must never grant write access");
     }
 
     #[test]

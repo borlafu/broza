@@ -11,13 +11,12 @@
 //! The number is an estimate and Broza labels it as one. It is reported on its
 //! own line and never added to free space (`AGENTS.md` §2.7).
 //!
-//! This is the only file in the crate that calls Objective-C.
-
-#![allow(unsafe_code)]
+//! This is the only file in the crate that calls Objective-C. The `unsafe`
+//! in it is two reads of a Foundation string constant and nothing else.
 
 use std::path::Path;
 
-use objc2::rc::Retained;
+use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
 use objc2_foundation::{
     NSArray, NSDictionary, NSNumber, NSString, NSURL, NSURLResourceKey,
@@ -47,40 +46,61 @@ impl SpaceProvider for NsUrlSpaceProvider {
 /// can come back below plain availability — on a volume with nothing to purge,
 /// or between two measurements taken microseconds apart. A negative difference
 /// is not negative purgeable space; it is zero.
+///
+/// These are Foundation's numbers, not `diskutil`'s. Foundation's "available"
+/// subtracts the reserve macOS keeps for the system and counts the caller's
+/// entitlements, so it is routinely a few hundred megabytes below the
+/// `CapacityFree` of the same container, and `free_bytes + purgeable_bytes`
+/// therefore does not add up to anything `diskutil` prints. Broza reports the
+/// container's own `CapacityFree` as free space and this figure only as the
+/// purgeable estimate, on its own line, so the two never have to agree.
 pub fn compute_purgeable(important_usage: i64, available: i64) -> u64 {
     u64::try_from(important_usage.saturating_sub(available)).unwrap_or(0)
 }
 
 /// Ask macOS for `keys` on the volume mounted at `mount_point`, in order.
+///
+/// Everything Objective-C happens inside one autorelease pool: a scan asks
+/// this of every mounted volume, and the temporary `NSURL`, `NSArray` and
+/// dictionary of each call would otherwise sit in whatever pool the process
+/// happens to have — in a library with no run loop, possibly none at all.
 fn volume_capacities(mount_point: &Path, keys: &[&NSURLResourceKey]) -> Result<Vec<i64>, BrozaError> {
-    let values = resource_values(mount_point, keys)?;
-    keys.iter().map(|key| capacity(&values, key, mount_point)).collect()
+    let path =
+        mount_point.to_str().ok_or_else(|| unavailable(mount_point, "the mount point is not valid UTF-8"))?;
+    autoreleasepool(|_| {
+        let values = resource_values(path, keys).map_err(|reason| unavailable(mount_point, &reason))?;
+        decode_capacities(&values, keys).map_err(|reason| unavailable(mount_point, &reason))
+    })
 }
 
-/// The resource dictionary Foundation returns for `mount_point`.
+/// The resource dictionary Foundation returns for `path`.
 fn resource_values(
-    mount_point: &Path,
+    path: &str,
     keys: &[&NSURLResourceKey],
-) -> Result<Retained<NSDictionary<NSURLResourceKey, AnyObject>>, BrozaError> {
-    let path = NSString::from_str(&mount_point.to_string_lossy());
-    let url = NSURL::fileURLWithPath(&path);
-    let keys = NSArray::from_slice(keys);
-    url.resourceValuesForKeys_error(&keys)
-        .map_err(|error| unavailable(mount_point, &error.localizedDescription().to_string()))
+) -> Result<Retained<NSDictionary<NSURLResourceKey, AnyObject>>, String> {
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+    url.resourceValuesForKeys_error(&NSArray::from_slice(keys))
+        .map_err(|error| error.localizedDescription().to_string())
+}
+
+/// The capacities `keys` name, in the order they were asked for.
+///
+/// Pure: given a dictionary it reads numbers out of it, which is what makes
+/// the decoding testable without a volume to point at.
+fn decode_capacities(
+    values: &NSDictionary<NSURLResourceKey, AnyObject>,
+    keys: &[&NSURLResourceKey],
+) -> Result<Vec<i64>, String> {
+    keys.iter().map(|key| capacity(values, key)).collect()
 }
 
 /// One capacity out of the dictionary, as the signed value Foundation uses.
 fn capacity(
     values: &NSDictionary<NSURLResourceKey, AnyObject>,
     key: &NSURLResourceKey,
-    mount_point: &Path,
-) -> Result<i64, BrozaError> {
-    let value = values
-        .objectForKey(key)
-        .ok_or_else(|| unavailable(mount_point, &format!("macOS reported no {key}")))?;
-    let number = value
-        .downcast_ref::<NSNumber>()
-        .ok_or_else(|| unavailable(mount_point, &format!("{key} was not a number")))?;
+) -> Result<i64, String> {
+    let value = values.objectForKey(key).ok_or_else(|| format!("macOS reported no {key}"))?;
+    let number = value.downcast_ref::<NSNumber>().ok_or_else(|| format!("{key} was not a number"))?;
     Ok(number.longLongValue())
 }
 
@@ -90,6 +110,7 @@ fn unavailable(mount_point: &Path, reason: &str) -> BrozaError {
 }
 
 /// Key for the room an application would have after macOS purges what it can.
+#[allow(unsafe_code)]
 fn important_usage_key() -> &'static NSURLResourceKey {
     // SAFETY: an immutable `NSString` constant exported by Foundation, which is
     // linked into every process on macOS. It is initialised before `main` and
@@ -98,6 +119,7 @@ fn important_usage_key() -> &'static NSURLResourceKey {
 }
 
 /// Key for the room that is free right now.
+#[allow(unsafe_code)]
 fn available_key() -> &'static NSURLResourceKey {
     // SAFETY: as above — a Foundation string constant, immutable and always
     // present in the process.
@@ -108,10 +130,37 @@ fn available_key() -> &'static NSURLResourceKey {
 mod tests {
     use std::path::Path;
 
-    use objc2_foundation::NSURLVolumeTotalCapacityKey;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyObject, NSObject};
+    use objc2_foundation::{
+        NSDictionary, NSNumber, NSString, NSURLResourceKey, NSURLVolumeTotalCapacityKey, NSValue,
+    };
 
-    use super::{NsUrlSpaceProvider, compute_purgeable, volume_capacities};
+    use super::{
+        NsUrlSpaceProvider, available_key, compute_purgeable, decode_capacities, important_usage_key,
+        volume_capacities,
+    };
     use crate::ports::SpaceProvider;
+
+    /// The untyped dictionary entry a Foundation object becomes.
+    fn object(value: Retained<NSObject>) -> Retained<AnyObject> {
+        value.into()
+    }
+
+    /// A resource dictionary as Foundation would have returned it.
+    fn dictionary(
+        entries: &[(&NSURLResourceKey, i64)],
+    ) -> Retained<NSDictionary<NSURLResourceKey, AnyObject>> {
+        let keys: Vec<&NSURLResourceKey> = entries.iter().map(|(key, _)| *key).collect();
+        let values: Vec<Retained<AnyObject>> = entries
+            .iter()
+            .map(|(_, value)| {
+                let number: Retained<NSValue> = Retained::into_super(NSNumber::numberWithLongLong(*value));
+                object(Retained::into_super(number))
+            })
+            .collect();
+        NSDictionary::from_retained_objects(&keys, &values)
+    }
 
     #[test]
     fn purgeable_space_is_what_macos_would_free_beyond_what_is_already_free() {
@@ -132,6 +181,41 @@ mod tests {
     }
 
     #[test]
+    fn the_capacities_come_back_in_the_order_they_were_asked_for() {
+        let keys = [important_usage_key(), available_key()];
+        let values = dictionary(&[(keys[0], 900), (keys[1], 400)]);
+
+        let decoded = decode_capacities(&values, &keys).unwrap_or_else(|reason| panic!("{reason}"));
+
+        assert_eq!(decoded, vec![900, 400]);
+        assert_eq!(compute_purgeable(decoded[0], decoded[1]), 500);
+    }
+
+    #[test]
+    fn a_key_macos_did_not_answer_is_named_in_the_failure() {
+        let keys = [important_usage_key(), available_key()];
+        let values = dictionary(&[(keys[0], 900)]);
+
+        let reason = decode_capacities(&values, &keys).err().unwrap_or_default();
+
+        assert!(reason.contains("AvailableCapacity"), "{reason}");
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_number_is_a_failure_and_not_a_panic() {
+        let key = important_usage_key();
+        let text = object(Retained::into_super(NSString::from_str("not a number")));
+        let values = NSDictionary::from_retained_objects(&[key], &[text]);
+
+        let reason = decode_capacities(&values, &[key]).err().unwrap_or_default();
+
+        assert!(reason.contains("was not a number"), "{reason}");
+    }
+
+    /// Reads a real volume, so it is not part of the normal suite
+    /// (`AGENTS.md` §7).
+    #[test]
+    #[ignore = "asks the running system about a path; run with --ignored"]
     fn a_path_that_does_not_exist_is_an_error_naming_the_path() {
         let err = NsUrlSpaceProvider.purgeable_bytes(Path::new("/definitely/not/a/volume")).err();
 
@@ -141,15 +225,15 @@ mod tests {
 
     /// Talks to the running system, so it is not part of the normal suite.
     ///
-    /// Run it with:
+    /// Run both ignored tests of this module with:
     ///
     /// ```text
-    /// cargo test --workspace --all-features -- --ignored purgeable
+    /// cargo test --workspace --all-features -- --ignored nsurl_space
     /// ```
     ///
-    /// It asserts the only invariant that holds on every Mac: macOS cannot
-    /// offer to purge more than the volume can hold. The exact figure changes
-    /// minute by minute, so there is nothing else to pin it to.
+    /// This one asserts the only invariant that holds on every Mac: macOS
+    /// cannot offer to purge more than the volume can hold. The exact figure
+    /// changes minute by minute, so there is nothing else to pin it to.
     #[test]
     #[ignore = "reads the real boot volume; run with --ignored"]
     fn purgeable_space_on_the_real_boot_volume_is_smaller_than_the_volume() {
@@ -165,6 +249,7 @@ mod tests {
     }
 
     /// The total-capacity key, for the ignored test above.
+    #[allow(unsafe_code)]
     fn total_capacity_key() -> &'static objc2_foundation::NSURLResourceKey {
         // SAFETY: a Foundation string constant, immutable and always present in
         // the process, like the keys the provider itself uses.

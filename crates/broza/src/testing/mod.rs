@@ -16,6 +16,7 @@ pub mod fake_runner;
 mod fake_tree;
 pub mod fixed_clock;
 pub mod mac_fixture;
+mod sync;
 
 use std::sync::Arc;
 

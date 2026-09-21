@@ -6,6 +6,7 @@ use std::time::Duration;
 use jiff::{SignedDuration, Timestamp};
 
 use crate::ports::Clock;
+use crate::testing::sync::lock;
 
 /// Instant a [`FixedClock::default`] starts at.
 const DEFAULT_NOW: &str = "2026-01-01T00:00:00Z";
@@ -46,11 +47,6 @@ impl Clock for FixedClock {
     fn now(&self) -> Timestamp {
         *lock(&self.now)
     }
-}
-
-/// Lock a mutex, recovering the value when another test thread poisoned it.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

@@ -66,6 +66,15 @@ impl Node {
     }
 }
 
+/// Why a change to the tree is impossible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TreeError {
+    /// A component of the path exists and is not a directory.
+    NotADirectory(PathBuf),
+    /// The path itself is already taken by something that is not a directory.
+    AlreadyExists(PathBuf),
+}
+
 /// An in-memory filesystem tree.
 #[derive(Debug, Default)]
 pub(crate) struct Tree {
@@ -103,13 +112,26 @@ impl Tree {
         self.nodes.get(path)
     }
 
+    /// `true` when something exists at `path`.
+    pub fn exists(&self, path: &Path) -> bool {
+        self.nodes.contains_key(path)
+    }
+
     /// `true` when `path` is a directory in the tree.
     pub fn is_dir(&self, path: &Path) -> bool {
         matches!(self.get(path).map(|node| &node.kind), Some(NodeKind::Dir))
     }
 
-    /// Insert or replace the entry at `path`, keeping the inode of the old one.
+    /// Insert or replace the entry at `path`.
+    ///
+    /// Overwriting keeps the inode, which makes a rewritten file recognisable to a
+    /// test. Replacing a directory with anything else drops its children first and
+    /// takes a fresh inode: the old directory is gone, not renamed.
     pub fn insert(&mut self, path: &Path, kind: NodeKind) {
+        let replaced_directory = self.is_dir(path) && !matches!(kind, NodeKind::Dir);
+        if replaced_directory {
+            self.remove_subtree(path);
+        }
         let inode = self.nodes.get(path).map_or_else(
             || {
                 let inode = self.next_inode;
@@ -124,14 +146,29 @@ impl Tree {
     }
 
     /// Create `path` and every missing ancestor as a directory.
-    pub fn create_dir_all(&mut self, path: &Path) {
+    ///
+    /// Fails the way `mkdir` does: a component that is not a directory is
+    /// [`TreeError::NotADirectory`], and a `path` already taken by a file is
+    /// [`TreeError::AlreadyExists`]. An existing directory is success.
+    pub fn create_dir_all(&mut self, path: &Path) -> Result<(), TreeError> {
         let mut ancestors: Vec<&Path> = path.ancestors().collect();
         ancestors.reverse();
         for ancestor in ancestors {
-            if !self.nodes.contains_key(ancestor) {
-                self.insert(ancestor, NodeKind::Dir);
+            match self.nodes.get(ancestor).map(|node| matches!(node.kind, NodeKind::Dir)) {
+                Some(true) => {}
+                Some(false) if ancestor == path => {
+                    return Err(TreeError::AlreadyExists(path.to_path_buf()));
+                }
+                Some(false) => return Err(TreeError::NotADirectory(ancestor.to_path_buf())),
+                None => self.insert(ancestor, NodeKind::Dir),
             }
         }
+        Ok(())
+    }
+
+    /// `true` when `path` is a directory with no children.
+    pub fn is_empty_dir(&self, path: &Path) -> bool {
+        self.is_dir(path) && self.children(path).is_empty()
     }
 
     /// Set the times of an existing entry.
@@ -202,7 +239,7 @@ mod tests {
     fn tree() -> Tree {
         let mut tree = Tree::new();
         tree.add_root(Path::new("/a"), 7);
-        tree.create_dir_all(Path::new("/a/b"));
+        let _ = tree.create_dir_all(Path::new("/a/b"));
         tree.insert(Path::new("/a/b/f"), NodeKind::File(b"1234".to_vec()));
         tree
     }

@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use crate::ports::{Answer, ConfirmationRequest, Prompter};
+use crate::testing::sync::lock;
 
 /// Answer given once the scripted queue is empty.
 ///
@@ -85,11 +86,6 @@ impl Prompter for FakePrompter {
     fn confirm_literal(&self, request: &ConfirmationRequest, expected: &str) -> Answer {
         self.answer(request, Some(expected.to_owned()))
     }
-}
-
-/// Lock a mutex, recovering the value when another test thread poisoned it.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

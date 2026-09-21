@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use crate::BrozaError;
 use crate::model::{Disk, Snapshot, VolumeId};
 use crate::ports::{DiskEnumerator, SnapshotProvider, SpaceProvider};
+use crate::testing::sync::lock;
 
 /// Purgeable bytes reported for a mount point nobody configured.
 const UNKNOWN_PURGEABLE_BYTES: u64 = 0;
@@ -110,11 +111,6 @@ impl SnapshotProvider for FakeSnapshots {
     fn list(&self, volume: &VolumeId) -> Result<Vec<Snapshot>, BrozaError> {
         Ok(lock(&self.snapshots).get(volume).cloned().unwrap_or_default())
     }
-}
-
-/// Lock a mutex, recovering the value when another test thread poisoned it.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

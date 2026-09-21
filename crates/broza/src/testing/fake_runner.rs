@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use crate::BrozaError;
 use crate::ports::{ProcessOutput, ProcessRunner};
+use crate::testing::sync::lock;
 
 /// Directory holding the recorded command fixtures (`crates/broza/tests/fixtures`).
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
@@ -156,11 +157,6 @@ impl ProcessRunner for FakeRunner {
 /// Render `(program, args)` as the key a scripted answer is stored under.
 fn command_key(program: &str, args: &[&str]) -> String {
     if args.is_empty() { program.to_owned() } else { format!("{program} {}", args.join(" ")) }
-}
-
-/// Lock a mutex, recovering the value when another test thread poisoned it.
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

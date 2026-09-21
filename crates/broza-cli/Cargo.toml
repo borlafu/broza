@@ -1,0 +1,31 @@
+[package]
+name = "broza-cli"
+description = "Broza: safe disk cleanup CLI for macOS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+keywords = ["macos", "apfs", "disk", "cleanup", "cli"]
+categories = ["command-line-utilities", "filesystem"]
+
+[[bin]]
+name = "broza"
+path = "src/main.rs"
+
+[dependencies]
+broza.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+insta.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -44,7 +44,7 @@ impl Selection {
 /// `informed_only` is not an error: a dry run reports those findings and exits
 /// `0`. It becomes one under `--apply`, where the guard refuses the whole plan
 /// (`docs/cli-spec.md` §2), so the CLI passes it into
-/// [`crate::safety::guard::WriteRequest::informed_only`].
+/// [`PlanOutcome::informed_only`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOutcome {
     /// The dry-run plan.
@@ -94,6 +94,9 @@ pub fn plan_dry_run(
     session_id: SessionId,
     quarantine_root: Option<&Path>,
 ) -> Result<PlanOutcome, PlanError> {
+    if let Some(root) = quarantine_root {
+        validate_quarantine_root(root)?;
+    }
     let selected: Vec<&Finding> = findings.iter().filter(|f| selection.matches(f)).collect();
     let informed_only = selected
         .iter()
@@ -108,6 +111,19 @@ pub fn plan_dry_run(
     let plan =
         CleanPlan::dry_run(session_id, items).map_err(|error| PlanError::Invalid(error.to_string()))?;
     Ok(PlanOutcome { plan, informed_only })
+}
+
+/// The quarantine root is compared as a prefix, so a malformed one would
+/// silently protect nothing. The guard checks it again against the mount table;
+/// here only its shape can be judged.
+fn validate_quarantine_root(root: &Path) -> Result<(), PlanError> {
+    if root.is_absolute() && root != Path::new("/") {
+        return Ok(());
+    }
+    Err(PlanError::Invalid(format!(
+        "the quarantine root `{}` must be an absolute path inside a volume",
+        root.display()
+    )))
 }
 
 /// The items one finding contributes, minus the excluded paths.
@@ -293,6 +309,14 @@ mod tests {
         assert_eq!(max_risk(&findings, &green), Some(Risk::Green));
         let none = Selection { categories: Some(Vec::new()), ..Selection::everything() };
         assert_eq!(max_risk(&findings, &none), None);
+    }
+
+    #[test]
+    fn a_quarantine_root_that_protects_nothing_is_refused() {
+        for root in ["relative/quarantine", "/"] {
+            let error = plan_dry_run(&[caches()], &Selection::everything(), session(), Some(Path::new(root)));
+            assert!(matches!(error, Err(super::PlanError::Invalid(_))), "{root}: {error:?}");
+        }
     }
 
     #[test]

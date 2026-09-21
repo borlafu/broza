@@ -10,12 +10,11 @@ use std::path::Path;
 use super::{ApprovedItem, WriteRequest};
 use crate::model::{Action, CleanItem, Finding};
 use crate::ports::FileOps;
+use crate::safety::firmlink::{firmlink_spellings, is_volume_root};
 use crate::safety::path::{CanonicalPath, canonicalize_no_follow};
 use crate::safety::rejection::GuardRejection;
 use crate::safety::roles::allows_action;
-use crate::safety::roots::{
-    AllowedRoots, RootContext, firmlink_spellings, is_allowed_root, is_under_allowed_root,
-};
+use crate::safety::roots::{AllowedRoots, RootContext, is_allowed_root, is_under_allowed_root};
 use crate::scan::{MountEntry, MountTable};
 
 /// What one item of the plan turned into during the checks.
@@ -45,7 +44,7 @@ pub(super) fn check_item(
     fs: &dyn FileOps,
 ) -> Result<Outcome, GuardRejection> {
     check_action_matches(item, finding, req)?;
-    check_path_belongs_to_finding(item, finding)?;
+    check_path_belongs_to_finding(item, finding, mounts)?;
     let checked = match canonicalize_no_follow(&item.path, fs) {
         Ok(checked) => checked,
         Err(rejection) if rejection.is_missing_path() => {
@@ -97,13 +96,22 @@ pub(crate) fn expected_action(action: Action, purge: bool) -> Action {
 /// Without this, an item could borrow the identity of an unrelated finding and
 /// inherit its category — `/Applications/Safari.app` attached to an `unused-apps`
 /// finding that never mentioned Safari.
-fn check_path_belongs_to_finding(item: &CleanItem, finding: &Finding) -> Result<(), GuardRejection> {
+///
+/// A reported path that is a volume root (`/`, a mount point, a firmlink prefix)
+/// is ignored rather than honoured: as a prefix it would match the whole machine,
+/// and no detector has any business naming one.
+fn check_path_belongs_to_finding(
+    item: &CleanItem,
+    finding: &Finding,
+    mounts: &MountTable,
+) -> Result<(), GuardRejection> {
     let claimed = firmlink_spellings(&item.path);
-    let belongs = finding.paths().iter().any(|reported| {
-        firmlink_spellings(&reported.path)
-            .iter()
-            .any(|spelling| claimed.iter().any(|claim| claim.starts_with(spelling)))
-    });
+    let belongs =
+        finding.paths().iter().filter(|reported| !is_volume_root(&reported.path, mounts)).any(|reported| {
+            firmlink_spellings(&reported.path)
+                .iter()
+                .any(|spelling| claimed.iter().any(|claim| claim.starts_with(spelling)))
+        });
     if belongs {
         return Ok(());
     }
@@ -136,7 +144,7 @@ fn check_outside_quarantine_store(path: &Path, req: &WriteRequest) -> Result<(),
 ///
 /// A mount table built a moment earlier can be stale; if it disagrees with the
 /// filesystem the guard refuses rather than reasoning about the wrong volume.
-fn resolve_volume<'a>(
+pub(super) fn resolve_volume<'a>(
     checked: &CanonicalPath,
     mounts: &'a MountTable,
 ) -> Result<&'a MountEntry, GuardRejection> {

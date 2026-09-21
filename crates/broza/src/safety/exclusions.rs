@@ -18,8 +18,8 @@ use std::path::Path;
 
 use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
+use crate::safety::firmlink::firmlink_spellings;
 use crate::safety::rejection::GuardRejection;
-use crate::safety::roots::firmlink_spellings;
 
 /// A compiled, immutable set of exclusion globs.
 #[derive(Clone, Default)]
@@ -48,7 +48,8 @@ impl Exclusions {
             return Ok(Self::none());
         }
         let builder = patterns.iter().try_fold(GlobSetBuilder::new(), |builder, pattern| {
-            Ok::<_, GuardRejection>(add(builder, compile(pattern)?))
+            let globs = compile(pattern)?;
+            Ok::<_, GuardRejection>(globs.into_iter().fold(builder, add))
         })?;
         let set = builder.build().map_err(|error| GuardRejection::InvalidExclusion {
             pattern: patterns.join(", "),
@@ -57,19 +58,18 @@ impl Exclusions {
         Ok(Self { set: Some(set), patterns })
     }
 
-    /// `true` when `path` matches at least one pattern.
+    /// `true` when `path`, or any directory above it, matches a pattern.
     ///
-    /// On the Data volume a path has two spellings for the same directory and both
-    /// are tried; anywhere else `/System/Volumes/Data/...` would be a different
-    /// place, so only the path as given is matched.
+    /// Excluding a directory excludes what is inside it: a user who writes
+    /// `~/Projects/keep` does not expect Broza to delete `~/Projects/keep/big`.
+    /// On the Data volume a path has two spellings for the same directory and
+    /// both are tried; anywhere else `/System/Volumes/Data/...` would be a
+    /// different place, so only the path as given is matched.
     pub fn matches(&self, path: &Path, on_data_volume: bool) -> bool {
         let Some(set) = self.set.as_ref() else {
             return false;
         };
-        if !on_data_volume {
-            return set.is_match(path);
-        }
-        firmlink_spellings(path).iter().any(|spelling| set.is_match(spelling))
+        path.ancestors().any(|ancestor| matches_exactly(set, ancestor, on_data_volume))
     }
 
     /// The patterns, in the order they were given.
@@ -83,8 +83,20 @@ impl Exclusions {
     }
 }
 
+/// One path against the set, in one spelling or in both.
+fn matches_exactly(set: &GlobSet, path: &Path, on_data_volume: bool) -> bool {
+    if !on_data_volume {
+        return set.is_match(path);
+    }
+    firmlink_spellings(path).iter().any(|spelling| set.is_match(spelling))
+}
+
 /// One pattern, compiled with the matching rules of a default macOS volume.
-fn compile(pattern: &str) -> Result<Glob, GuardRejection> {
+///
+/// `dir/**` also yields `dir`: someone who excludes everything inside a
+/// directory means the directory too, and removing it would take the contents
+/// with it.
+fn compile(pattern: &str) -> Result<Vec<Glob>, GuardRejection> {
     let invalid = |reason: &str| GuardRejection::InvalidExclusion {
         pattern: pattern.to_owned(),
         reason: reason.to_owned(),
@@ -92,11 +104,18 @@ fn compile(pattern: &str) -> Result<Glob, GuardRejection> {
     if !Path::new(pattern).is_absolute() {
         return Err(invalid("an exclusion must be an absolute path pattern"));
     }
-    GlobBuilder::new(pattern)
-        .case_insensitive(true)
-        .literal_separator(false)
-        .build()
-        .map_err(|error| invalid(&error.to_string()))
+    let stem = pattern.strip_suffix("/**").filter(|stem| !stem.is_empty());
+    [Some(pattern), stem]
+        .into_iter()
+        .flatten()
+        .map(|source| {
+            GlobBuilder::new(source)
+                .case_insensitive(true)
+                .literal_separator(false)
+                .build()
+                .map_err(|error| invalid(&error.to_string()))
+        })
+        .collect()
 }
 
 /// `GlobSetBuilder::add` takes `&mut self`; this keeps the call site immutable.
@@ -207,6 +226,27 @@ mod tests {
         assert!(!exclusions.matches(twin, false));
         let plain = Path::new("/Users/dana/Library/Caches/app.cache");
         assert!(exclusions.matches(plain, false), "the path as written always counts");
+    }
+
+    /// Excluding a directory protects everything under it, and `dir/**` protects
+    /// the directory itself — otherwise Broza would delete the directory and take
+    /// the protected contents with it.
+    #[test]
+    fn an_exclusion_protects_the_whole_subtree_in_both_spellings() {
+        for pattern in ["/Users/dana/Projects/keep", "/Users/dana/Projects/keep/**"] {
+            let exclusions = set(&[pattern]);
+            let protected = [
+                "/Users/dana/Projects/keep",
+                "/Users/dana/Projects/keep/big",
+                "/Users/dana/Projects/keep/deep/inside/file",
+                "/System/Volumes/Data/Users/dana/Projects/keep",
+                "/System/Volumes/Data/Users/dana/Projects/keep/big",
+            ];
+            for path in protected {
+                assert!(exclusions.matches(Path::new(path), true), "{pattern} must protect {path}");
+            }
+            assert!(!exclusions.matches(Path::new("/Users/dana/Projects/other"), true), "{pattern}");
+        }
     }
 
     #[test]

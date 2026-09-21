@@ -21,6 +21,7 @@
 use super::item::Outcome;
 use super::item::check_item;
 use super::rebuild::rebuild;
+use super::verdict::{check_quarantine_root, dry_run, nothing};
 use super::{ApprovedPlan, PendingApproval, Verdict, WriteRequest, seal};
 use crate::clean::PlanOutcome;
 use crate::model::{Action, CleanItem, CleanPlan, Finding, Risk};
@@ -43,9 +44,10 @@ pub fn approve(
     fs: &dyn FileOps,
 ) -> Result<Verdict, GuardRejection> {
     reject_duplicate_findings(findings)?;
+    check_quarantine_root(req, mounts, fs)?;
     let plan = &outcome.plan;
     if !req.apply {
-        return dry_run(plan.clone());
+        return dry_run(plan, req);
     }
     let input = req.policy_input(max_risk(plan, findings)?, is_irreversible(plan, req));
     let mode = confirmation_policy(input);
@@ -56,12 +58,12 @@ pub fn approve(
         return Err(GuardRejection::InformOnlySelected(informed.clone()));
     }
     if plan.items().is_empty() {
-        return Ok(Verdict::Nothing(plan.clone()));
+        return nothing(plan, req);
     }
     let payload = rebuild(plan, &check_items(plan, findings, req, mounts, fs)?)?;
     check_no_inform_only(&payload.plan)?;
     if payload.items.is_empty() {
-        return Ok(Verdict::Nothing(payload.plan));
+        return nothing(&payload.plan, req);
     }
     check_max_size(&payload, req)?;
     if let Ok(stopped) = PolicyError::try_from(mode) {
@@ -83,20 +85,6 @@ fn reject_duplicate_findings(findings: &[Finding]) -> Result<(), GuardRejection>
         }
         None => Ok(()),
     }
-}
-
-/// Check 1: without `--apply` the plan must already be, and stay, a dry run.
-fn dry_run(plan: CleanPlan) -> Result<Verdict, GuardRejection> {
-    if !plan.is_dry_run() {
-        return Err(GuardRejection::Inconsistent(format!(
-            "clean plan `{}` is marked applied but `--apply` was not given",
-            plan.session_id()
-        )));
-    }
-    if plan.items().is_empty() {
-        return Ok(Verdict::Nothing(plan));
-    }
-    Ok(Verdict::DryRun(plan))
 }
 
 /// Highest risk among the findings the plan refers to; `None` for an empty plan.

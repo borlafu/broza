@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::item::resolve_volume;
 use super::token::issue;
 use super::{Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, SnapshotDelete, Write};
 use crate::model::Action;
@@ -25,22 +26,33 @@ pub fn approve_quarantine_write(
     mounts: &MountTable,
     fs: &dyn FileOps,
 ) -> Result<Approved<QuarantineWrite>, GuardRejection> {
-    let root = canonicalize_no_follow(store_root, fs)?.path;
-    let entry = mounts.volume_for(&root).ok_or_else(|| GuardRejection::UnknownVolume(root.clone()))?;
+    let checked_root = canonicalize_no_follow(store_root, fs)?;
+    let root = checked_root.path.clone();
+    let entry = resolve_volume(&checked_root, mounts)?;
     allows_action(entry.volume.role, Action::Quarantine).map_err(|rejection| rejection.with_path(&root))?;
     let approved = paths_inside_store
         .iter()
-        .map(|path| check_inside_store(path, &root, fs))
+        .map(|path| check_inside_store(path, &root, mounts, fs))
         .collect::<Result<Vec<ApprovedItem>, GuardRejection>>()?;
     Ok(issue::<QuarantineWrite>(approved))
 }
 
-fn check_inside_store(path: &Path, root: &Path, fs: &dyn FileOps) -> Result<ApprovedItem, GuardRejection> {
+/// One entry of the store: inside it, on the volume the mount table expects.
+fn check_inside_store(
+    path: &Path,
+    root: &Path,
+    mounts: &MountTable,
+    fs: &dyn FileOps,
+) -> Result<ApprovedItem, GuardRejection> {
     let checked = canonicalize_no_follow(path, fs)?;
-    if checked.path != root && checked.path.starts_with(root) {
-        return Ok(ApprovedItem::from_checked(&checked));
+    if checked.path == root || !checked.path.starts_with(root) {
+        return Err(GuardRejection::OutsideQuarantineStore {
+            path: checked.path,
+            store_root: root.to_path_buf(),
+        });
     }
-    Err(GuardRejection::OutsideQuarantineStore { path: checked.path, store_root: root.to_path_buf() })
+    resolve_volume(&checked, mounts)?;
+    Ok(ApprovedItem::from_checked(&checked))
 }
 
 /// Narrows a plan approved for writing to a snapshot deletion.

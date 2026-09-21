@@ -26,6 +26,13 @@
 //!
 //! # What the kernel does *not* guarantee
 //!
+//! Directory sizes are the scanner's aggregate, not something the kernel
+//! measured: `lstat` on a directory reports the directory entry, and walking
+//! every subtree again would double the cost of a run.
+//! [`ApprovedItem::size_verified`](guard::ApprovedItem::size_verified) marks
+//! which figure is which, and the executor re-measures a directory immediately
+//! before removing it (`docs/cli-spec.md` §3.4, check 6).
+//!
 //! The checks describe the filesystem **at the moment they ran**. A path can be
 //! replaced between the check and the write, and no user-space program can
 //! prevent that. The kernel therefore hands the executor the `(device, inode)` it
@@ -54,6 +61,7 @@
 
 pub mod exclusions;
 pub mod exit_code;
+pub mod firmlink;
 pub mod guard;
 pub mod path;
 pub mod policy;

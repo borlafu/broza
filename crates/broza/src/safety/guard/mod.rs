@@ -23,6 +23,7 @@ mod item;
 mod narrow;
 mod rebuild;
 mod token;
+mod verdict;
 
 pub use checks::approve;
 pub use narrow::{approve_quarantine_write, narrow_to_snapshot_delete};

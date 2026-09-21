@@ -95,6 +95,17 @@ impl ApprovedItem {
     pub fn is_dir(&self) -> bool {
         self.is_dir
     }
+
+    /// `true` when [`Self::size_bytes`] is what the guard measured itself.
+    ///
+    /// Only files are measured: `lstat` on a directory reports the size of the
+    /// directory entry, not of its contents, and the guard does not walk trees.
+    /// A directory's size is the scanner's aggregate, which may be stale — the
+    /// executor re-measures it immediately before removal and abandons the item
+    /// when the cap would be exceeded (`docs/cli-spec.md` §3.4).
+    pub fn size_verified(&self) -> bool {
+        !self.is_dir
+    }
 }
 
 /// A plan the guard approved, with the per-path evidence behind it.

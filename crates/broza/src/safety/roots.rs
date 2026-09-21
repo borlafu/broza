@@ -8,6 +8,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::model::Category;
+use crate::safety::firmlink::{firmlink_spellings, is_volume_root, without_data_volume_prefix};
 use crate::safety::rejection::GuardRejection;
 use crate::safety::roles::is_protected;
 use crate::scan::MountEntry;
@@ -20,9 +21,6 @@ pub const LIBRARY_CACHES_ROOT: &str = "/Library/Caches";
 pub const APPLICATIONS_ROOT: &str = "/Applications";
 /// Per-volume trash directory name, at the root of the volume.
 pub const TRASHES_DIR: &str = ".Trashes";
-/// Mount point of the Data volume; `/Users/x` and `/System/Volumes/Data/Users/x`
-/// are the same directory seen through a firmlink.
-pub const DATA_VOLUME_ROOT: &str = "/System/Volumes/Data";
 /// Parent of the per-uid temporary directories.
 const UID_TEMP_PARENT: &str = "/private/var/folders";
 /// `/Users/<name>`: the two components a home directory has.
@@ -118,26 +116,31 @@ fn normal_components(path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The same directory spelled on the Data volume; unchanged when it already is.
-pub fn data_volume_twin(path: &Path) -> PathBuf {
-    if path.starts_with(DATA_VOLUME_ROOT) {
-        return path.to_path_buf();
+/// Where the quarantine store may live.
+///
+/// Anywhere inside the allowlist, or anywhere inside a volume Broza may write to
+/// — the specification lets the user put the store on an external disk so that
+/// items from that disk can be moved without crossing devices
+/// (`docs/cli-spec.md` §3.4, cross-volume rule). It may never be a volume root.
+pub fn validate_quarantine_root(
+    store_root: &Path,
+    roots: &AllowedRoots,
+    mount: &MountEntry,
+    mounts: &crate::scan::MountTable,
+) -> Result<(), GuardRejection> {
+    crate::safety::path::reject_relative_components(store_root)
+        .map_err(|error| invalid_root(store_root, &error.to_string()))?;
+    if is_volume_root(store_root, mounts) {
+        return Err(invalid_root(store_root, "the quarantine store cannot be a volume root"));
     }
-    path.strip_prefix("/")
-        .map_or_else(|_| path.to_path_buf(), |relative| Path::new(DATA_VOLUME_ROOT).join(relative))
-}
-
-/// The same directory spelled through the firmlink; unchanged when it already is.
-pub fn without_data_volume_prefix(path: &Path) -> PathBuf {
-    path.strip_prefix(DATA_VOLUME_ROOT)
-        .map_or_else(|_| path.to_path_buf(), |relative| Path::new("/").join(relative))
-}
-
-/// Both spellings of a path, the firmlinked one first.
-pub fn firmlink_spellings(path: &Path) -> [PathBuf; 2] {
-    let plain = without_data_volume_prefix(path);
-    let twin = data_volume_twin(&plain);
-    [plain, twin]
+    if !mount.volume.role.writable_by_broza() {
+        return Err(invalid_root(store_root, "the quarantine store must be on a writable volume"));
+    }
+    let inside_allowlist = roots.roots().iter().any(|root| is_strictly_under(store_root, root));
+    if inside_allowlist || is_strictly_under(store_root, &mount.mount_point) {
+        return Ok(());
+    }
+    Err(invalid_root(store_root, "the quarantine store must be inside a volume Broza may write to"))
 }
 
 /// What the item being checked is, so the conditional roots can be resolved.
@@ -192,10 +195,7 @@ fn is_strictly_under(path: &Path, root: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        APPLICATIONS_ROOT, AllowedRoots, RootContext, firmlink_spellings, is_allowed_root,
-        is_under_allowed_root,
-    };
+    use super::{APPLICATIONS_ROOT, AllowedRoots, RootContext, is_allowed_root, is_under_allowed_root};
     use crate::model::{Category, Volume, VolumeRole};
     use crate::safety::rejection::GuardRejection;
     use crate::scan::MountEntry;
@@ -365,12 +365,5 @@ mod tests {
         let context = context(Category::UnusedApps, &data);
         assert!(!is_under_allowed_root(Path::new(APPLICATIONS_ROOT), &roots(), context));
         assert!(is_allowed_root(Path::new(APPLICATIONS_ROOT), &roots(), context));
-    }
-
-    #[test]
-    fn a_path_has_exactly_two_spellings() {
-        let expected = [PathBuf::from("/Users/dana/x"), PathBuf::from("/System/Volumes/Data/Users/dana/x")];
-        assert_eq!(firmlink_spellings(Path::new("/Users/dana/x")), expected);
-        assert_eq!(firmlink_spellings(Path::new("/System/Volumes/Data/Users/dana/x")), expected);
     }
 }

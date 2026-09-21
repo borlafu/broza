@@ -505,6 +505,12 @@ Every `--json` output shares this structure:
 - All sizes are **integers in bytes**, never formatted strings. Formatting belongs to the presentation layer.
 - All timestamps are **ISO 8601 / RFC 3339 in UTC**.
 - Consumers MUST **ignore unknown fields** and **unknown enum values** without failing.
+- Optional fields are **absent**, never `null`, when they have no value.
+- Values of the enums persisted in the quarantine manifest (`status`, `state`, `error`) and of
+  `type` MUST survive a read-modify-write cycle **verbatim**: a reader that does not know a value
+  keeps the original token instead of rewriting it. `role` is the exception: an unrecognised role
+  is read as `unknown`, because the role decides write protection (§6) and the safest reading of an
+  unknown role is "not writable".
 - Field names are `snake_case`; identifiers (categories, finding ids) are `kebab-case` with `.` as the detector separator.
 - `errors[]` entries have the shape `{ "code": "<stable_code>", "message": "<human text>", "path": "<optional>" }`. A non-empty `errors[]` implies exit code `5` when the operation was partial.
 - `warnings[]` entries have the same shape; they never affect the exit code.
@@ -514,6 +520,7 @@ Every `--json` output shares this structure:
 | Enum | Values |
 |---|---|
 | `role` | `system` · `data` · `preboot` · `recovery` · `vm` · `backup` · `user` · `unknown` |
+| `type` (container filesystem) | `apfs` · `hfs_plus` · any other token, passed through unchanged |
 | `risk` | `green` · `amber` · `red` |
 | `action` | `quarantine` · `purge` · `tmutil_delete` · `inform_only` |
 | `status` (clean / restore item) | `planned` · `quarantined` · `purged` · `restored` · `skipped` · `failed` |
@@ -560,6 +567,10 @@ Every `--json` output shares this structure:
 ```
 
 `purgeable_bytes` is an estimate derived from `NSURLVolumeAvailableCapacityForImportantUsageKey` minus `free_bytes`, clamped at 0; the human output labels it as an estimate. Hard links and APFS clones are counted once in `size_bytes`.
+
+`volumes[].mount_point` is **optional**: volumes that macOS does not mount, typically `Preboot`
+and `Recovery`, are enumerated with their role and size but without a mount point, and the field
+is then absent.
 
 ### 4.3 `suggest`
 
@@ -632,8 +643,8 @@ Every `--json` output shares this structure:
 | `risk` | `green` · `amber` · `red`. |
 | `actionable` | If `false`, Broza **cannot** remove it. The GUI MUST disable the control. |
 | `action` | `quarantine` · `purge` · `tmutil_delete` · `inform_only`. |
-| `instructions` | Present only when `action` is `inform_only`. Contains the provider's official steps. |
-| `snapshots` | Present only for `category: snapshots`. Each entry has `name` and `purgeable`. |
+| `instructions` | Present **exactly** when `action` is `inform_only`, and required there: a finding Broza refuses to act on MUST tell the user what to do instead. Contains the provider's official steps. |
+| `snapshots` | Present only for `category: snapshots`. Each entry has `name`, `purgeable` and an optional `uuid` (present when macOS reports one). |
 | `paths[].last_used` | Optional. Absent when neither `atime` nor Spotlight provides a value. |
 
 ### 4.4 `clean`
@@ -643,8 +654,8 @@ Every `--json` output shares this structure:
   "data": {
     "dry_run": false,
     "session_id": "cln_20260921103608_a1b2",
-    "planned_bytes": 138200000000,
-    "quarantined_bytes": 121400000000,
+    "planned_bytes": 111000000000,
+    "quarantined_bytes": 94200000000,
     "reclaimed_bytes": 12400000000,
     "quarantine_path": "/Users/x/.local/share/broza/quarantine/cln_20260921103608_a1b2",
     "expired_sessions": [{
@@ -685,6 +696,17 @@ Every `--json` output shares this structure:
 
 `CleanItem.error` is an optional string present only when `status` is `skipped` or `failed`; values come from the `error` enum in §4.1 (e.g. `cross_volume`, `permission_denied`). The human output prints the same code with a hint.
 
+`quarantine_path` is **optional**: it is absent in a dry run and in any run that quarantines
+nothing (a `--purge` run, or a plan whose items are all `tmutil_delete`).
+
+**Consistency rules (normative).** A `clean` document MUST satisfy all of them; the example above
+does, and an implementation MUST reject one that does not:
+
+- `planned_bytes` equals the sum of `items[].size_bytes` — the `items` array is never abridged.
+- An item carries `error` only when its `status` is `skipped` or `failed`.
+- In a dry run: `quarantined_bytes` and `reclaimed_bytes` are `0`, `quarantine_path` and
+  `expired_sessions` are absent, and every item has `status: "planned"`.
+
 > In a dry run `quarantined_bytes` and `reclaimed_bytes` are always `0` and every item is `planned`. This lets the GUI use the same code path to preview and to execute.
 
 ### 4.5 `quarantine list`
@@ -714,7 +736,12 @@ Every `--json` output shares this structure:
 }
 ```
 
-`state: "expired"` is derived at read time (`expires_at < now`) from a session whose stored state is `complete`; it is never written to the manifest.
+`state: "expired"` is derived at read time (`expires_at < now`) from a session whose stored state is `complete`; it is never written to the manifest. A manifest that stores it is rejected as corrupt.
+
+The session object is also the shape of `manifest.json`, with one addition: in the manifest each
+session carries `entries`, an array of the objects described in §4.6 (`id`, `original_path`,
+optional `stored_path`, optional `restored_to`, `size_bytes`, `status`, optional `error`).
+`quarantine list` omits `entries`; `restore --list` reports them under `items`.
 
 ### 4.6 `restore` and `quarantine expire|purge`
 
@@ -739,6 +766,18 @@ Every `--json` output shares this structure:
   }
 }
 ```
+
+An item of a session has this shape:
+
+| Field | Contract |
+|---|---|
+| `id` | `<session id>/<seq>`, the identifier accepted by `broza restore`. |
+| `original_path` | Where the item was before it was quarantined. |
+| `stored_path` | Optional. Where the item currently lives inside the session directory; present in `manifest.json`, omitted once the item was restored or purged. |
+| `restored_to` | Optional. Where the item was put back; present after a restore, absent otherwise (and for `restore --list`). |
+| `size_bytes` | Size of the item. |
+| `status` | From the `status` enum in §4.1: `planned` for `restore --list`, then `restored`, `skipped` or `failed`. |
+| `error` | Optional. Present only when `status` is `skipped` or `failed`. |
 
 `quarantine expire` and `quarantine purge` share one shape:
 
@@ -861,3 +900,4 @@ Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<vol
 - §7: cache location `~/.cache/broza/v1/<volume_uuid>/`, key `(dev, inode, mtime)`, TTL `cache-ttl`, corruption → exit `9`.
 - §8: former "open questions" resolved (node_modules, hashing, last_used, Docker, treemap, snapshot sizes, tmutil privileges) and a deferred list added (treemap, schedule/launchd, native DiskArbitration, per-volume quarantine roots, Docker daemon integration).
 - §9: this changelog.
+- §4 (while 1.1 is unreleased, so no bump): documented what the model of `crates/broza/src/model/` already implements — optional `volumes[].mount_point` (unmounted `Preboot` / `Recovery`), optional `snapshots[].uuid`, optional `clean.quarantine_path`, the `entries` array of `manifest.json` and the item fields `stored_path` / `restored_to`; `type` added to the stable-enum table with pass-through of unknown tokens; unknown-value handling made explicit per enum (verbatim pass-through for the persisted ones, collapse to `unknown` for `role`); `instructions` required for every `inform_only` finding; normative consistency rules for `clean`, and its example renumbered so `planned_bytes` is the sum of the items shown.

@@ -1,4 +1,4 @@
-//! Scripted [`ProcessRunner`](crate::ports::ProcessRunner).
+//! Scripted [`ProcessRunner`].
 //!
 //! A `FakeRunner` answers `(program, args)` with a recorded [`ProcessOutput`] or a
 //! scripted failure and never spawns anything. Every invocation is recorded so a test

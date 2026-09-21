@@ -21,9 +21,6 @@ pub fn render_list(report: &RestoreReport, errors: &[Warning], home: &Path) -> S
         return "Quarantine is empty.".to_owned();
     }
     let mut text = format!("{:<ID_WIDTH$}{:>SIZE_WIDTH$}  Original path", "Item", "Size");
-    for error in errors {
-        let _ignored = write!(text, "\n{}: {}", error.code, error.message);
-    }
     for session in &report.sessions {
         for item in &session.items {
             let _ignored = write!(
@@ -34,6 +31,9 @@ pub fn render_list(report: &RestoreReport, errors: &[Warning], home: &Path) -> S
                 abbreviate(&item.original_path, Some(home))
             );
         }
+    }
+    for error in errors {
+        let _ignored = write!(text, "\n   {}: {}", error.code, error.message);
     }
     let _ignored = write!(
         text,
@@ -59,7 +59,15 @@ pub fn render_restore(report: &RestoreReport, errors: &[Warning], home: &Path) -
             render_item(&mut text, item, home);
         }
     }
-    for error in errors {
+    // Per-item failures were rendered above from the items themselves; the
+    // errors that remain are about whole sessions (corrupt, busy, left behind).
+    let rendered: Vec<&Path> = report
+        .sessions
+        .iter()
+        .flat_map(|session| &session.items)
+        .map(|item| item.original_path.as_path())
+        .collect();
+    for error in errors.iter().filter(|error| error.path.as_deref().is_none_or(|p| !rendered.contains(&p))) {
         let _ignored = write!(text, "\n   {}: {}", error.code, error.message);
     }
     text
@@ -121,6 +129,29 @@ mod tests {
             stuck.contains("skipped      4.1 KB  ~/Library/Caches/x  (collision; something is at the original path, use --to)"),
             "{stuck}"
         );
+    }
+
+    #[test]
+    fn a_failed_item_is_printed_once_and_a_session_error_once() {
+        let per_item = Warning {
+            code: "not_found".into(),
+            message: "item was not restored".into(),
+            path: Some("/Users/dana/Library/Caches/x".into()),
+        };
+        let per_session = Warning {
+            code: "manifest_corrupt".into(),
+            message: "session cannot be read".into(),
+            path: Some("/q/cln_y".into()),
+        };
+
+        let text = render_restore(
+            &report("failed", Some("not_found")),
+            &[per_item, per_session],
+            Path::new("/Users/dana"),
+        );
+
+        assert_eq!(text.matches("not_found").count(), 1, "{text}");
+        assert!(text.contains("   manifest_corrupt: session cannot be read"), "{text}");
     }
 
     #[test]

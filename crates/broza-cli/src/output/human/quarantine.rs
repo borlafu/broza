@@ -65,10 +65,11 @@ pub fn render_reclaim(report: &ReclaimReport, errors: &[Warning]) -> String {
         OperationKind::Expire => "expire",
         _ => "purge",
     };
-    if report.sessions.is_empty() {
-        return format!("Nothing to {verb}.");
-    }
-    let mut text = format!("Freed {}.", format_bytes(report.reclaimed_bytes));
+    let mut text = if report.sessions.is_empty() {
+        format!("Nothing to {verb}.")
+    } else {
+        format!("Freed {}.", format_bytes(report.reclaimed_bytes))
+    };
     for session in &report.sessions {
         let _ignored = write!(
             text,
@@ -141,6 +142,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(render_reclaim(&empty, &[]), "Nothing to expire.");
+        let unreadable = Warning {
+            code: "manifest_corrupt".into(),
+            message: "quarantine session `/q/cln_x` cannot be read: bad json".into(),
+            path: Some("/q/cln_x".into()),
+        };
+        let with_error = render_reclaim(&empty, &[unreadable]);
+        assert!(with_error.starts_with("Nothing to expire.\n   manifest_corrupt: "), "{with_error}");
         let text = render_reclaim(&full, &[]);
         assert!(text.starts_with("Freed 138.2 GB."), "{text}");
         assert!(text.contains("removed       138.2 GB  cln_20260917103608_a1b2  (1284 item(s))"), "{text}");

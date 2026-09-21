@@ -1,4 +1,4 @@
-//! In-memory [`FileOps`](crate::ports::FileOps).
+//! In-memory [`FileOps`].
 //!
 //! `FakeFileOps` is the filesystem every unit test runs against: no `$HOME`, no real
 //! disks, no cleanup (`AGENTS.md` §7). It mirrors the observable behaviour of

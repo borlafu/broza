@@ -1,4 +1,4 @@
-//! Frozen [`Clock`](crate::ports::Clock).
+//! Frozen [`Clock`].
 
 use std::sync::Mutex;
 use std::time::Duration;

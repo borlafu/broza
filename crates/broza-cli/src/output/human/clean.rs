@@ -81,7 +81,7 @@ fn render_dry_run(plan: &CleanPlan, due: &[(SessionId, u64)], home: &Path, rerun
         let _ignored = write!(
             text,
             "\n\nNote: irreversible deletion lands in milestone M4; `{rerun} --apply` is refused today.\nQuarantine the items instead ({} --apply) and `broza quarantine purge` the session afterwards.",
-            rerun.trim_end_matches(" --purge")
+            rerun.strip_suffix(" --purge").unwrap_or(rerun)
         );
         return text;
     }

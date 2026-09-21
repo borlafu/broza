@@ -1,4 +1,4 @@
-//! Real [`Clock`](crate::ports::Clock).
+//! Real [`Clock`].
 
 use jiff::Timestamp;
 

@@ -233,6 +233,7 @@ pub(crate) fn item_errors(plan: &CleanPlan) -> Vec<Warning> {
 /// dry-run footer: built from the flags, never guessed from the plan.
 fn rerun_command(args: &CleanArgs) -> String {
     let mut parts = vec!["broza clean".to_owned()];
+    // Categories reached this point as validated kebab-case ids: safe bare words.
     parts.extend(args.categories.iter().map(|c| format!("--category {c}")));
     if let Some(risk) = args.risk {
         let level = match risk {

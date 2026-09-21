@@ -2,7 +2,7 @@
 //!
 //! These modules own the shape of what a person reads; the `--json` and
 //! `--csv` forms of the same data go through [`crate::output::render`]. Every
-//! function here is pure: a report and a [`ColorPolicy`](crate::output::ColorPolicy)
+//! function here is pure: a report and a [`ColorPolicy`]
 //! in, a `String` out, so a layout can be snapshot-tested without a terminal.
 
 pub mod clean;

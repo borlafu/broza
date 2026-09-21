@@ -1,4 +1,4 @@
-//! Scripted [`Prompter`](crate::ports::Prompter).
+//! Scripted [`Prompter`].
 
 use std::collections::VecDeque;
 use std::sync::Mutex;

@@ -1,4 +1,4 @@
-//! Real [`ProcessRunner`](crate::ports::ProcessRunner).
+//! Real [`ProcessRunner`].
 //!
 //! Two properties matter here and both are load bearing.
 //!

@@ -1,0 +1,70 @@
+---
+source: crates/broza/tests/json_contract.rs
+expression: value
+---
+{
+  "data": {
+    "by_risk": {
+      "amber": 96100000000,
+      "green": 138200000000,
+      "red": 12500000000
+    },
+    "findings": [
+      {
+        "action": "quarantine",
+        "actionable": true,
+        "category": "build-cache",
+        "description": "Xcode build artefacts. They are regenerated automatically.",
+        "id": "build-cache.xcode-deriveddata",
+        "item_count": 1284,
+        "paths": [
+          {
+            "last_used": "2026-06-15T09:12:00Z",
+            "path": "/Users/x/Library/Developer/Xcode/DerivedData",
+            "size_bytes": 94200000000
+          }
+        ],
+        "reasoning": "Not opened in 94 days. Xcode regenerates this directory on the next build.",
+        "reclaimable_bytes": 94200000000,
+        "risk": "green",
+        "title": "Xcode DerivedData"
+      },
+      {
+        "action": "tmutil_delete",
+        "actionable": true,
+        "category": "snapshots",
+        "description": "APFS copy-on-write snapshots kept locally by Time Machine.",
+        "id": "snapshots.timemachine-local",
+        "item_count": 4,
+        "reasoning": "size not reported by macOS",
+        "reclaimable_bytes": 0,
+        "risk": "amber",
+        "snapshots": [
+          {
+            "name": "com.apple.TimeMachine.2026-09-20-101530.local",
+            "purgeable": true
+          }
+        ],
+        "title": "Time Machine local snapshots"
+      },
+      {
+        "action": "inform_only",
+        "actionable": false,
+        "category": "cloud-synced",
+        "id": "cloud-synced.icloud",
+        "instructions": {
+          "provider": "iCloud Drive",
+          "steps": [
+            "System Settings → [your name] → iCloud → iCloud Drive",
+            "Turn on \"Optimize Mac Storage\""
+          ],
+          "summary": "Use Apple's official feature to release local copies."
+        },
+        "reclaimable_bytes": 12500000000,
+        "risk": "red",
+        "title": "Already backed up in iCloud Drive"
+      }
+    ],
+    "total_reclaimable_bytes": 246800000000
+  }
+}

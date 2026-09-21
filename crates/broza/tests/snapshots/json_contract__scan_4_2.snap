@@ -1,0 +1,45 @@
+---
+source: crates/broza/tests/json_contract.rs
+expression: value
+---
+{
+  "data": {
+    "disks": [
+      {
+        "containers": [
+          {
+            "free_bytes": 98120000000,
+            "id": "disk3",
+            "purgeable_bytes": 84140000000,
+            "size_bytes": 994662584320,
+            "type": "apfs",
+            "used_bytes": 812400000000,
+            "volumes": [
+              {
+                "id": "disk3s1",
+                "mount_point": "/",
+                "name": "Macintosh HD",
+                "purpose": "Read-only, sealed and signed operating system volume (SSV).",
+                "role": "system",
+                "used_bytes": 11300000000,
+                "writable_by_broza": false
+              }
+            ]
+          }
+        ],
+        "id": "disk0",
+        "internal": true,
+        "model": "APPLE SSD AP1024Z",
+        "size_bytes": 1000555581440
+      }
+    ],
+    "largest_items": [
+      {
+        "kind": "directory",
+        "path": "/Users/x/Library/Developer",
+        "size_bytes": 312400000000,
+        "volume_id": "disk3s5"
+      }
+    ]
+  }
+}

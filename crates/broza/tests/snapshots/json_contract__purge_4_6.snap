@@ -1,0 +1,18 @@
+---
+source: crates/broza/tests/json_contract.rs
+expression: value
+---
+{
+  "data": {
+    "operation": "purge",
+    "reclaimed_bytes": 138200000000,
+    "sessions": [
+      {
+        "id": "cln_20260917103608_a1b2",
+        "item_count": 1284,
+        "status": "purged",
+        "total_bytes": 138200000000
+      }
+    ]
+  }
+}

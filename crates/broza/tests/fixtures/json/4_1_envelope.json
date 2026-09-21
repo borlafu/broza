@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.1",
+  "broza_version": "0.1.0",
+  "generated_at": "2026-09-21T10:36:08Z",
+  "command": "suggest",
+  "host": {
+    "macos_version": "26.1",
+    "arch": "arm64"
+  },
+  "data": {},
+  "warnings": [],
+  "errors": []
+}

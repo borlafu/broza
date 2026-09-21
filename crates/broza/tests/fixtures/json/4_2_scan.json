@@ -1,0 +1,33 @@
+{
+  "data": {
+    "disks": [{
+      "id": "disk0",
+      "model": "APPLE SSD AP1024Z",
+      "size_bytes": 1000555581440,
+      "internal": true,
+      "containers": [{
+        "id": "disk3",
+        "type": "apfs",
+        "size_bytes": 994662584320,
+        "used_bytes": 812400000000,
+        "free_bytes": 98120000000,
+        "purgeable_bytes": 84140000000,
+        "volumes": [{
+          "id": "disk3s1",
+          "name": "Macintosh HD",
+          "role": "system",
+          "mount_point": "/",
+          "used_bytes": 11300000000,
+          "writable_by_broza": false,
+          "purpose": "Read-only, sealed and signed operating system volume (SSV)."
+        }]
+      }]
+    }],
+    "largest_items": [{
+      "path": "/Users/x/Library/Developer",
+      "size_bytes": 312400000000,
+      "kind": "directory",
+      "volume_id": "disk3s5"
+    }]
+  }
+}

@@ -1,5 +1,6 @@
 //! The human renderings of `broza restore` (`docs/cli-spec.md` §3.5).
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -61,14 +62,19 @@ pub fn render_restore(report: &RestoreReport, errors: &[Warning], home: &Path) -
     }
     // Per-item failures were rendered above from the items themselves; the
     // errors that remain are about whole sessions (corrupt, busy, left behind).
-    let rendered: Vec<&Path> = report
+    let rendered: HashSet<&Path> = report
         .sessions
         .iter()
         .flat_map(|session| &session.items)
+        .filter(|item| item.status.is_unsuccessful())
         .map(|item| item.original_path.as_path())
         .collect();
-    for error in errors.iter().filter(|error| error.path.as_deref().is_none_or(|p| !rendered.contains(&p))) {
+    for error in errors.iter().filter(|error| error.path.as_deref().is_none_or(|p| !rendered.contains(p))) {
         let _ignored = write!(text, "\n   {}: {}", error.code, error.message);
+    }
+    if !rendered.is_empty() {
+        let _ignored =
+            write!(text, "\n\nWhat did not go back is still in quarantine; run the same command again.");
     }
     text
 }
@@ -151,7 +157,12 @@ mod tests {
         );
 
         assert_eq!(text.matches("not_found").count(), 1, "{text}");
+        assert!(
+            text.contains("failed") && text.contains("~/Library/Caches/x"),
+            "the item line survived: {text}"
+        );
         assert!(text.contains("   manifest_corrupt: session cannot be read"), "{text}");
+        assert!(text.ends_with("still in quarantine; run the same command again."), "{text}");
     }
 
     #[test]

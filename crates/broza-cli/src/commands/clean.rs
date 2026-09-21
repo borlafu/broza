@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use broza::clean::planner::{Selection, plan_dry_run};
 use broza::config::Config;
-use broza::model::{CleanPlan, Host, Risk, Warning};
+use broza::model::{Category, CleanPlan, Host, Risk, Warning};
 use broza::ports::Ports;
 use broza::quarantine::layout::generate_session_id;
 use broza::quarantine::{MoveRequest, quarantine_items};
@@ -233,8 +233,13 @@ pub(crate) fn item_errors(plan: &CleanPlan) -> Vec<Warning> {
 /// dry-run footer: built from the flags, never guessed from the plan.
 fn rerun_command(args: &CleanArgs) -> String {
     let mut parts = vec!["broza clean".to_owned()];
-    // Categories reached this point as validated kebab-case ids: safe bare words.
-    parts.extend(args.categories.iter().map(|c| format!("--category {c}")));
+    // Categories are emitted as the validated ids, not the raw arguments.
+    parts.extend(
+        args.categories
+            .iter()
+            .filter_map(|raw| Category::all().into_iter().find(|c| c.as_str() == raw.trim()))
+            .map(|c| format!("--category {}", c.as_str())),
+    );
     if let Some(risk) = args.risk {
         let level = match risk {
             RiskLevel::Green => "green",

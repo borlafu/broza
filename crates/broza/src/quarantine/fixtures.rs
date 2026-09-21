@@ -8,11 +8,14 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
+use crate::clean::{Selection, plan_dry_run};
 use crate::model::{
-    ItemStatus, QuarantineEntry, QuarantineSession, SessionId, SessionState,
+    Category, Finding, FindingPath, ItemStatus, QuarantineEntry, QuarantineSession, SessionId, SessionState,
 };
+use crate::ports::Answer;
 use crate::quarantine::layout;
-use crate::testing::FakeFileOps;
+use crate::safety::guard::{Approved, Verdict, Write, WriteRequest, approve};
+use crate::testing::{FakeFileOps, FakePrompter, mac_mount_table};
 
 /// Home directory of the fake user.
 pub const HOME: &str = "/Users/dana";
@@ -86,4 +89,46 @@ pub fn store_fs() -> FakeFileOps {
 /// [`store_fs`] with the fixture session directory already created.
 pub fn session_fs() -> FakeFileOps {
     store_fs().with_dir(session_dir())
+}
+
+/// One green `user-cache` finding covering `paths`.
+pub fn caches(paths: &[(&str, u64)]) -> Vec<Finding> {
+    let reported = paths
+        .iter()
+        .map(|(path, size_bytes)| FindingPath {
+            path: PathBuf::from(*path),
+            size_bytes: *size_bytes,
+            last_used: None,
+        })
+        .collect();
+    let id = "user-cache.app".parse().unwrap_or_else(|error| panic!("{error}"));
+    let finding = Finding::builder(id, Category::UserCache, "caches")
+        .paths(reported)
+        .reclaimable_bytes(paths.iter().map(|(_, size)| *size).fold(0_u64, u64::saturating_add))
+        .build()
+        .unwrap_or_else(|error| panic!("{error}"));
+    vec![finding]
+}
+
+/// A token for quarantining `paths`, produced by the real safety kernel.
+///
+/// Going through [`approve`] rather than forging a token is the point: the unit
+/// tests of the store then exercise the same evidence the executor will get,
+/// `(device, inode)` included.
+pub fn approved_write(fs: &FakeFileOps, paths: &[(&str, u64)]) -> Approved<Write> {
+    let findings = caches(paths);
+    let outcome = plan_dry_run(&findings, &Selection::everything(), session_id(), None)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let request = WriteRequest {
+        apply: true,
+        tty: true,
+        quarantine_root: Some(PathBuf::from(ROOT)),
+        ..WriteRequest::new(HOME)
+    };
+    match approve(&outcome, &findings, &request, &mac_mount_table(), fs) {
+        Ok(Verdict::NeedsConfirmation(pending)) => {
+            pending.confirm(&FakePrompter::scripted(&[Answer::Yes])).unwrap_or_else(|error| panic!("{error}"))
+        }
+        other => panic!("expected a pending approval, got {other:?}"),
+    }
 }

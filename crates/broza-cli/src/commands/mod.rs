@@ -1,8 +1,8 @@
 //! Command implementations.
 //!
-//! `about`, `config`, `scan` and `explain` are complete. Everything that
-//! *writes* to a disk parses fully and then reports [`not_implemented`]: the
-//! detection and cleanup engines land in milestone M3.
+//! `about`, `config`, `scan`, `explain`, `suggest` and `clean` are complete.
+//! `restore` and `quarantine` parse fully and then report [`not_implemented`]
+//! until the rest of milestone M3 lands.
 //!
 //! Every command returns an [`Outcome`]: the text to write to the sink, the
 //! exit code, and the warnings the envelope already carries, which
@@ -10,7 +10,13 @@
 
 pub mod about;
 pub mod atomic;
+pub mod clean;
+pub mod clean_expiry;
+pub mod clean_output;
+#[cfg(test)]
+mod clean_tests;
 pub mod config;
+pub mod detection;
 pub mod explain;
 pub mod mount;
 pub mod scan;

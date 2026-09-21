@@ -39,7 +39,7 @@ fn without_apply_the_verdict_is_always_a_dry_run() {
 fn an_empty_plan_is_nothing_to_do_even_without_a_terminal() {
     let request = WriteRequest { tty: false, ..applying() };
     let plan = CleanPlan::dry_run(session(), Vec::new()).unwrap_or_else(|error| panic!("{error}"));
-    let empty = PlanOutcome { plan, informed_only: Vec::new() };
+    let empty = PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() };
     let verdict = approve(&empty, &[], &request, &mounts(), &fs());
     assert!(matches!(verdict, Ok(Verdict::Nothing(_))), "{verdict:?}");
 }

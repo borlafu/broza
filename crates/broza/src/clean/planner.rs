@@ -43,14 +43,19 @@ impl Selection {
 ///
 /// `informed_only` is not an error: a dry run reports those findings and exits
 /// `0`. It becomes one under `--apply`, where the guard refuses the whole plan
-/// (`docs/cli-spec.md` §2), so the CLI passes it into
-/// [`PlanOutcome::informed_only`].
+/// (`docs/cli-spec.md` §2): the user asked for a category Broza only ever
+/// reports (`cloud-synced`). `informed_in_passing` never rejects anything: an
+/// inform-only finding that happens to live inside an actionable category
+/// (`build-cache.docker-raw`) is left out of the plan and named in a warning,
+/// so `clean --category build-cache --apply` works on a machine with Docker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOutcome {
     /// The dry-run plan.
     pub plan: CleanPlan,
-    /// Findings the selection matched that Broza only reports (`cloud-synced`).
+    /// Findings of an inform-only category the selection asked for (`cloud-synced`).
     pub informed_only: Vec<FindingId>,
+    /// Inform-only findings inside actionable categories, left out of the plan.
+    pub informed_in_passing: Vec<FindingId>,
 }
 
 /// Why a plan could not be built.
@@ -87,7 +92,8 @@ pub fn max_risk(findings: &[Finding], selection: &Selection) -> Option<Risk> {
 /// `status: planned`. Excluded paths and anything inside `quarantine_root` are
 /// dropped before the bytes are summed; `--purge` upgrades
 /// [`Action::Quarantine`] to [`Action::Purge`]. Inform-only findings never
-/// produce an item; they are returned in [`PlanOutcome::informed_only`].
+/// produce an item; they are returned in [`PlanOutcome::informed_only`] or
+/// [`PlanOutcome::informed_in_passing`] depending on their category.
 pub fn plan_dry_run(
     findings: &[Finding],
     selection: &Selection,
@@ -98,11 +104,12 @@ pub fn plan_dry_run(
         validate_quarantine_root(root)?;
     }
     let selected: Vec<&Finding> = findings.iter().filter(|f| selection.matches(f)).collect();
-    let informed_only = selected
-        .iter()
-        .filter(|finding| finding.action() == Action::InformOnly)
-        .map(|finding| finding.id().clone())
-        .collect();
+    let informed: Vec<&Finding> =
+        selected.iter().copied().filter(|finding| finding.action() == Action::InformOnly).collect();
+    let (informed_only, informed_in_passing): (Vec<&Finding>, Vec<&Finding>) =
+        informed.iter().partition(|finding| finding.category().is_inform_only());
+    let informed_only = informed_only.iter().map(|finding| finding.id().clone()).collect();
+    let informed_in_passing = informed_in_passing.iter().map(|finding| finding.id().clone()).collect();
     let items: Vec<CleanItem> = selected
         .iter()
         .filter(|finding| finding.action() != Action::InformOnly)
@@ -110,7 +117,7 @@ pub fn plan_dry_run(
         .collect();
     let plan =
         CleanPlan::dry_run(session_id, items).map_err(|error| PlanError::Invalid(error.to_string()))?;
-    Ok(PlanOutcome { plan, informed_only })
+    Ok(PlanOutcome { plan, informed_only, informed_in_passing })
 }
 
 /// The quarantine root is compared as a prefix, so a malformed one would
@@ -286,6 +293,29 @@ mod tests {
             outcome.plan.items().iter().all(|item| item.action != Action::InformOnly),
             "an inform-only finding never becomes an item"
         );
+    }
+
+    #[test]
+    fn an_inform_only_finding_inside_an_actionable_category_is_left_out_in_passing() {
+        let docker = Finding::builder(
+            "build-cache.docker-raw".parse().unwrap_or_else(|e| panic!("{e}")),
+            Category::BuildCache,
+            "Docker disk",
+        )
+        .action(Action::InformOnly)
+        .instructions(Instructions { provider: "Docker".into(), summary: "prune".into(), steps: Vec::new() })
+        .build()
+        .unwrap_or_else(|e| panic!("{e}"));
+        let selection = Selection { categories: Some(vec![Category::BuildCache]), ..Selection::everything() };
+
+        let outcome = outcome(&[docker, caches()], &selection);
+
+        assert!(outcome.informed_only.is_empty(), "the category itself is actionable");
+        assert_eq!(
+            outcome.informed_in_passing,
+            vec!["build-cache.docker-raw".parse().unwrap_or_else(|e| panic!("{e}"))]
+        );
+        assert!(outcome.plan.items().is_empty(), "nothing of build-cache is actionable here");
     }
 
     #[test]

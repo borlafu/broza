@@ -232,6 +232,57 @@ fn suggest_json_matches_its_snapshot() {
 }
 
 #[test]
+fn clean_dry_run_lists_the_plan_and_changes_nothing() {
+    let text = stdout_of(&["clean", "--category", "user-cache"]);
+
+    assert!(text.starts_with("Dry run: nothing was changed."), "{text}");
+    assert!(text.contains("~/Library/Caches/com.example.app"), "{text}");
+    assert!(text.contains("broza clean --category user-cache --apply"), "{text}");
+}
+
+#[test]
+fn clean_json_dry_run_matches_its_snapshot() {
+    let envelope = json_of(&["clean", "--category", "user-cache", "--json"]);
+
+    insta::assert_json_snapshot!(envelope, {
+        ".generated_at" => "[timestamp]",
+        ".broza_version" => "[version]",
+        ".data.session_id" => "[session]",
+    });
+}
+
+#[test]
+fn clean_apply_with_yes_quarantines_the_recorded_caches_in_the_recording() {
+    let envelope = json_of(&["clean", "--category", "user-cache", "--apply", "--yes", "--json"]);
+
+    assert_eq!(envelope["data"]["dry_run"], false, "{envelope}");
+    let items = envelope["data"]["items"].as_array().unwrap_or_else(|| panic!("{envelope}"));
+    assert!(items.iter().all(|item| item["status"] == "quarantined"), "{envelope}");
+    assert!(envelope["data"]["quarantined_bytes"].as_u64().unwrap_or(0) > 0, "{envelope}");
+    assert_eq!(envelope["data"]["reclaimed_bytes"], 0, "{envelope}");
+}
+
+#[test]
+fn clean_apply_without_a_terminal_exits_seven() {
+    let (code, stderr) = failure_of(&["clean", "--category", "user-cache", "--apply"]);
+
+    assert_eq!(code, Some(7), "{stderr}");
+}
+
+#[test]
+fn clean_of_build_cache_skips_the_docker_disk_with_a_warning() {
+    let envelope = json_of(&["clean", "--category", "build-cache", "--json"]);
+
+    let warnings = envelope["warnings"].as_array().unwrap_or_else(|| panic!("{envelope}"));
+    assert!(warnings.iter().any(|w| w["code"] == "inform_only_skipped"), "{envelope}");
+    let items = envelope["data"]["items"].as_array().unwrap_or_else(|| panic!("{envelope}"));
+    assert!(
+        items.iter().all(|item| !item["path"].as_str().unwrap_or("").ends_with("Docker.raw")),
+        "{envelope}"
+    );
+}
+
+#[test]
 fn suggest_csv_has_one_row_per_finding_in_contract_tokens() {
     let text = stdout_of(&["suggest", "--csv", "--category", "build-cache"]);
 

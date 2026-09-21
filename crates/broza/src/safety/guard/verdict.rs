@@ -1,11 +1,13 @@
 //! The two verdicts that write nothing, and the check that the quarantine store
 //! is a place Broza may write at all.
 
+use std::path::{Path, PathBuf};
+
 use super::item::resolve_volume;
 use super::{Verdict, WriteRequest};
 use crate::model::{CleanItem, CleanPlan, CleanPlanRepr};
 use crate::ports::FileOps;
-use crate::safety::path::canonicalize_no_follow;
+use crate::safety::path::{CanonicalPath, canonicalize_no_follow};
 use crate::safety::rejection::GuardRejection;
 use crate::safety::roots::validate_quarantine_root;
 use crate::scan::MountTable;
@@ -24,13 +26,51 @@ pub(super) fn check_quarantine_root(
         return Ok(None);
     };
     let roots = req.allowed_roots()?;
-    let checked = canonicalize_no_follow(store_root, fs).map_err(|error| GuardRejection::InvalidRoot {
-        path: store_root.clone(),
-        reason: error.to_string(),
-    })?;
+    let (checked, intended) = canonicalize_store_root(store_root, fs)?;
     let mount = resolve_volume(&checked, mounts)?;
-    validate_quarantine_root(&checked.path, &roots, mount, mounts)?;
-    Ok(Some(checked.path))
+    validate_quarantine_root(&intended, &roots, mount, mounts)?;
+    Ok(Some(intended))
+}
+
+/// The store root as `lstat` sees it, or — before the first cleanup, when it
+/// does not exist yet — its nearest existing ancestor checked in its place.
+///
+/// The mover creates the store under the root the guard approved, so what has
+/// to be safe is the place it will be created in. The components that do not
+/// exist yet must be plain names: nothing to follow, nothing to climb.
+fn canonicalize_store_root(
+    store_root: &Path,
+    fs: &dyn FileOps,
+) -> Result<(CanonicalPath, PathBuf), GuardRejection> {
+    let invalid = |error: &GuardRejection| GuardRejection::InvalidRoot {
+        path: store_root.to_path_buf(),
+        reason: error.to_string(),
+    };
+    let mut probe = store_root;
+    loop {
+        match canonicalize_no_follow(probe, fs) {
+            Ok(checked) => {
+                let intended = match store_root.strip_prefix(probe) {
+                    Ok(rest) if !rest.as_os_str().is_empty() => checked.path.join(rest),
+                    _ => checked.path.clone(),
+                };
+                return Ok((checked, intended));
+            }
+            Err(error) if error.is_missing_path() => {
+                let Some(parent) = probe.parent() else { return Err(invalid(&error)) };
+                if !is_plain_name(probe) {
+                    return Err(invalid(&error));
+                }
+                probe = parent;
+            }
+            Err(error) => return Err(invalid(&error)),
+        }
+    }
+}
+
+/// `true` when the final component of `path` is an ordinary name.
+fn is_plain_name(path: &Path) -> bool {
+    matches!(path.components().next_back(), Some(std::path::Component::Normal(_)))
 }
 
 /// Check 1: without `--apply` the plan must already be, and stay, a dry run.
@@ -63,4 +103,53 @@ pub(super) fn nothing(plan: &CleanPlan, req: &WriteRequest) -> Result<Verdict, G
     CleanPlan::new(repr)
         .map(Verdict::Nothing)
         .map_err(|error| GuardRejection::Inconsistent(format!("empty plan: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::canonicalize_store_root;
+    use crate::testing::FakeFileOps;
+
+    #[test]
+    fn a_store_that_does_not_exist_yet_is_checked_at_its_nearest_existing_ancestor() {
+        let fs = FakeFileOps::new().with_root("/", 1).with_dir("/Users/dana/.local");
+
+        let (checked, intended) =
+            canonicalize_store_root(Path::new("/Users/dana/.local/share/broza/quarantine"), &fs)
+                .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(checked.path, PathBuf::from("/Users/dana/.local"));
+        assert_eq!(intended, PathBuf::from("/Users/dana/.local/share/broza/quarantine"));
+    }
+
+    #[test]
+    fn an_existing_store_is_checked_as_itself() {
+        let fs = FakeFileOps::new().with_root("/", 1).with_dir("/Users/dana/q");
+
+        let (checked, intended) = canonicalize_store_root(Path::new("/Users/dana/q"), &fs)
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(checked.path, intended);
+    }
+
+    #[test]
+    fn a_missing_suffix_with_a_parent_component_is_refused() {
+        let fs = FakeFileOps::new().with_root("/", 1).with_dir("/Users/dana");
+
+        let refused = canonicalize_store_root(Path::new("/Users/dana/missing/../q"), &fs);
+
+        assert!(refused.is_err());
+    }
+
+    #[test]
+    fn a_symlinked_ancestor_is_still_refused() {
+        let fs =
+            FakeFileOps::new().with_root("/", 1).with_dir("/real").with_symlink("/Users/dana/link", "/real");
+
+        let refused = canonicalize_store_root(Path::new("/Users/dana/link/q"), &fs);
+
+        assert!(refused.is_err());
+    }
 }

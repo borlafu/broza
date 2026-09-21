@@ -218,7 +218,7 @@ fn an_empty_verdict_carries_no_borrowed_numbers() {
         items: Vec::new(),
     })
     .unwrap_or_else(|error| panic!("{error}"));
-    let outcome = PlanOutcome { plan: inflated, informed_only: Vec::new() };
+    let outcome = PlanOutcome { plan: inflated, informed_only: Vec::new(), informed_in_passing: Vec::new() };
     match approve(&outcome, &[], &applying(), &mounts(), &fs()) {
         Ok(Verdict::Nothing(plan)) => {
             assert_eq!(plan.quarantined_bytes(), 0);
@@ -235,7 +235,7 @@ fn an_empty_verdict_carries_no_borrowed_numbers() {
 #[test]
 fn an_empty_dry_run_is_reported_as_a_dry_run() {
     let plan = CleanPlan::dry_run(session(), Vec::new()).unwrap_or_else(|error| panic!("{error}"));
-    let outcome = PlanOutcome { plan, informed_only: Vec::new() };
+    let outcome = PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() };
     match approve(&outcome, &[], &WriteRequest::new(HOME), &mounts(), &fs()) {
         Ok(Verdict::Nothing(plan)) => assert!(plan.is_dry_run()),
         other => panic!("expected nothing to do, got {other:?}"),
@@ -270,5 +270,5 @@ fn forced_plan(finding: &Finding, path: &str, size_bytes: u64, action: Action) -
         }],
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    PlanOutcome { plan, informed_only: Vec::new() }
+    PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() }
 }

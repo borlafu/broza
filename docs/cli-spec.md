@@ -117,7 +117,9 @@ A single code space for the whole CLI. Scripts MUST be able to distinguish "I di
 | Situation | Exit code |
 |---|---|
 | `clean` dry run (no `--apply`) with a correct analysis, whatever the planned size | `0` |
-| `clean --apply` where the selection contains any red or `inform_only` item (e.g. `cloud-synced`) | `2` — the whole plan is rejected before anything is executed |
+| `clean --apply` where the selection asks for an inform-only **category** (`cloud-synced`) or reaches red risk | `2` — the whole plan is rejected before anything is executed |
+| `clean` whose selected category holds an inform-only **finding** beside actionable ones (`build-cache.docker-raw`) | The finding is left out of the plan with an `inform_only_skipped` warning; the exit code is decided by the rest of the plan |
+| `clean` without `--category` and without `--risk` | `2` — the selection is mandatory |
 | `--yes` together with `--purge` | `2` — `--purge` never accepts an implicit "yes" |
 | `--csv` on a command that does not support it | `2` |
 | `--json` together with `--csv` | `2` |
@@ -281,7 +283,8 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 - `build-cache` risk per finding: `xcode-deriveddata` green, `xcode-archives` amber (a shipped build, nothing recreates it), `orphan-node-modules` amber, `pycache` green, `gradle-caches` green, `cargo-target` amber (rebuilding a large workspace costs time), `docker-raw` amber and inform-only.
 - `build-cache` / orphan `node_modules`: a leaf `node_modules` directory is orphan when it is not tool-managed and either its parent has no `package.json` (the project is gone) or its parent is a project none of whose entries other than `node_modules` changed for `unused-after` (the newest mtime among them; the parent directory's own mtime only records when an entry was added or removed, which is the install time of anything installed once and used daily). Tool-managed means under `~/Library` (package-manager stores such as pnpm's, application payloads), under a hidden directory (`~/.vscode/extensions`, `~/.npm/_npx`, `~/.cache`) or inside an `.app` bundle: installed software that `npm install` in a project does not bring back. In monorepos only leaf `node_modules` are proposed.
 - `user-cache` / `library-caches`: entries are listed one level below `~/Library/Caches`. An entry that holds a directory nothing regenerates — today `LocalHistory`, JetBrains' per-file undo history — is opened up instead: its children are listed without that directory (up to three levels), so every path under the green label is regenerable. `paths[].last_used` of a directory is its mtime: an approximation, stated as such in `--explain`.
-- Paths claimed by two findings are credited once: a path under another finding's path is dropped from its finding and that finding's `reclaimable_bytes` and `item_count` are recomputed (the ancestor wins; two findings naming the same path keep it in the first, in category-then-id order). A finding left with no path is omitted. `total_reclaimable_bytes` therefore never counts a byte twice.
+- Paths claimed by two actionable findings are credited once: a path under another finding's path is dropped from its finding and that finding's `reclaimable_bytes` and `item_count` are recomputed (the ancestor wins whatever its risk, so the bytes are reported at the ancestor's level; two findings naming the same path keep it in the first, in category-then-id order). A finding left with no path is omitted. Inform-only findings take no part: they keep their paths and claim none. `total_reclaimable_bytes` therefore never counts a byte twice.
+- `build-cache` / orphan `node_modules`, idleness: only the project's direct entries are consulted. A directory's mtime changes when an entry is added or removed, not when a file deeper down is edited, so a project whose top-level files are stable while `src/` changes daily can read as idle; `.git` changing on every commit keeps such a project out of the list in practice. The finding is amber and quarantined for exactly this residual case.
 - A location one detector cannot read (typically `~/Downloads` without Full Disk Access) costs that finding and a `location_unreadable` warning naming it; the detector's other findings stand. A detector that fails outright becomes a `detector_failed` warning; the other detectors still report.
 - `duplicates`: candidates are grouped by size, then by the first 4 KiB, then confirmed by a full BLAKE3 hash. Only confirmed groups are reported.
 - `large-old-files` / `unused-apps`: `last_used` is `max(atime, kMDItemLastUsedDate)`. When Spotlight returns no value (typical for system apps) the finding's `reasoning` MUST state low confidence.
@@ -295,13 +298,14 @@ Reported, not reclaimable by Broza: 51.1 GB
 
 SAFE (green) — 138.2 GB
    build-cache      121.4 GB   Xcode DerivedData (94.2 GB), Python bytecode caches (27.2 GB)
-                               Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache
    user-cache        16.8 GB   Application caches (16.8 GB)
 
 REVIEW (amber) — 96.1 GB
    duplicates        52.3 GB   318 duplicate groups
    unused-apps       28.7 GB   6 apps not opened in more than 1 year
    old-backups       15.1 GB   2 iPhone backups from 2023
+   build-cache          0 B
+                               Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache
    snapshots           0 B     4 Time Machine local snapshots (size not reported by macOS)
 
 INFO ONLY (red) — 0 B
@@ -345,14 +349,18 @@ Supports `--json`. Does not support `--csv` (exit `2`).
 | Without `--apply` | Simulates, reports and exits `0`. Never prompts. |
 | `--apply` with green risk only | Summary + simple confirmation (`y/N`). |
 | `--apply` including amber risk | Detailed summary (every path) + explicit confirmation (`y/N`). |
-| `--apply` including red / `inform_only` | **Rejected**, exit `2`. `cloud-synced` cannot be removed by Broza. |
+| `--apply` including red risk, or asking for an inform-only category | **Rejected**, exit `2`. `cloud-synced` cannot be removed by Broza. An inform-only *finding* inside an actionable category (`build-cache.docker-raw`) is left out with an `inform_only_skipped` warning instead; the rest of the category proceeds. |
 | `--purge` | Double confirmation. The literal word `PURGE` must be typed. Ignores `--yes`; combining them exits `2`. |
 | Plan contains a natively irreversible action (`trash` → `purge`, `snapshots` → `tmutil_delete`) without `--purge` | Detailed summary flagged **irreversible** + explicit confirmation (`y/N`). `--yes` is honoured: these categories are amber and were selected explicitly. |
 | `--yes` (no `--purge`) | Skips the y/N prompt. Also covers the automatic expiry step below. |
 | No TTY and no `--yes` | Exits `7` (`CONFIRMATION_REQUIRED`). Does not act. |
 | `CI` set | Treated as no TTY. |
 
-**Automatic expiry on `--apply`:** before executing the plan, Broza expires every quarantine session whose `expires_at` is in the past (same effect as `broza quarantine expire`). This step uses the same confirmation level as green (`y/N`, covered by `--yes`); it is reported in `data.expired_sessions` and its freed bytes count towards `reclaimed_bytes`. A dry run lists sessions that *would* expire but does not touch them.
+**Automatic expiry on `--apply`:** before executing the plan, Broza expires every quarantine session whose `expires_at` is in the past (same effect as `broza quarantine expire`). This step uses the same confirmation level as green (`y/N`, covered by `--yes`); a declined prompt skips the step with an `expiry_declined` warning and the cleanup the user already confirmed still runs. It is reported in `data.expired_sessions` and its freed bytes count towards `reclaimed_bytes`. A dry run lists sessions that *would* expire — on stderr and as an `expiry_pending` warning naming their count and bytes — but does not touch them, and its `data` carries no `expired_sessions` (a dry run reclaims nothing).
+
+**Quarantine store on first use:** the store directory need not exist. The safety kernel checks the nearest existing ancestor of `quarantine-path` in its place (the components still to be created must be plain names) and the executor creates the directory under `--apply`; a dry run creates nothing.
+
+**`--purge` execution:** the planner and the confirmation matrix know `--purge` today; the executor does not yet delete irreversibly, so `clean --apply --purge` exits `1` with "not implemented" until the `trash` detector lands (M4). `clean --purge` without `--apply` plans normally.
 
 **Cross-volume rule:** the default quarantine root lives on the Data volume. An item that resides on a different device than the quarantine root (an external disk, a second APFS container) cannot be moved by rename; copying it would take time and free nothing. Such items are marked `skipped` with `error: "cross_volume"` and a hint on stderr: set `quarantine-path` to a directory on that volume (`broza config set quarantine-path /Volumes/External/.broza-quarantine`), or use `--purge` for that category. The rest of the plan proceeds; the exit code is `5` if anything else succeeded.
 
@@ -563,6 +571,16 @@ Every `--json` output shares this structure:
 | `session_left_behind` | `warnings[]` | Every item was restored but the empty session directory could not be removed. |
 | `session_has_untracked_items` | `errors[]` | A restore emptied the manifest while the directory still holds files. The session is kept in `restoring` and reported; this is the corruption case. |
 | `exclusive_rename_unsupported` | `warnings[]` | The filesystem has no atomic exclusive rename (exFAT, some network volumes), so the destination was checked first. Nothing was replaced, but the move was not atomic. |
+
+**Envelope codes of `clean`** (stable):
+
+| Code | Where | Meaning |
+|---|---|---|
+| `inform_only_skipped` | `warnings[]` | An inform-only finding of a selected, otherwise actionable category was left out of the plan; `broza explain <category>` says what to do instead. |
+| `expiry_pending` | `warnings[]` (dry run) | Sessions past their retention exist; `--apply` would expire them. `path` is the store. |
+| `expiry_declined` | `warnings[]` | The user declined the expiry prompt; the sessions stay and `broza quarantine expire` removes them. |
+| `expiry_unreadable` | `warnings[]` | The store could not be read for the expiry step; the plan still ran. |
+| `<item error code>` | `errors[]` | One entry per item that was `skipped` or `failed`, with the item's `error` as the code (`cross_volume`, `not_found`, …) and its path; these make the run partial (exit `5`). |
 
 **Envelope codes of detection** (`suggest`; stable):
 
@@ -1065,3 +1083,4 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §4.1 (M3, unreleased): `lock_unreadable` store code; a lock Broza cannot open never aborts a multi-session run.
 - §3.1 and §4.2 (M2-D, unreleased): the folder walker is wired into `scan`. `largest_items` is populated (allocated sizes, drill-down rule), `--tree` draws the folder tree, `PATH` arguments scan from those paths on the volume they live on (exit `4` on a protected or unknown volume, `2` when relative), progress is drawn on stderr on a TTY, `size_exceeds_volume` warns about clone overcount. The `folder_scan_pending` warning is gone.
 - §3.3, §4.1 and §4.3 (M3, unreleased): `suggest` totals count actionable findings only; `inform_only_bytes` added; paths claimed by two findings are credited once; per-finding risk of `build-cache` listed; orphan `node_modules` criterion narrowed (tool-managed trees excluded, idleness judged by the project's entries); `~/Library/Caches` entries holding non-regenerable data (`LocalHistory`) are opened up around it; detection warning codes `detector_failed`, `location_unreadable`, `finding_dropped`; `--min-size` keeps inform-only findings; human sketch corrected (inform-only line format, ordering, footer). §7: why `suggest` walks cold.
+- §2, §3.4 and §4.1 (M3, unreleased): `broza clean` is implemented (dry run, `--apply` with the confirmation matrix, automatic expiry, `--max-size`, `--exclude`). An inform-only finding inside an actionable category is skipped with `inform_only_skipped` instead of rejecting the plan; a dry run reports due sessions as `expiry_pending`; the store need not exist before the first cleanup; `clean --apply --purge` is "not implemented" (exit `1`) until M4. `clean` warning codes listed in §4.1.

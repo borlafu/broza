@@ -68,10 +68,11 @@ fn rejected_flag_combinations_never_reach_a_command() {
 #[test]
 fn pending_commands_exit_one() {
     let home = temp_home();
-    // `scan`, `explain` and `suggest` are covered by `scan_explain.rs`, which
-    // drives them against recorded plists. They are deliberately absent here:
-    // running them in process would spawn the real `diskutil`.
-    assert_eq!(run_in(home.path(), &["broza", "clean"]).0, ExitCode::GenericError);
+    // `scan`, `explain`, `suggest` and `clean` are covered by `scan_explain.rs`,
+    // which drives them against recorded plists. They are deliberately absent
+    // here: running them in process would spawn the real `diskutil`. A `clean`
+    // without a selection fails before any of that.
+    assert_eq!(run_in(home.path(), &["broza", "clean"]).0, ExitCode::UsageError);
     assert_eq!(run_in(home.path(), &["broza", "restore", "--all"]).0, ExitCode::GenericError);
     assert_eq!(run_in(home.path(), &["broza", "quarantine", "list"]).0, ExitCode::GenericError);
 }

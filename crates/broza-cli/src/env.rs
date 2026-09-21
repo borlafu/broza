@@ -5,7 +5,7 @@
 //! testable without touching the real `$HOME` or the real terminal.
 
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use broza::config::EnvSnapshot;
 
@@ -51,7 +51,13 @@ pub struct RuntimeEnv {
     pub host_override: Option<String>,
     /// See `FAKE_DISKUTIL_VAR`. Always `None` in release builds.
     pub fake_diskutil_fixtures: Option<PathBuf>,
+    /// `TMPDIR`: macOS points it inside the per-uid temporary directory, which
+    /// is one of the roots Broza may write under (`docs/cli-spec.md` §3.4).
+    pub tmpdir: Option<PathBuf>,
 }
+
+/// Where macOS keeps the per-uid temporary directories.
+const UID_TEMP_PARENT: &str = "/private/var/folders";
 
 impl RuntimeEnv {
     /// Take a snapshot of the real process environment.
@@ -68,6 +74,30 @@ impl RuntimeEnv {
             cwd: std::env::current_dir().ok(),
             host_override: host_override(),
             fake_diskutil_fixtures: fake_diskutil_fixtures(),
+            tmpdir: std::env::var_os("TMPDIR").map(PathBuf::from),
+        }
+    }
+
+    /// The per-uid temporary directories (`/private/var/folders/<xx>/<hash>`)
+    /// this process may clean under, derived from `TMPDIR`.
+    ///
+    /// macOS sets `TMPDIR` to `/var/folders/<xx>/<hash>/T/`; `/var` is a symlink
+    /// to `/private/var`, and the guard wants the canonical spelling. Anything
+    /// that does not have that shape yields no root at all rather than a guess.
+    pub fn uid_temp_dirs(&self) -> Vec<PathBuf> {
+        let Some(tmpdir) = self.tmpdir.as_deref() else { return Vec::new() };
+        let canonical = match tmpdir.strip_prefix("/var") {
+            Ok(rest) => Path::new("/private/var").join(rest),
+            Err(_) => tmpdir.to_path_buf(),
+        };
+        let Ok(rest) = canonical.strip_prefix(UID_TEMP_PARENT) else { return Vec::new() };
+        let mut parts = rest.components().filter_map(|c| match c {
+            Component::Normal(name) => Some(name),
+            _ => None,
+        });
+        match (parts.next(), parts.next()) {
+            (Some(bucket), Some(hash)) => vec![Path::new(UID_TEMP_PARENT).join(bucket).join(hash)],
+            _ => Vec::new(),
         }
     }
 
@@ -85,6 +115,7 @@ impl RuntimeEnv {
             cwd: None,
             host_override: None,
             fake_diskutil_fixtures: None,
+            tmpdir: None,
         }
     }
 
@@ -183,5 +214,29 @@ mod tests {
     fn an_unset_home_propagates_as_none_instead_of_a_guessed_path() {
         let env = RuntimeEnv { home: None, ..RuntimeEnv::for_tests(PathBuf::from("/Users/test")) };
         assert_eq!(env.to_core_snapshot().home, None);
+    }
+    #[test]
+    fn the_uid_temp_dir_is_derived_from_tmpdir_in_its_canonical_spelling() {
+        let env = RuntimeEnv {
+            tmpdir: Some(PathBuf::from("/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/")),
+            ..RuntimeEnv::for_tests(PathBuf::from("/Users/dana"))
+        };
+
+        assert_eq!(
+            env.uid_temp_dirs(),
+            vec![PathBuf::from("/private/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000")]
+        );
+    }
+
+    #[test]
+    fn a_tmpdir_of_another_shape_yields_no_temporary_root() {
+        for raw in ["/tmp", "/private/var/folders/zz", "relative/T"] {
+            let env = RuntimeEnv {
+                tmpdir: Some(PathBuf::from(raw)),
+                ..RuntimeEnv::for_tests(PathBuf::from("/Users/d"))
+            };
+            assert!(env.uid_temp_dirs().is_empty(), "{raw}");
+        }
+        assert!(RuntimeEnv::for_tests(PathBuf::from("/Users/d")).uid_temp_dirs().is_empty());
     }
 }

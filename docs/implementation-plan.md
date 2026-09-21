@@ -230,8 +230,13 @@ M3 progress:
 - [ ] Warm `suggest` (post-0.2): cache records that know whether a subtree holds any name a detector
       looks for, so the cache may answer for the rest. Today `suggest` walks cold by design
       (`docs/cli-spec.md` §7).
-- [ ] `clean --apply` executor: planner → guard → confirmation → quarantine mover → report.
+- [x] `broza clean`: detection shared with `suggest` (`commands/detection.rs`), planner → guard →
+      confirmation (`TtyPrompter`) → pre-execution expiry (`commands/clean_expiry.rs`) → mover →
+      report; `--max-size`, `--exclude`, `--risk`/`--category` mandatory; inform-only findings inside
+      an actionable category are skipped with a warning; the store is created on first `--apply`.
+- [ ] `clean --apply --purge` execution (needs the irreversible path in the mover; M4 with `trash`).
 - [ ] `restore`, `quarantine list | expire | purge` commands; donation gate (RF-17).
+- [ ] End-to-end: dry-run → `--apply -y` → `restore --session` byte-identical (needs `restore`).
 
 ### M3 — Green detectors and quarantine (release 0.2)
 

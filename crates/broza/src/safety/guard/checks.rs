@@ -227,6 +227,7 @@ mod tests {
         PlanOutcome {
             plan: CleanPlan::dry_run(session(), items).unwrap_or_else(|error| panic!("{error}")),
             informed_only: Vec::new(),
+            informed_in_passing: Vec::new(),
         }
     }
 
@@ -257,7 +258,8 @@ mod tests {
         let applied = CleanPlan::dry_run(session(), Vec::new())
             .and_then(|plan| plan.into_applied(Some(PathBuf::from(STORE))))
             .unwrap_or_else(|error| panic!("{error}"));
-        let outcome = PlanOutcome { plan: applied, informed_only: Vec::new() };
+        let outcome =
+            PlanOutcome { plan: applied, informed_only: Vec::new(), informed_in_passing: Vec::new() };
         let rejection = approve(
             &outcome,
             &[],

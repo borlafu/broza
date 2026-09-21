@@ -254,7 +254,7 @@ fn an_inform_only_item_forced_into_a_plan_rejects_it_at_check_seven() {
         }],
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    let forced = PlanOutcome { plan, informed_only: Vec::new() };
+    let forced = PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() };
     let rejection = approve(&forced, &[docker], &applying(), &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("an inform-only item must reject the plan"));
@@ -383,5 +383,5 @@ fn forced_plan(finding: &Finding, path: &str, size_bytes: u64, action: Action) -
         }],
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    PlanOutcome { plan, informed_only: Vec::new() }
+    PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() }
 }

@@ -1,24 +1,22 @@
 //! `broza suggest` (`docs/cli-spec.md` §3.3 and §4.3).
 //!
-//! One walk of the home (through the same cache `scan` uses), every detector
-//! the flags allow, the risk and size filters, and the three renderings. It
-//! writes nothing: the plan it leads to is `clean`'s business.
+//! One walk of the home (shared with `clean` through [`detection`]), every
+//! detector the flags allow, the risk and size filters, and the three
+//! renderings. It writes nothing: the plan it leads to is `clean`'s business.
 
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
-use broza::detect::{DetectContext, Registry, RiskFilter as CoreRiskFilter, filter};
-use broza::model::{Category, Envelope, Finding, Host, Risk, SuggestReport, Warning};
+use broza::detect::{RiskFilter as CoreRiskFilter, filter};
+use broza::model::{Envelope, Finding, Host, Risk, SuggestReport, Warning};
 use broza::ports::Ports;
-use broza::scan::{MountTable, scan_paths};
 use broza::units::{ByteSize, DurationSpec};
 use broza::{BrozaError, ExitCode};
 use jiff::Timestamp;
 
 use crate::args::{RiskFilter, SuggestArgs};
 use crate::commands::Outcome;
-use crate::commands::mount::mount_table;
-use crate::commands::scan::folders::{FolderSettings, request_for_home};
+use crate::commands::detection::{self, DetectionRequest};
+use crate::commands::scan::folders::FolderSettings;
 use crate::output::human::suggest as human_suggest;
 use crate::output::{ColorPolicy, OutputFormat, Renderer, csv, envelope_to_json};
 
@@ -59,29 +57,22 @@ pub struct SuggestContext<'a> {
 /// A `--category` that names no category or a `--min-size`/`--unused-after`
 /// that does not parse is a usage error (exit `2`); `HOME` unset is one too.
 pub fn run(context: &SuggestContext<'_>) -> Result<Outcome, BrozaError> {
-    let home = context.folders.home.as_deref().ok_or_else(|| {
-        BrozaError::Usage("HOME is not set: suggest needs a home directory to look at".into())
-    })?;
-    let categories = parse_categories(&context.args.categories)?;
-    let min_size = size_or(context.args.min_size.as_deref(), context.config_min_size)?;
-    let unused_after = duration_or(context.args.unused_after.as_deref(), context.config_unused_after)?;
+    let home = detection::home_of(&context.folders)?;
+    let categories = detection::parse_categories(&context.args.categories)?;
+    let min_size = detection::size_or(context.args.min_size.as_deref(), context.config_min_size)?;
+    let unused_after =
+        detection::duration_or(context.args.unused_after.as_deref(), context.config_unused_after)?;
 
-    let enumeration = context.ports.disks.enumerate()?;
-    let mount = mount_table(context.ports, &enumeration.disks)?;
-    let (nodes, walk_warnings) = walk_home(home, &mount.table, context)?;
-    let detect_context = DetectContext::new(
+    let detected = detection::detect(&DetectionRequest {
+        ports: context.ports,
+        folders: &context.folders,
         home,
-        context.ports.fs.as_ref(),
-        &mount.table,
-        context.generated_at,
+        now: context.generated_at,
         unused_after,
-        &nodes,
-    );
-    let report = Registry::builtin().restricted_to(categories.as_deref()).run(&detect_context);
-    let findings = filter::apply(report.findings, core_risk(context.args.risk), min_size.bytes());
-    let warnings =
-        [context.warnings.clone(), enumeration.warnings, mount.warnings, walk_warnings, report.warnings]
-            .concat();
+        categories: categories.as_deref(),
+    })?;
+    let findings = filter::apply(detected.findings, core_risk(context.args.risk), min_size.bytes());
+    let warnings = [context.warnings.clone(), detected.warnings].concat();
     let output = SuggestOutput {
         data: SuggestReport::from_findings(findings),
         explain: context.args.explain,
@@ -92,41 +83,6 @@ pub fn run(context: &SuggestContext<'_>) -> Result<Outcome, BrozaError> {
         policy: context.policy,
     };
     Ok(Outcome::ok(output.render(context.format)?).with_warnings(warnings).with_code(ExitCode::Ok))
-}
-
-/// The home walk detectors read, through `scan`'s cache.
-fn walk_home(
-    home: &Path,
-    mounts: &MountTable,
-    context: &SuggestContext<'_>,
-) -> Result<(Vec<broza::scan::DirNode>, Vec<Warning>), BrozaError> {
-    let request = request_for_home(&context.folders)?;
-    let mut scans = scan_paths(&[home.to_path_buf()], &request, context.ports, mounts, None)?;
-    let scan = scans.pop().ok_or_else(|| BrozaError::Other("the home walk produced nothing".into()))?;
-    Ok((scan.nodes, scan.warnings))
-}
-
-/// `--category` values as categories; an unknown id is a usage error.
-fn parse_categories(raw: &[String]) -> Result<Option<Vec<Category>>, BrozaError> {
-    if raw.is_empty() {
-        return Ok(None);
-    }
-    raw.iter()
-        .map(|id| {
-            Category::all().into_iter().find(|c| c.as_str() == id.trim()).ok_or_else(|| {
-                BrozaError::Usage(format!("unknown category `{id}`; `broza explain <category>` lists them"))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Some)
-}
-
-fn size_or(flag: Option<&str>, fallback: ByteSize) -> Result<ByteSize, BrozaError> {
-    flag.map_or(Ok(fallback), str::parse)
-}
-
-fn duration_or(flag: Option<&str>, fallback: DurationSpec) -> Result<Duration, BrozaError> {
-    Ok(flag.map_or(Ok(fallback), str::parse::<DurationSpec>)?.to_duration())
 }
 
 /// The CLI's `--risk` enum as the core filter.
@@ -204,6 +160,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use broza::model::{Container, Disk, FsKind, Volume, VolumeId, VolumeRole};
 

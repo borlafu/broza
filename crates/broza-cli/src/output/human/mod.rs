@@ -5,6 +5,7 @@
 //! function here is pure: a report and a [`ColorPolicy`](crate::output::ColorPolicy)
 //! in, a `String` out, so a layout can be snapshot-tested without a terminal.
 
+pub mod clean;
 pub mod explain;
 pub mod scan;
 pub mod suggest;

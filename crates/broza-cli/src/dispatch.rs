@@ -12,6 +12,7 @@ use broza::ports::Ports;
 use std::path::PathBuf;
 
 use crate::cli::{Cli, Command};
+use crate::commands::clean::CleanContext;
 use crate::commands::config::ConfigContext;
 use crate::commands::explain::ExplainContext;
 use crate::commands::scan::ScanContext;
@@ -95,6 +96,20 @@ pub fn dispatch(
             folders: folders.clone(),
             config_min_size: inputs.effective.min_size,
             config_unused_after: inputs.effective.unused_after,
+        }),
+        Command::Clean(args) => commands::clean::run(&CleanContext {
+            ports: &inputs.ports,
+            args,
+            config: &inputs.effective,
+            host: inputs.host,
+            generated_at,
+            warnings: inputs.warnings,
+            policy: inputs.policy,
+            format: inputs.format,
+            folders: folders.clone(),
+            tty: inputs.runtime.is_interactive(),
+            ci: inputs.runtime.ci,
+            uid_temp_dirs: inputs.runtime.uid_temp_dirs(),
         }),
         Command::Explain(args) => commands::explain::run(&ExplainContext {
             ports: &inputs.ports,
@@ -222,9 +237,7 @@ mod tests {
 
     #[test]
     fn the_commands_of_the_next_milestone_are_routed_to_a_clear_refusal() {
-        for argv in
-            [vec!["broza", "clean"], vec!["broza", "restore", "--all"], vec!["broza", "quarantine", "list"]]
-        {
+        for argv in [vec!["broza", "restore", "--all"], vec!["broza", "quarantine", "list"]] {
             let error = route(&argv).expect_err("must fail");
             assert_eq!(ExitCode::from(&error), ExitCode::GenericError, "{argv:?}");
             assert!(error.to_string().contains("not implemented"), "{error}");

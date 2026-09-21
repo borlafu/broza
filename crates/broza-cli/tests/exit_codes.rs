@@ -83,10 +83,21 @@ fn quarantine_purge_with_yes_exits_two() {
 }
 
 #[test]
-fn unimplemented_commands_exit_one_with_a_message_on_stderr() {
+fn clean_without_a_selection_exits_two() {
     let home = temp_home();
     broza(home.path())
         .arg("clean")
+        .assert()
+        .code(2)
+        .stderr(contains("--category").and(contains("--risk")))
+        .stdout(predicates::str::is_empty());
+}
+
+#[test]
+fn unimplemented_commands_exit_one_with_a_message_on_stderr() {
+    let home = temp_home();
+    broza(home.path())
+        .args(["restore", "--all"])
         .assert()
         .code(1)
         .stderr(contains("not implemented"))

@@ -1,0 +1,257 @@
+# Broza — Implementation Plan (Phase 1 CLI)
+
+- Version: 1.0
+- Date: 2026-09-21
+- Status: Approved
+- Inputs: [prd.md](prd.md) v1.0, [cli-spec.md](cli-spec.md) v1.1, [adr/](adr/)
+
+## 1. Goals of Phase 1
+
+Ship `broza` as an open-source (MIT) Rust CLI for Apple Silicon Macs on the two latest macOS
+majors (26 and 27 today) that:
+
+1. Enumerates disks, APFS containers, volumes with roles, and local snapshots (RF-01, RF-02).
+2. Scans folders in parallel with a cache and explains what things are (RF-03, RF-04, RF-05, RF-06).
+3. Suggests and executes cleanup under the safety invariants of PRD §7.3 (RF-07, RF-08, RF-09, RF-18, RF-19).
+4. Exposes a stable JSON contract that the Phase 2 GUI will consume unchanged.
+
+Deferred past v1.0: RF-10 (`launchd` scheduling), treemap rendering, native DiskArbitration adapter,
+APFS clone-aware sizes, per-volume quarantine roots, native Spotlight (MDItem) bindings,
+Docker daemon integration, FAT/exFAT.
+
+## 2. Technology decisions
+
+Research date: 2026-09-21. Versions are the latest observed on crates.io at that date.
+
+| Concern | Choice | Notes |
+|---|---|---|
+| Workspace | `crates/broza` (core lib, crates.io `broza`) + `crates/broza-cli` (binary `broza`) | [ADR 0001](adr/0001-workspace-core-cli-split.md) |
+| CLI parsing | `clap` 4 (derive) | `--help` snapshots with `insta` |
+| Serialization | `serde`, `serde_json`, `toml`, `plist` 1.10 | JSON contract = `model/` types |
+| Disk enumeration | `diskutil … -plist` via `ProcessRunner`, parsed with `plist` | [ADR 0002](adr/0002-diskutil-plist-over-diskarbitration.md) |
+| Purgeable space | `objc2-foundation` 0.3, `NSURL` resource values | one `unsafe` adapter file |
+| Directory walking | `dua-core` 4.x | `jwalk` archived 2026-08; fallback: `rayon` + `read_dir` (~150 lines) |
+| Hard links | dedupe by `(dev, inode)` | pattern from `dust` / `dua-cli` |
+| APFS clones | `getattrlist` `ATTR_CMNEXT_CLONEID` | best-effort, later; verify bit value on macOS 26/27 |
+| Hashing | `blake3` | duplicates; optional quarantine integrity for files < 64 MB |
+| Globs | `globset` | exclusions |
+| Errors | `thiserror` (core), `anyhow` (binary) | one `BrozaError` → `ExitCode` |
+| Tests | `tempfile`, `assert_cmd`, `predicates`, `insta`, `trybuild`, `cargo-llvm-cov` | coverage gate 80% |
+| Release | `cargo-dist` 0.32 + `release-plz` | own Homebrew tap `borlafu/homebrew-broza` |
+| SBOM | `cargo-cyclonedx` | RNF-05 |
+| CI | GitHub Actions `macos-26` (arm64 GA) + `xcode-27` (macOS 27 preview) | add GA macOS 27 label when available |
+
+Reuse candidates (port patterns, respect licenses): `kondo-lib` (project marker detection, MIT),
+`mac-cleanup-py` (macOS path catalogue, Apache-2.0), `dust` / `dua-cli` (walker and inode dedupe,
+Apache-2.0 / MIT), `duh` (APFS clone accounting, MIT).
+
+## 3. Architecture
+
+Planned layout (create as milestones require; keep files 200–400 lines):
+
+```
+Cargo.toml                         workspace, shared dependencies and lints
+crates/broza/src/
+  lib.rs
+  model/      envelope.rs disk.rs finding.rs plan.rs quarantine.rs scan.rs ids.rs units.rs
+  ports/      process.rs disk_enum.rs fs_ops.rs clock.rs prompter.rs mod.rs (Ports DI bundle)
+  adapters/   diskutil/{mod,plist_apfs,plist_list,plist_info,roles}.rs nsurl_space.rs tmutil.rs
+              std_process.rs std_fs.rs system_clock.rs
+  scan/       walker.rs aggregate.rs cache/{store,key}.rs mount.rs
+  detect/     mod.rs filter.rs exclusions.rs explain.rs detectors/<category>.rs
+  safety/     guard.rs policy.rs roles.rs path.rs exit_code.rs
+  clean/      planner.rs executor.rs actions.rs
+  quarantine/ store.rs manifest.rs mover.rs restore.rs expiry.rs
+  config/     schema.rs layering.rs keys.rs
+  error.rs
+crates/broza/tests/fixtures/plist/<macos_major>/   recorded, redacted diskutil / tmutil output
+crates/broza-cli/src/
+  main.rs cli.rs args/<cmd>.rs commands/<cmd>.rs
+  output/{mod,format,csv,color,bytes}.rs output/human/{scan,suggest,clean,restore,explain,quarantine}.rs
+  tty_prompter.rs donate.rs env.rs
+```
+
+### 3.1 Domain model (JSON contract)
+
+All types in `model/` derive `Serialize`, `Deserialize`, `Clone`, `Debug`, `PartialEq`, use
+`#[serde(rename_all = "snake_case")]`, and enums are `#[non_exhaustive]`.
+
+- `Envelope<T> { schema_version, broza_version, generated_at, command, host, data: T, warnings, errors }`
+- `Disk → Container → Volume { role: VolumeRole, writable_by_broza, purpose, ... }`
+- `Finding { id, category, title, description, risk, reclaimable_bytes, item_count, actionable, action, reasoning?, paths, instructions? }`
+- `CleanPlan { dry_run, session_id, planned_bytes, quarantined_bytes, reclaimed_bytes, quarantine_path?, items }`
+- `CleanItem { path, finding_id, size_bytes, status, action, error? }`
+- `QuarantineSession { id, created_at, expires_at, total_bytes, state, entries }`
+
+`Finding::new` enforces `category == cloud_synced ⇒ action == inform_only && !actionable`.
+
+### 3.2 Safety kernel
+
+See [ADR 0003](adr/0003-approved-token-safety-kernel.md). Order of checks in `guard::approve`:
+
+1. `--apply` present, else the plan stays dry-run.
+2. Canonicalize each path lexically plus `lstat`; reject symlinked components and relative paths.
+3. Resolve the volume through a firmlink-aware mount table (`/Users/...` and
+   `/System/Volumes/Data/Users/...` both resolve to the Data volume).
+4. Reject roles `system`, `preboot`, `recovery`, `vm`. `backup` only for `tmutil_delete`.
+5. Root allowlist: `$HOME`, `/Users/Shared`, `/private/var/folders/<uid dirs>`, `/Library/Caches`,
+   `.Trashes` on data/user volumes, `/Applications` (only for `unused-apps`). Never the root itself.
+6. Exclusions (config `exclude` + `--exclude`), then `--max-size`.
+7. Any `inform_only` item rejects the whole plan.
+8. `confirmation_policy(apply, max_risk, purge, yes, tty, ci)`:
+
+| Condition (first match wins) | Mode |
+|---|---|
+| `!apply` | `None` (dry-run) |
+| `max_risk == red` | `Rejected` → exit 2 |
+| `purge && tty` | `TypedLiteral("PURGE")` (`--yes` ignored) |
+| `purge && !tty` | `RequiredButNoTty` → exit 7 |
+| `yes` | `None` |
+| `!tty \|\| ci` | `RequiredButNoTty` → exit 7 |
+| `green` | `SimpleYesNo` |
+| `amber` | `DetailedExplicit` |
+
+### 3.3 Quarantine store
+
+See [ADR 0004](adr/0004-quarantine-same-volume-and-quarantine-command.md).
+`~/.local/share/broza/quarantine/<cln_YYYYMMDDHHMMSS_xxxx>/manifest.json` + `items/<seq>/<basename>`.
+Same-device rename only; cross-volume items are `skipped` with `cross_volume`.
+Manifest written via tmp + rename after each item. Restore per session in reverse order.
+
+### 3.4 Scan cache
+
+`~/.cache/broza/v1/<volume_uuid>/dirs.bin`, versioned magic header, records keyed by
+`(dev, inode, mtime_ns)` with aggregate bytes. Reuse a subtree when key matches and record age is
+below `cache-ttl`. Any decode error → exit 9 with a `--no-cache` hint. Known imprecision: directory
+mtime does not change on in-place file growth; bounded by TTL and documented.
+
+### 3.5 Output
+
+Core returns `Result<Envelope<T>, BrozaError>`. The CLI renders human text, JSON
+(`serde_json` of the envelope, no custom code), or CSV (`scan`, `suggest`, `quarantine list`,
+`restore --list`; otherwise exit 2). stdout carries data only. Color is disabled by
+`--no-color`, `NO_COLOR`, `--json`, `--csv`, non-TTY stdout, or `CI`. Risk always carries a text
+label (SAFE / REVIEW / INFO) in addition to color.
+
+### 3.6 Testability seams
+
+| Port | Fake | Fixture source |
+|---|---|---|
+| `ProcessRunner` | `FakeRunner` maps `(cmd, args)` → bytes | `tests/fixtures/plist/<macos_major>/*.plist` |
+| `FileOps` | `FakeFileOps` in-memory tree with a `dev` per root | built in test |
+| `Prompter` | `FakePrompter` scripted answers | — |
+| `Clock` | `FixedClock` | — |
+| `SpaceProvider`, `SnapshotProvider` | fakes returning fixed values | — |
+
+A documented capture script records real `diskutil` / `tmutil` output and redacts UUIDs and serials.
+
+## 4. Milestones
+
+Each milestone: branch `m<N>-<slug>`, ends with tests green, coverage ≥ 80%, clippy clean, tag.
+
+### M0 — Skeleton and contract
+
+Scope: workspace; `model/*`; `Envelope`; `ExitCode`; `error.rs`; `units.rs` (size and duration
+parsers per spec §3); clap tree for every command including `quarantine`, `about`, `config`
+(get / set / list / path / reset with TOML layering); CI (`macos-26`, `xcode-27`); `cargo-dist`
+init; LICENSE; README.
+
+Exit criteria: `insta` snapshots for every JSON example in spec §4 round-trip; `--help` snapshots;
+`broza about --json` is a valid envelope; exit codes 0 and 2 via `assert_cmd`. Nothing reads disks.
+
+### M1 — Safety kernel
+
+Scope: `safety/*` (`Approved<_>`, `confirmation_policy`, canonicalization, role check, root
+allowlist, `--max-size`); `ports/*`; fakes; `clean` dry-run planner over synthetic findings.
+
+Exit criteria: exhaustive truth-table test for the confirmation matrix; protected-role rejection
+tests including firmlink paths; `trybuild` compile-fail test proving deletion needs `Approved`;
+exit 6 and 7 paths tested end-to-end with `FakePrompter`.
+
+### M2 — Read-only disk (release 0.1)
+
+Scope: `ProcessRunner` with timeout; `diskutil` plist adapters with fixtures for macOS 26 and 27;
+mount table; NSURL purgeable adapter; `dua-core` walker with hard-link dedupe; aggregate, top-N,
+tree; cache store; `scan` (human / JSON / CSV); `explain` for volumes, paths, and categories.
+
+Exit criteria: cold `scan` < 10 s and warm < 1 s on a 512 GB Data volume (benchmark script);
+purgeable on its own line; fixture-driven enumeration tests; cache corruption → exit 9.
+Homebrew tap publishes 0.1.
+
+### M3 — Green detectors and quarantine (release 0.2)
+
+Scope: `Detector` trait, `Registry`, filters, exclusions; detectors `user-cache` and `build-cache`
+(DerivedData, Archives, orphan `node_modules`, `__pycache__`, `.gradle`, `target/`, `Docker.raw`
+inform-only); `quarantine/*`; `clean --apply`; `quarantine list | expire | purge`; `restore`;
+donation gate (RF-17, six conditions, 30-day marker); `suggest`.
+
+Exit criteria: end-to-end `assert_cmd` in a tempdir: dry-run → `--apply -y` → `restore --session`
+restores byte-identical content; cross-volume skip test; donation table test; dry-run reports
+`quarantined_bytes = reclaimed_bytes = 0` and all items `planned`.
+
+### M4 — Amber detectors
+
+Scope: `trash` (purge action), `snapshots` (`diskutil apfs listSnapshots -plist`,
+`tmutil deletelocalsnapshots`; no size available; never `com.apple.os.update-*`), `old-backups`
+(`MobileSync/Backup`, parse `Info.plist`), `ios-simulators` (`xcrun simctl list -j` with timeout),
+`duplicates` (size → 4 KiB prefix → full `blake3`), `large-old-files` (`max(atime, kMDItemLastUsedDate)`).
+
+Exit criteria: each detector has fixture-tree tests plus one negative test; full `suggest` < 15 s
+on the development machine.
+
+### M5 — Inform-only, apps, polish (release 1.0)
+
+Scope: `cloud-synced` (iCloud Drive, Dropbox, OneDrive, Google Drive; evicted / dataless
+detection; provider instructions); `unused-apps` (configurable threshold, `~/Library` leftovers by
+bundle id); profiles (`developer`); Full Disk Access warning path (exit 3 only when the operation
+is impossible); SBOM in releases; `--locked` reproducible build; README complete; Ko-fi link in `about`.
+
+Exit criteria: `clean --apply` on any `cloud-synced` finding → exit 2; traceability table (§6)
+fully covered by tests; coverage ≥ 80%; tag `v1.0.0`.
+
+## 5. Testing strategy
+
+- TDD for every module: failing test, implementation, refactor.
+- Unit tests beside code; integration tests per crate; `assert_cmd` for the binary.
+- Fixtures per macOS major under `crates/broza/tests/fixtures/`.
+- Snapshot tests (`insta`) for JSON examples and `--help`.
+- No test touches real disks or spawns system tools; all macOS behavior goes through fakes.
+- Coverage gate 80% lines via `cargo llvm-cov` in CI.
+- Benchmarks (`scan`, `suggest`) as a script, not a CI gate; results recorded per release.
+
+## 6. Requirements traceability
+
+| Requirement | Milestone |
+|---|---|
+| RF-01 enumeration | M2 |
+| RF-02 real usage, hard links once | M2 (hard links); APFS clones deferred |
+| RF-03 hierarchical scan + cache | M2 |
+| RF-04 plain-language roles | M2 |
+| RF-05 tree + usage bars (treemap deferred) | M2 |
+| RF-06 human, `--json`, `--csv` | M0 (contract), M2 (scan), M3 (suggest / clean) |
+| RF-07 dry-run default | M1 |
+| RF-08 quarantine, TTL, `--purge` | M3 |
+| RF-09 protected volumes, exclusions | M1 (roles), M3 (exclusions) |
+| RF-10 scheduled cleanups | Deferred post-1.0 |
+| RF-17 donation message | M3 |
+| RF-18 explicit confirmation, exit 7 | M1 |
+| RF-19 cloud-synced inform-only | M1 (guard), M5 (detector) |
+| RF-11 … RF-16 | Phase 2 |
+| RNF-01 data safety | M1, M3 |
+| RNF-02 performance | M2, M4 |
+| RNF-03 privacy (no telemetry) | M0 (no network code), all |
+| RNF-04 compatibility | M0 (CI matrix), M2 (fixtures) |
+| RNF-05 signed binaries, reproducible build, SBOM | M5 (SBOM, `--locked`); notarization when a Developer ID exists |
+| RNF-06 accessibility (GUI) | Phase 2; text risk labels in CLI from M3 |
+| RNF-07 English CLI | M0 |
+
+## 7. Open technical questions
+
+Carried into milestone work; each becomes a fixture-backed test, not an assumption.
+
+1. `dua-core` 4.x: confirm per-entry `dev` / `ino` and subtree skipping for cache hits.
+2. `statfs.f_mntonname` behavior for firmlinked paths on macOS 26 / 27.
+3. `ATTR_CMNEXT_CLONEID` bit value on macOS 26 / 27 (`0x100` observed vs `0x40` documented).
+4. Whether `tmutil deletelocalsnapshots` needs root on macOS 26 / 27.
+5. `xcrun simctl list -j` needs Xcode command-line tools; can be slow on first run. Enforce a timeout and warn when it fails.
+6. Accuracy of the NSURL purgeable estimate versus Disk Utility; label as an estimate.

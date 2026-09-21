@@ -4,3 +4,9 @@
 //! this module can construct. See `docs/adr/0003-approved-token-safety-kernel.md`.
 
 pub mod exit_code;
+pub mod path;
+pub mod policy;
+pub mod rejection;
+pub mod roles;
+#[cfg(test)]
+pub(crate) mod test_fs;

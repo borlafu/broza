@@ -21,6 +21,10 @@ pub(crate) fn from_io(context: impl Into<String>, path: &Path, source: io::Error
 }
 
 /// Build the error a missing `path` produces, without an underlying failure.
+///
+/// Only the in-memory fake needs this: the real adapter always has an
+/// [`std::io::Error`] to translate.
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn not_found(path: &Path) -> BrozaError {
     BrozaError::TargetNotFound(path.display().to_string())
 }

@@ -18,6 +18,9 @@ pub const LIBRARY_CACHES_ROOT: &str = "/Library/Caches";
 pub const APPLICATIONS_ROOT: &str = "/Applications";
 /// Per-volume trash directory name.
 pub const TRASHES_DIR: &str = ".Trashes";
+/// Mount point of the Data volume; `/Users/x` and `/System/Volumes/Data/Users/x`
+/// are the same directory seen through a firmlink.
+pub const DATA_VOLUME_ROOT: &str = "/System/Volumes/Data";
 
 /// Roots under which Broza is allowed to remove things.
 ///
@@ -31,15 +34,36 @@ impl AllowedRoots {
     /// Builds the allowlist from the user's home and the per-uid temporary
     /// directories (`/private/var/folders/<xx>/<uid dir>`), plus the two constants
     /// of the specification.
+    ///
+    /// Every root is registered under both of its spellings, the firmlinked one
+    /// (`/Users/dana`) and the one on the Data volume
+    /// (`/System/Volumes/Data/Users/dana`), because they name the same directory.
     pub fn new(home: &Path, uid_temp_dirs: Vec<PathBuf>) -> Self {
         let fixed = [home.to_path_buf(), PathBuf::from(SHARED_ROOT), PathBuf::from(LIBRARY_CACHES_ROOT)];
-        Self { roots: fixed.into_iter().chain(uid_temp_dirs).collect() }
+        let roots = fixed
+            .into_iter()
+            .chain(uid_temp_dirs)
+            .flat_map(|root| {
+                let twin = data_volume_twin(&root);
+                [root, twin]
+            })
+            .collect();
+        Self { roots }
     }
 
     /// The configured roots, in declaration order.
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
+}
+
+/// The same directory spelled on the Data volume; unchanged when it already is.
+fn data_volume_twin(root: &Path) -> PathBuf {
+    if root.starts_with(DATA_VOLUME_ROOT) {
+        return root.to_path_buf();
+    }
+    root.strip_prefix("/")
+        .map_or_else(|_| root.to_path_buf(), |relative| Path::new(DATA_VOLUME_ROOT).join(relative))
 }
 
 /// What the item being checked is, so the conditional roots can be resolved.
@@ -112,6 +136,16 @@ pub fn is_under_allowed_root(path: &Path, roots: &AllowedRoots, context: RootCon
         return true;
     }
     context.category == Category::UnusedApps && is_strictly_under(path, Path::new(APPLICATIONS_ROOT))
+}
+
+/// `true` when `path` *is* one of the roots, rather than something inside one.
+///
+/// Used to tell "you asked to remove `$HOME`" apart from "you asked to remove
+/// something Broza does not manage".
+pub fn is_allowed_root(path: &Path, roots: &AllowedRoots) -> bool {
+    roots.roots().iter().any(|root| root == path)
+        || path == Path::new(APPLICATIONS_ROOT)
+        || path.file_name() == Some(TRASHES_DIR.as_ref())
 }
 
 fn is_strictly_under(path: &Path, root: &Path) -> bool {
@@ -210,6 +244,13 @@ mod tests {
     }
 
     #[test]
+    fn a_root_is_allowed_under_both_of_its_firmlinked_spellings() {
+        let path = Path::new("/System/Volumes/Data/Users/dana/Library/Caches/app.cache");
+        assert!(is_under_allowed_root(path, &roots(), data(Category::UserCache)));
+        assert_eq!(roots().roots().len(), 8, "four roots, two spellings each");
+    }
+
+    #[test]
     fn a_root_itself_is_never_allowed() {
         for path in [HOME, "/Users/Shared", "/Library/Caches", "/private/var/folders/aa/bbb"] {
             assert!(!is_under_allowed_root(Path::new(path), &roots(), data(Category::UserCache)), "{path}");
@@ -235,6 +276,16 @@ mod tests {
     fn the_trashes_directory_itself_is_not_removable() {
         let path = Path::new("/Volumes/External/.Trashes");
         assert!(!is_under_allowed_root(path, &roots(), context(Category::Trash, VolumeRole::User)));
+    }
+
+    #[test]
+    fn the_roots_themselves_are_recognised_as_such() {
+        for path in [HOME, "/Users/Shared", "/Library/Caches", "/Applications", "/Volumes/X/.Trashes"] {
+            assert!(super::is_allowed_root(Path::new(path), &roots()), "{path}");
+        }
+        for path in ["/Users/dana/Library", "/Applications/Old.app", "/etc"] {
+            assert!(!super::is_allowed_root(Path::new(path), &roots()), "{path}");
+        }
     }
 
     #[test]

@@ -40,17 +40,36 @@ pub fn usage_ratio(used_bytes: u64, size_bytes: u64) -> f64 {
 /// use broza_cli::output::bar::usage_bar;
 /// assert_eq!(usage_bar(0, 100).chars().count(), 20);
 /// assert_eq!(usage_bar(50, 100), "██████████░░░░░░░░░░");
+/// // In use, however little: one cell. Nearly full: one cell left.
+/// assert_eq!(usage_bar(1, 1_000_000), "█░░░░░░░░░░░░░░░░░░░");
+/// assert_eq!(usage_bar(999_999, 1_000_000), "███████████████████░");
 /// ```
-// The ratio is in `[0, 1]` and the width is 20, so the product is a small
-// non-negative number: neither cast can truncate meaningfully or wrap.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
 pub fn usage_bar(used_bytes: u64, size_bytes: u64) -> String {
-    let filled = (usage_ratio(used_bytes, size_bytes) * BAR_WIDTH as f64).round() as usize;
-    let filled = filled.min(BAR_WIDTH);
+    let filled = filled_cells(used_bytes, size_bytes);
     let mut bar = String::with_capacity(BAR_WIDTH * FULL_CELL.len_utf8());
     bar.extend(std::iter::repeat_n(FULL_CELL, filled));
     bar.extend(std::iter::repeat_n(EMPTY_CELL, BAR_WIDTH - filled));
     bar
+}
+
+/// Cells to fill, rounded to the nearest one.
+///
+/// A container that is in use but barely keeps one filled cell, and one that
+/// is nearly full keeps one free cell. Rounding either of those away draws a
+/// bar that contradicts the percentage printed beside it, and the bar is what
+/// people look at.
+// The ratio is in `[0, 1]` and the width is 20, so the product is a small
+// non-negative number: neither cast can truncate meaningfully or wrap.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+fn filled_cells(used_bytes: u64, size_bytes: u64) -> usize {
+    if used_bytes == 0 || size_bytes == 0 {
+        return 0;
+    }
+    if used_bytes >= size_bytes {
+        return BAR_WIDTH;
+    }
+    let rounded = (usage_ratio(used_bytes, size_bytes) * BAR_WIDTH as f64).round() as usize;
+    rounded.clamp(1, BAR_WIDTH - 1)
 }
 
 /// The percentage text printed next to the bar, one decimal.
@@ -132,8 +151,21 @@ mod tests {
     }
 
     #[test]
-    fn a_nearly_empty_container_still_shows_an_empty_bar() {
-        assert_eq!(usage_bar(1, 1_000_000), "░".repeat(BAR_WIDTH));
+    fn a_container_in_use_never_draws_an_empty_bar() {
+        // Rounding a used container down to nothing is a lie the user acts on,
+        // even when the percentage beside it honestly reads 0.0%.
+        assert_eq!(usage_bar(1, 1_000_000), format!("█{}", "░".repeat(BAR_WIDTH - 1)));
         assert_eq!(usage_percentage(1, 1_000_000), "0.0%");
+    }
+
+    #[test]
+    fn a_container_with_room_left_never_draws_a_full_bar() {
+        assert_eq!(usage_bar(999_999, 1_000_000), format!("{}░", "█".repeat(BAR_WIDTH - 1)));
+        assert_eq!(usage_bar(99, 100), format!("{}░", "█".repeat(BAR_WIDTH - 1)));
+    }
+
+    #[test]
+    fn an_empty_container_draws_an_empty_bar() {
+        assert_eq!(usage_bar(0, 100), "░".repeat(BAR_WIDTH));
     }
 }

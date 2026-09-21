@@ -1,7 +1,8 @@
 //! Turning a walk into what the user reads: largest items, tree, usage bar.
 //!
 //! Everything here is a pure function of a [`WalkResult`]: no I/O, no clock, no
-//! configuration. Formatting bytes stays in the CLI (`AGENTS.md` §6).
+//! configuration. Formatting — bytes, percentages, usage bars — stays in the
+//! CLI (`AGENTS.md` §6).
 //!
 //! # Which items are "largest"
 //!
@@ -17,12 +18,10 @@
 //! would hide where the space actually is. The scanned root itself is never
 //! reported: it is the volume, and it would hide everything.
 
-pub mod bar;
 pub mod tree;
 
 use std::path::Path;
 
-pub use bar::usage_bar;
 pub use tree::{TreeNode, TreeView, tree};
 
 use crate::model::{ItemKind, LargestItem, VolumeId};

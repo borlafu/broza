@@ -21,7 +21,7 @@ pub mod request;
 pub mod selection;
 pub mod walker;
 
-pub use aggregate::{TreeNode, TreeView, largest_items, tree, usage_bar};
+pub use aggregate::{TreeNode, TreeView, largest_items, tree};
 pub use cache::{CacheKey, CacheStore, DirRecord};
 pub use mount::{MountEntry, MountTable};
 pub use progress::{ProgressReporter, ScanProgress};

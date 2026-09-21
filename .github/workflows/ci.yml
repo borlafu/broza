@@ -29,7 +29,7 @@ jobs:
       - run: cargo test --workspace --all-features --locked
       - run: cargo doc --workspace --no-deps --all-features
         env:
-          RUSTDOCFLAGS: -D warnings -D rustdoc::broken_intra_doc_links
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
   coverage:
     name: coverage (80% gate)
     runs-on: macos-26

@@ -13,6 +13,7 @@ categories = ["command-line-utilities", "filesystem"]
 [[bin]]
 name = "broza"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 broza.workspace = true

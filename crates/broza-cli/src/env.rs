@@ -37,7 +37,7 @@ pub struct RuntimeEnv {
     pub home: Option<PathBuf>,
     /// `BROZA_CONFIG`, lower priority than `--config`.
     pub broza_config: Option<PathBuf>,
-    /// See [`HOST_OVERRIDE_VAR`]. Always `None` in release builds.
+    /// See `HOST_OVERRIDE_VAR`. Always `None` in release builds.
     pub host_override: Option<String>,
 }
 

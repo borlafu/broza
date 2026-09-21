@@ -76,7 +76,7 @@ pub struct Instructions {
 ///
 /// The fields are private and there is no way to build or parse a finding that
 /// breaks [`Finding::validate`]: the builder and `Deserialize` both go through
-/// [`FindingRepr`]. Read the members with the getters; change one by rebuilding
+/// `FindingRepr`. Read the members with the getters; change one by rebuilding
 /// through [`Finding::builder`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", try_from = "FindingRepr")]

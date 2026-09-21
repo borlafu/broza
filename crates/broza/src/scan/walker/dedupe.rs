@@ -88,6 +88,7 @@ mod tests {
             inode: 1,
             mtime: None,
             children_truncated: false,
+            from_cache: false,
         }
     }
 

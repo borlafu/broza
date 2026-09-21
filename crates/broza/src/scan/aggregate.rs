@@ -131,6 +131,7 @@ mod tests {
             inode: 7,
             mtime: None,
             children_truncated: false,
+            from_cache: false,
         }
     }
 

@@ -112,6 +112,17 @@ impl Totals {
     pub fn with_child_dirs(self, count: u64) -> Self {
         Self { dir_count: self.dir_count.saturating_add(count), ..self }
     }
+
+    /// The same totals as the directory *above* sees them.
+    ///
+    /// A subtree is itself something the report can list, and a big directory
+    /// of small files is the ordinary case: ten megabytes in ten files is a
+    /// ten-megabyte directory. Without this the cache would skip a parent
+    /// whose child was about to be listed, and a warm scan would quietly lose
+    /// that line.
+    pub fn as_child(self) -> Self {
+        Self { largest_item_bytes: self.largest_item_bytes.max(self.size_bytes), ..self }
+    }
 }
 
 /// What one recursion step contributes to the walk.

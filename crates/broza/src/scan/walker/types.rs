@@ -74,6 +74,11 @@ pub struct DirNode {
     /// device, a cloud placeholder, or an unreadable entry. A subtree served
     /// from the cache is **not** truncated — it was measured, just not again.
     pub children_truncated: bool,
+    /// `true` when these numbers came from the cache rather than from this
+    /// walk. Such a node must not be recorded again: re-stamping it would
+    /// renew a record that was never re-measured, and a subtree that keeps
+    /// being served would then never expire.
+    pub from_cache: bool,
 }
 
 impl DirNode {
@@ -91,7 +96,13 @@ impl DirNode {
             inode: identity.inode,
             mtime: identity.mtime,
             children_truncated,
+            from_cache: false,
         }
+    }
+
+    /// The same node, marked as having come from the cache.
+    pub(super) fn served_from_cache(self) -> Self {
+        Self { from_cache: true, ..self }
     }
 
     /// Identity this node would be cached under.

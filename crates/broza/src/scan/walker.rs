@@ -82,6 +82,9 @@ pub fn walk(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -> WalkRes
 }
 
 /// Walk one directory and, in parallel, everything below it.
+///
+/// The totals handed back to the caller count this subtree as an item in its
+/// own right ([`Totals::as_child`]); the node keeps the view from inside.
 fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'_>) -> Partial {
     let identity = DirIdentity::of(path, meta);
     if let Some(record) = cached(&identity, depth, context) {
@@ -108,7 +111,13 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     links.extend(below.links);
     let mut all_errors = errors;
     all_errors.extend(below.errors);
-    Partial { nodes, files: leaves.files.merge(below.files), links, errors: all_errors, totals }
+    Partial {
+        nodes,
+        files: leaves.files.merge(below.files),
+        links,
+        errors: all_errors,
+        totals: totals.as_child(),
+    }
 }
 
 /// What the cache says about this directory, if it may speak at this depth.
@@ -131,8 +140,8 @@ fn cached_dir(identity: &DirIdentity, record: &DirRecord, context: &Context<'_>)
     };
     context.report(record.file_count.saturating_add(record.dir_count).saturating_add(1), record.size_bytes);
     Partial {
-        nodes: vec![DirNode::new(identity, totals, false)],
-        totals,
+        nodes: vec![DirNode::new(identity, totals, false).served_from_cache()],
+        totals: totals.as_child(),
         ..Partial::empty(context.options.report_files_top)
     }
 }

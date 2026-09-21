@@ -220,5 +220,6 @@ fn unreadable_root(entry: &MountEntry) -> DirNode {
         inode: 0,
         mtime: None,
         children_truncated: true,
+        from_cache: false,
     }
 }

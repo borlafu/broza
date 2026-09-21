@@ -60,11 +60,14 @@ pub struct DirRecord {
 impl DirRecord {
     /// Record of a freshly walked directory.
     ///
-    /// `None` for a node that must not be cached: one with no usable modification
-    /// time, and one whose children were not all walked — a truncated node knows
-    /// less than the walk that produced it, and caching it would freeze that gap.
+    /// `None` for a node that must not be cached: one with no usable
+    /// modification time, one whose children were not all walked — a truncated
+    /// node knows less than the walk that produced it — and one that came from
+    /// the cache in the first place. Recording that last one would stamp it
+    /// with the time of a measurement that never happened, and the subtree
+    /// would be served past its own expiry for as long as scans kept coming.
     pub fn of(node: &DirNode, recorded_at: Timestamp) -> Option<Self> {
-        if node.children_truncated {
+        if node.children_truncated || node.from_cache {
             return None;
         }
         Some(Self {
@@ -110,6 +113,7 @@ mod tests {
             inode: 42,
             mtime: Some(at("2026-01-01T00:00:00Z")),
             children_truncated: false,
+            from_cache: false,
         }
     }
 

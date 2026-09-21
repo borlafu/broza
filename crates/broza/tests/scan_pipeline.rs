@@ -27,6 +27,16 @@ const EXTERNAL: &str = "/Volumes/External";
 const EXTERNAL_DEVICE: u64 = 6;
 /// Where the CLI would put the cache.
 const CACHE_ROOT: &str = "/Users/dana/.cache/broza";
+/// One hour, as a `cache-ttl`.
+const AN_HOUR: Duration = Duration::from_secs(60 * 60);
+/// Half of it.
+const HALF_AN_HOUR: Duration = Duration::from_secs(30 * 60);
+/// A minute past the hour.
+const A_MINUTE: Duration = Duration::from_secs(60);
+/// One megabyte, the size of each file of the pile.
+const A_MEGABYTE: u64 = 1_000_000;
+/// How many files the pile holds.
+const FILES_IN_THE_PILE: usize = 10;
 /// Store of the Data volume inside that cache root.
 const DATA_STORE: &str = "/Users/dana/.cache/broza/v1/22222222-2222-4222-8222-222222222222/dirs.bin";
 
@@ -141,6 +151,54 @@ fn a_subtree_the_cache_answered_for_is_not_walked_again() {
 
     assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "the cached subtree was reused");
     assert_eq!(forced.root.size_bytes, cold.root.size_bytes + 500, "--no-cache measures again");
+}
+
+#[test]
+fn a_cached_subtree_expires_on_the_ttl_it_was_first_recorded_with() {
+    let (ports, handles) = ports();
+    // `Documents` holds nothing large enough to be listed, so a warm scan
+    // takes it from the cache — which must not renew it.
+    let request = ScanRequest { min_size: 2500, depth: 1, cache_ttl: AN_HOUR, ..request() };
+
+    let cold = scan_data(&ports, &request);
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1500);
+    // Half an hour later, and half an hour after that: both inside the hour.
+    handles.clock.advance(HALF_AN_HOUR);
+    let warm = scan_data(&ports, &request);
+    handles.clock.advance(HALF_AN_HOUR);
+    handles.clock.advance(A_MINUTE);
+    let expired = scan_data(&ports, &request);
+
+    assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "inside the hour, the cache answers");
+    assert_eq!(
+        expired.root.size_bytes,
+        cold.root.size_bytes + 500,
+        "past the hour the subtree is measured again: a served record must not be re-stamped, \
+         or a stale subtree would be served for ever"
+    );
+}
+
+#[test]
+fn a_directory_of_small_files_is_still_a_big_directory() {
+    let (ports, handles) = ports();
+    // Ten one-megabyte files: nothing in `pile` is reportable on its own, but
+    // `pile` itself is, so its parent cannot be served from the cache.
+    for index in 0..FILES_IN_THE_PILE {
+        let path = format!("/System/Volumes/Data/Users/dana/parent/pile/f{index}");
+        handles.fs.add_file(&path, &[]);
+        handles.fs.set_size(&path, A_MEGABYTE);
+    }
+    let request = ScanRequest { min_size: 5 * A_MEGABYTE, depth: 1, ..request() };
+
+    let cold = scan_data(&ports, &request);
+    let warm = scan_data(&ports, &request);
+
+    assert!(
+        cold.largest.iter().any(|item| item.path.ends_with("pile")),
+        "the pile is worth listing: {:?}",
+        cold.largest
+    );
+    assert_eq!(warm, cold, "a warm scan may not lose the pile");
 }
 
 #[test]

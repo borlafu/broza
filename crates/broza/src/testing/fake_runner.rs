@@ -16,6 +16,10 @@ use crate::testing::sync::lock;
 /// Directory holding the recorded command fixtures (`crates/broza/tests/fixtures`).
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 
+/// What a scripted answer is filed under: the program and its arguments, kept
+/// apart so that an argument containing a space cannot collide with two arguments.
+type CommandKey = (String, Vec<String>);
+
 /// One invocation seen by a [`FakeRunner`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedCall {
@@ -51,7 +55,7 @@ enum Scripted {
 #[derive(Debug, Default)]
 pub struct FakeRunner {
     /// Scripted answers keyed by the rendered command line.
-    scripted: Mutex<BTreeMap<String, Scripted>>,
+    scripted: Mutex<BTreeMap<CommandKey, Scripted>>,
     /// Every invocation, in order.
     calls: Mutex<Vec<RecordedCall>>,
 }
@@ -125,14 +129,15 @@ impl FakeRunner {
 
     /// Rendered command lines this runner can answer, for assertions and messages.
     pub fn expected_keys(&self) -> Vec<String> {
-        lock(&self.scripted).keys().cloned().collect()
+        lock(&self.scripted).keys().map(render_key).collect()
     }
 
     /// Error describing that `key` was not scripted.
-    fn unmatched(&self, key: &str) -> BrozaError {
+    fn unmatched(&self, key: &CommandKey) -> BrozaError {
         let expected = self.expected_keys();
         let listed = if expected.is_empty() { "nothing".to_owned() } else { expected.join("`, `") };
-        BrozaError::Other(format!("FakeRunner: no answer scripted for `{key}`; expected: `{listed}`"))
+        let asked = render_key(key);
+        BrozaError::Other(format!("FakeRunner: no answer scripted for `{asked}`; expected: `{listed}`"))
     }
 }
 
@@ -154,9 +159,14 @@ impl ProcessRunner for FakeRunner {
     }
 }
 
-/// Render `(program, args)` as the key a scripted answer is stored under.
-fn command_key(program: &str, args: &[&str]) -> String {
-    if args.is_empty() { program.to_owned() } else { format!("{program} {}", args.join(" ")) }
+/// The key `(program, args)` is stored under.
+fn command_key(program: &str, args: &[&str]) -> CommandKey {
+    (program.to_owned(), args.iter().map(|arg| (*arg).to_owned()).collect())
+}
+
+/// Render a key the way a shell would show the command, for error messages.
+fn render_key((program, args): &CommandKey) -> String {
+    if args.is_empty() { program.clone() } else { format!("{program} {}", args.join(" ")) }
 }
 
 #[cfg(test)]
@@ -216,6 +226,17 @@ mod tests {
         let _ = runner.run("ghost", &[], TIMEOUT);
 
         assert_eq!(runner.calls().len(), 1);
+    }
+
+    #[test]
+    fn an_argument_with_a_space_does_not_collide_with_two_arguments() {
+        let runner = FakeRunner::new().with_output("cmd", &["a b"], output("one argument"));
+
+        let joined = runner.run("cmd", &["a", "b"], TIMEOUT);
+
+        assert!(joined.is_err(), "two arguments must not match one argument with a space");
+        let single = runner.run("cmd", &["a b"], TIMEOUT).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(single.stdout_text(), "one argument");
     }
 
     #[test]

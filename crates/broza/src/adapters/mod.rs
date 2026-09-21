@@ -13,7 +13,7 @@ pub mod system_clock;
 
 use std::sync::Arc;
 
-pub use mount_table::{FIRMLINKS_PATH, parse_firmlinks, system_mount_table};
+pub use mount_table::{FIRMLINKS_PATH, MountTableReport, parse_firmlinks, system_mount_table};
 pub use process_error::{ProcessError, ProcessErrorKind};
 pub use std_fs::StdFileOps;
 pub use std_process::StdProcessRunner;

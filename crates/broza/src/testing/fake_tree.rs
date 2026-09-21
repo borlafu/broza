@@ -82,6 +82,8 @@ pub(crate) struct Tree {
     roots: Vec<(PathBuf, u64)>,
     /// Every entry, keyed by absolute path and kept sorted.
     nodes: BTreeMap<PathBuf, Node>,
+    /// Prefixes the fake refuses access to, as a volume without Full Disk Access.
+    denied: Vec<PathBuf>,
     /// Inode of the next entry created.
     next_inode: u64,
 }
@@ -89,7 +91,7 @@ pub(crate) struct Tree {
 impl Tree {
     /// An empty tree.
     pub fn new() -> Self {
-        Self { roots: Vec::new(), nodes: BTreeMap::new(), next_inode: 1 }
+        Self { roots: Vec::new(), nodes: BTreeMap::new(), denied: Vec::new(), next_inode: 1 }
     }
 
     /// Declare `path` as a root sitting on `device`, creating it as a directory.
@@ -110,6 +112,16 @@ impl Tree {
     /// Entry at `path`, if any.
     pub fn get(&self, path: &Path) -> Option<&Node> {
         self.nodes.get(path)
+    }
+
+    /// Refuse every access to `path` and everything below it.
+    pub fn add_denied(&mut self, path: &Path) {
+        self.denied.push(path.to_path_buf());
+    }
+
+    /// `true` when `path` is inside a prefix the test declared unreadable.
+    pub fn is_denied(&self, path: &Path) -> bool {
+        self.denied.iter().any(|prefix| path.starts_with(prefix))
     }
 
     /// `true` when something exists at `path`.

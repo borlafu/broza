@@ -11,6 +11,7 @@
 
 pub mod fake_disks;
 pub mod fake_fs;
+mod fake_posix;
 pub mod fake_prompter;
 pub mod fake_runner;
 mod fake_tree;

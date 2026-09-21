@@ -108,11 +108,17 @@ pub fn mac_volumes() -> Vec<Volume> {
     FIXTURES.iter().map(volume).collect()
 }
 
-/// The mount table of the fixture, firmlinks included.
+/// The mount table of the fixture: the mounted volumes only, firmlinks included.
+///
+/// Preboot and Recovery are in [`mac_volumes`] but not here. A mount table maps a
+/// path to a volume, and a volume macOS keeps unmounted owns no path; inventing one
+/// for it would make every lookup below `/System/Volumes/Preboot` answer with a
+/// volume that is not actually there.
 pub fn mac_mount_table() -> MountTable {
     let firmlinks: Vec<PathBuf> = DATA_FIRMLINKS.iter().map(PathBuf::from).collect();
     let entries = FIXTURES
         .iter()
+        .filter(|fixture| fixture.mounted)
         .map(|fixture| MountEntry {
             mount_point: PathBuf::from(fixture.mount_point),
             device: fixture.device,
@@ -145,7 +151,7 @@ fn volume_id(id: &str) -> VolumeId {
 mod tests {
     use std::path::Path;
 
-    use super::{DATA_DEVICE, EXTERNAL_DEVICE, SYSTEM_DEVICE, mac_mount_table, mac_volumes};
+    use super::{DATA_DEVICE, EXTERNAL_DEVICE, PREBOOT_DEVICE, SYSTEM_DEVICE, mac_mount_table, mac_volumes};
     use crate::model::VolumeRole;
 
     #[test]
@@ -198,6 +204,19 @@ mod tests {
         let entry = table.volume_for(Path::new("/Volumes/External/Movies"));
         assert_eq!(entry.map(|e| e.device), Some(EXTERNAL_DEVICE));
         assert_eq!(entry.map(|e| e.volume.writable_by_broza), Some(true));
+    }
+
+    #[test]
+    fn the_table_holds_the_mounted_volumes_and_nothing_else() {
+        let mounted = mac_volumes().iter().filter(|volume| volume.mount_point.is_some()).count();
+        let table = mac_mount_table();
+
+        assert_eq!(table.entries().len(), mounted);
+        assert_eq!(mounted, mac_volumes().len() - 2, "Preboot and Recovery stay out");
+        assert!(table.by_device(PREBOOT_DEVICE).is_none());
+        // Their paths still land on the sealed system volume, which is read-only
+        // too, so leaving them out never turns a protected path into a writable one.
+        assert_eq!(table.role_for(Path::new("/System/Volumes/Preboot/x")), Some(VolumeRole::System));
     }
 
     #[test]

@@ -13,7 +13,6 @@
 //! tree (a file used as a directory). The [`FileOps`] methods never panic; they
 //! return the error the real filesystem would.
 
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -22,23 +21,12 @@ use jiff::Timestamp;
 use crate::BrozaError;
 use crate::adapters::io_error::not_found;
 use crate::ports::{EntryMetadata, FileOps};
-use crate::testing::fake_tree::{NodeKind, Tree, TreeError};
+use crate::testing::fake_posix::{
+    EISDIR, ENOTDIR, EXDEV, check_allowed, check_parent, check_replaceable, errno_error, expect_buildable,
+    from_tree_error, resolve, resolve_parent,
+};
+use crate::testing::fake_tree::{NodeKind, Tree};
 use crate::testing::sync::lock;
-
-/// `EEXIST`: a path already taken by something else.
-const EEXIST: i32 = 17;
-/// `EXDEV`: a rename that crosses devices.
-const EXDEV: i32 = 18;
-/// `ENOTDIR`: a non-directory used as a directory.
-const ENOTDIR: i32 = 20;
-/// `EISDIR`: a directory used as a file.
-const EISDIR: i32 = 21;
-/// `ELOOP`: a symlink chain that never ends.
-const ELOOP: i32 = 62;
-/// `ENOTEMPTY`: a directory that still has children.
-const ENOTEMPTY: i32 = 66;
-/// How many symlinks one path resolution may follow.
-const MAX_SYMLINK_HOPS: usize = 8;
 
 /// An in-memory filesystem.
 ///
@@ -95,6 +83,22 @@ impl FakeFileOps {
     /// Give an existing entry an apparent size unrelated to its contents.
     pub fn set_size(&self, path: impl AsRef<Path>, size_bytes: u64) {
         lock(&self.tree).set_size(path.as_ref(), size_bytes);
+    }
+
+    /// Refuse every access to `path` and everything below it.
+    ///
+    /// This is how a test reproduces a volume Broza has no Full Disk Access to:
+    /// every call about such a path fails with
+    /// [`BrozaError::PermissionDenied`](crate::BrozaError::PermissionDenied).
+    pub fn add_denied(&self, path: impl AsRef<Path>) {
+        lock(&self.tree).add_denied(path.as_ref());
+    }
+
+    /// Builder form of [`FakeFileOps::add_denied`].
+    #[must_use]
+    pub fn with_denied(self, path: impl AsRef<Path>) -> Self {
+        self.add_denied(path);
+        self
     }
 
     /// Set the modification and access times of an existing entry.
@@ -159,52 +163,13 @@ impl FakeFileOps {
         }
         tree.insert(path, kind);
     }
-
-    /// Resolve every symlink on `path`, last component included.
-    fn resolve(tree: &Tree, path: &Path) -> Result<PathBuf, BrozaError> {
-        let mut resolved = PathBuf::new();
-        let mut hops = 0_usize;
-        for component in path.components() {
-            resolved.push(component);
-            while let Some(target) = symlink_target(tree, &resolved) {
-                hops += 1;
-                if hops > MAX_SYMLINK_HOPS {
-                    return Err(errno_error(format!("resolve {}", path.display()), ELOOP));
-                }
-                resolved = match resolved.parent() {
-                    Some(parent) if target.is_relative() => parent.join(target),
-                    _ => target,
-                };
-            }
-        }
-        Ok(resolved)
-    }
-
-    /// Resolve every symlink on `path` except the last component, as `lstat` does.
-    fn resolve_parent(tree: &Tree, path: &Path) -> Result<PathBuf, BrozaError> {
-        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-            return Ok(path.to_path_buf());
-        };
-        Ok(Self::resolve(tree, parent)?.join(name))
-    }
-
-    /// Check that `path` can receive a new entry: its parent must be a directory.
-    fn check_parent(tree: &Tree, path: &Path) -> Result<(), BrozaError> {
-        let Some(parent) = path.parent() else { return Ok(()) };
-        if !tree.exists(parent) {
-            return Err(not_found(parent));
-        }
-        if !tree.is_dir(parent) {
-            return Err(errno_error(format!("open {}", path.display()), ENOTDIR));
-        }
-        Ok(())
-    }
 }
 
 impl FileOps for FakeFileOps {
     fn metadata(&self, path: &Path) -> Result<EntryMetadata, BrozaError> {
         let tree = lock(&self.tree);
-        let resolved = Self::resolve_parent(&tree, path)?;
+        check_allowed(&tree, path)?;
+        let resolved = resolve_parent(&tree, path)?;
         let node = tree.get(&resolved).ok_or_else(|| not_found(path))?;
         Ok(EntryMetadata {
             device: tree.device_for(&resolved),
@@ -221,7 +186,8 @@ impl FileOps for FakeFileOps {
 
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, BrozaError> {
         let tree = lock(&self.tree);
-        let resolved = Self::resolve(&tree, path)?;
+        check_allowed(&tree, path)?;
+        let resolved = resolve(&tree, path)?;
         if !tree.exists(&resolved) {
             return Err(not_found(path));
         }
@@ -239,13 +205,15 @@ impl FileOps for FakeFileOps {
 
     fn exists(&self, path: &Path) -> bool {
         let tree = lock(&self.tree);
-        Self::resolve_parent(&tree, path).is_ok_and(|resolved| tree.exists(&resolved))
+        !tree.is_denied(path) && resolve_parent(&tree, path).is_ok_and(|resolved| tree.exists(&resolved))
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<(), BrozaError> {
         let mut tree = lock(&self.tree);
-        let source = Self::resolve_parent(&tree, from)?;
-        let destination = Self::resolve_parent(&tree, to)?;
+        check_allowed(&tree, from)?;
+        check_allowed(&tree, to)?;
+        let source = resolve_parent(&tree, from)?;
+        let destination = resolve_parent(&tree, to)?;
         if !tree.exists(&source) {
             return Err(not_found(from));
         }
@@ -253,7 +221,7 @@ impl FileOps for FakeFileOps {
             let context = format!("rename {} to {} across devices", from.display(), to.display());
             return Err(errno_error(context, EXDEV));
         }
-        Self::check_parent(&tree, &destination)?;
+        check_parent(&tree, &destination)?;
         check_replaceable(&tree, &source, &destination)?;
         tree.remove_subtree(&destination);
         tree.move_subtree(&source, &destination);
@@ -262,13 +230,15 @@ impl FileOps for FakeFileOps {
 
     fn create_dir_all(&self, path: &Path) -> Result<(), BrozaError> {
         let mut tree = lock(&self.tree);
-        let resolved = Self::resolve(&tree, path)?;
+        check_allowed(&tree, path)?;
+        let resolved = resolve(&tree, path)?;
         tree.create_dir_all(&resolved).map_err(|error| from_tree_error(path, &error))
     }
 
     fn remove_tree(&self, path: &Path) -> Result<(), BrozaError> {
         let mut tree = lock(&self.tree);
-        let resolved = Self::resolve_parent(&tree, path)?;
+        check_allowed(&tree, path)?;
+        let resolved = resolve_parent(&tree, path)?;
         if !tree.exists(&resolved) {
             return Err(not_found(path));
         }
@@ -278,18 +248,20 @@ impl FileOps for FakeFileOps {
 
     fn write_atomic(&self, path: &Path, contents: &[u8]) -> Result<(), BrozaError> {
         let mut tree = lock(&self.tree);
-        let resolved = Self::resolve(&tree, path)?;
+        check_allowed(&tree, path)?;
+        let resolved = resolve(&tree, path)?;
         if tree.is_dir(&resolved) {
             return Err(errno_error(format!("write {}", path.display()), EISDIR));
         }
-        Self::check_parent(&tree, &resolved)?;
+        check_parent(&tree, &resolved)?;
         tree.insert(&resolved, NodeKind::File(contents.to_vec()));
         Ok(())
     }
 
     fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError> {
         let tree = lock(&self.tree);
-        let resolved = Self::resolve(&tree, path)?;
+        check_allowed(&tree, path)?;
+        let resolved = resolve(&tree, path)?;
         let node = tree.get(&resolved).ok_or_else(|| not_found(path))?;
         match &node.kind {
             NodeKind::File(contents) => Ok(contents.clone()),
@@ -301,56 +273,14 @@ impl FileOps for FakeFileOps {
     }
 }
 
-/// Target of `path` when it is a symlink.
-fn symlink_target(tree: &Tree, path: &Path) -> Option<PathBuf> {
-    match tree.get(path).map(|node| &node.kind) {
-        Some(NodeKind::Symlink(target)) => Some(target.clone()),
-        _ => None,
-    }
-}
-
-/// Apply the POSIX rules for replacing `destination` with `source`.
-fn check_replaceable(tree: &Tree, source: &Path, destination: &Path) -> Result<(), BrozaError> {
-    if !tree.exists(destination) {
-        return Ok(());
-    }
-    let context = format!("rename {} to {}", source.display(), destination.display());
-    match (tree.is_dir(source), tree.is_dir(destination)) {
-        (true, false) => Err(errno_error(context, ENOTDIR)),
-        (false, true) => Err(errno_error(context, EISDIR)),
-        (true, true) if !tree.is_empty_dir(destination) => Err(errno_error(context, ENOTEMPTY)),
-        _ => Ok(()),
-    }
-}
-
-/// Translate a tree failure into the error the real filesystem would report.
-fn from_tree_error(path: &Path, error: &TreeError) -> BrozaError {
-    let context = format!("create directory {}", path.display());
-    match error {
-        TreeError::NotADirectory(_) => errno_error(context, ENOTDIR),
-        TreeError::AlreadyExists(_) => errno_error(context, EEXIST),
-    }
-}
-
-/// Build the error a given `errno` produces, with the same shape `std` would give.
-fn errno_error(context: String, errno: i32) -> BrozaError {
-    BrozaError::Io { context, source: io::Error::from_raw_os_error(errno) }
-}
-
-/// Panic when a test asks the builder for a tree that cannot exist.
-fn expect_buildable(path: &Path, result: Result<(), TreeError>) {
-    if let Err(error) = result {
-        panic!("FakeFileOps cannot create {}: {error:?}", path.display());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{ELOOP, FakeFileOps};
+    use super::FakeFileOps;
     use crate::BrozaError;
     use crate::ports::FileOps;
+    use crate::testing::fake_posix::ELOOP;
 
     fn errno(result: Result<impl std::fmt::Debug, BrozaError>) -> Option<i32> {
         match result.err()? {
@@ -423,6 +353,19 @@ mod tests {
     #[should_panic(expected = "cannot create")]
     fn the_builder_refuses_to_describe_a_file_used_as_a_directory() {
         let _ = FakeFileOps::new().with_root("/a", 1).with_file("/a/f", b"x").with_dir("/a/f/child");
+    }
+
+    #[test]
+    fn a_denied_prefix_refuses_every_call_about_it() {
+        let fs =
+            FakeFileOps::new().with_root("/a", 1).with_file("/a/secret/f", b"x").with_denied("/a/secret");
+
+        assert!(matches!(fs.metadata(Path::new("/a/secret/f")), Err(BrozaError::PermissionDenied { .. })));
+        assert!(matches!(fs.read(Path::new("/a/secret/f")), Err(BrozaError::PermissionDenied { .. })));
+        assert!(matches!(fs.read_dir(Path::new("/a/secret")), Err(BrozaError::PermissionDenied { .. })));
+        assert!(matches!(fs.remove_tree(Path::new("/a/secret/f")), Err(BrozaError::PermissionDenied { .. })));
+        assert!(!fs.exists(Path::new("/a/secret/f")));
+        assert!(fs.exists(Path::new("/a")));
     }
 
     #[test]

@@ -4,8 +4,10 @@
 //! `GiB`, `TiB`) units, case-insensitively and with an optional space. [`DurationSpec`]
 //! accepts `<int><unit>` with `h`, `d`, `w`, `m` (30 days) and `y` (365 days).
 //!
-//! Both are pure value types: the JSON contract always carries integer bytes, so these
-//! types only appear in configuration and on the command line.
+//! These are **configuration and command-line** value types, not part of the JSON
+//! contract: they carry a unit suffix and serialise as strings. Payload structs in
+//! [`crate::model`] always use plain `u64` byte counts, so [`ByteSize`] must never
+//! appear in one.
 
 pub mod bytes;
 pub mod duration;

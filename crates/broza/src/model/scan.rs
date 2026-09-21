@@ -8,7 +8,7 @@ use crate::model::disk::Disk;
 use crate::model::ids::VolumeId;
 
 /// Payload of `broza scan`.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ScanReport {
     /// Every disk Broza could enumerate.
@@ -63,7 +63,7 @@ mod tests {
     }
 
     #[test]
-    fn a_report_carrying_a_disk_round_trips_and_clones() {
+    fn a_report_carrying_a_disk_round_trips() {
         let raw = serde_json::json!({
             "disks": [{
                 "id": "disk0",
@@ -75,9 +75,17 @@ mod tests {
             "largest_items": []
         });
         let report: ScanReport = serde_json::from_value(raw.clone()).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(report.clone(), report);
-        assert!(format!("{report:?}").contains("APPLE SSD"));
+        assert_eq!(report.disks.len(), 1);
         assert_eq!(serde_json::to_value(&report).unwrap_or_else(|e| panic!("{e}")), raw);
+    }
+
+    #[test]
+    fn a_malformed_volume_identifier_is_rejected() {
+        let raw = serde_json::json!({
+            "disks": [],
+            "largest_items": [{"path": "/x", "size_bytes": 1, "kind": "file", "volume_id": "sda1"}]
+        });
+        assert!(serde_json::from_value::<ScanReport>(raw).is_err());
     }
 
     #[test]

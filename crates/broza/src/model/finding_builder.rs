@@ -3,113 +3,152 @@
 use crate::BrozaError;
 use crate::model::category::Category;
 use crate::model::disk::Snapshot;
-use crate::model::finding::{Action, Finding, FindingPath, Instructions, Risk};
+use crate::model::finding::{Action, Finding, FindingPath, FindingRepr, Instructions, Risk};
 use crate::model::ids::FindingId;
 
 /// Incremental, immutable builder for a [`Finding`].
 ///
-/// The builder starts from the category defaults ([`Category::base_risk`] and
-/// [`Category::default_action`]) and coerces the invariants that the specification
-/// states unconditionally:
+/// Risk and action default to [`Category::base_risk`] and
+/// [`Category::default_action`]. Setting them explicitly on an inform-only category
+/// is an error rather than a silent coercion: a detector that believes it may delete
+/// cloud-synced data has a bug, and `AGENTS.md` §2.5 admits no exception.
 ///
-/// - [`Category::CloudSynced`] is always `red`, `inform_only` and not actionable
-///   (`AGENTS.md` §2.5); an attempt to set another action or risk is ignored.
-/// - `actionable` is always derived, never set by the caller.
-///
-/// Combinations that would silently lose data ([`Instructions`] on an actionable
-/// finding, snapshots on another category, an identifier that disagrees with the
-/// category) are rejected by [`FindingBuilder::build`] instead.
+/// `actionable` is always derived from the action, never set by the caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindingBuilder {
-    /// Finding assembled so far.
-    finding: Finding,
+    /// Stable identifier.
+    id: FindingId,
+    /// Category of the finding.
+    category: Category,
+    /// Short human title.
+    title: String,
+    /// Longer explanation.
+    description: Option<String>,
+    /// Risk, when the caller set one.
+    risk: Option<Risk>,
+    /// Reclaimable bytes.
+    reclaimable_bytes: u64,
+    /// Number of items behind the finding.
+    item_count: Option<u64>,
+    /// Action, when the caller set one.
+    action: Option<Action>,
+    /// Explanation shown by `--explain`.
+    reasoning: Option<String>,
+    /// Paths behind the finding.
+    paths: Vec<FindingPath>,
+    /// Snapshots behind the finding.
+    snapshots: Vec<Snapshot>,
+    /// Provider steps.
+    instructions: Option<Instructions>,
 }
 
 impl FindingBuilder {
     /// Start from the defaults of `category`.
     pub fn new(id: FindingId, category: Category, title: impl Into<String>) -> Self {
-        let action = category.default_action();
         Self {
-            finding: Finding {
-                id,
-                category,
-                title: title.into(),
-                description: None,
-                risk: category.base_risk(),
-                reclaimable_bytes: 0,
-                item_count: None,
-                actionable: action.is_actionable(),
-                action,
-                reasoning: None,
-                paths: Vec::new(),
-                snapshots: Vec::new(),
-                instructions: None,
-            },
+            id,
+            category,
+            title: title.into(),
+            description: None,
+            risk: None,
+            reclaimable_bytes: 0,
+            item_count: None,
+            action: None,
+            reasoning: None,
+            paths: Vec::new(),
+            snapshots: Vec::new(),
+            instructions: None,
         }
     }
 
     /// Set the long description.
     #[must_use]
     pub fn description(self, description: impl Into<String>) -> Self {
-        Self { finding: Finding { description: Some(description.into()), ..self.finding } }
+        Self { description: Some(description.into()), ..self }
     }
 
-    /// Raise or lower the risk. Ignored for inform-only categories.
+    /// Raise or lower the risk away from [`Category::base_risk`].
     #[must_use]
     pub fn risk(self, risk: Risk) -> Self {
-        Self { finding: Finding { risk, ..self.finding } }
+        Self { risk: Some(risk), ..self }
     }
 
-    /// Set the proposed action. Ignored for inform-only categories.
+    /// Set the proposed action, overriding [`Category::default_action`].
     #[must_use]
     pub fn action(self, action: Action) -> Self {
-        Self { finding: Finding { action, ..self.finding } }
+        Self { action: Some(action), ..self }
     }
 
     /// Set the reclaimable size in bytes.
     #[must_use]
     pub fn reclaimable_bytes(self, reclaimable_bytes: u64) -> Self {
-        Self { finding: Finding { reclaimable_bytes, ..self.finding } }
+        Self { reclaimable_bytes, ..self }
     }
 
     /// Set the number of items behind the finding.
     #[must_use]
     pub fn item_count(self, item_count: u64) -> Self {
-        Self { finding: Finding { item_count: Some(item_count), ..self.finding } }
+        Self { item_count: Some(item_count), ..self }
     }
 
     /// Set the explanation shown by `--explain`.
     #[must_use]
     pub fn reasoning(self, reasoning: impl Into<String>) -> Self {
-        Self { finding: Finding { reasoning: Some(reasoning.into()), ..self.finding } }
+        Self { reasoning: Some(reasoning.into()), ..self }
     }
 
     /// Replace the paths behind the finding.
     #[must_use]
     pub fn paths(self, paths: Vec<FindingPath>) -> Self {
-        Self { finding: Finding { paths, ..self.finding } }
+        Self { paths, ..self }
     }
 
     /// Replace the snapshots behind the finding.
     #[must_use]
     pub fn snapshots(self, snapshots: Vec<Snapshot>) -> Self {
-        Self { finding: Finding { snapshots, ..self.finding } }
+        Self { snapshots, ..self }
     }
 
-    /// Attach the provider's official steps. Only valid for inform-only findings.
+    /// Attach the provider's official steps. Required for inform-only findings.
     #[must_use]
     pub fn instructions(self, instructions: Instructions) -> Self {
-        Self { finding: Finding { instructions: Some(instructions), ..self.finding } }
+        Self { instructions: Some(instructions), ..self }
     }
 
-    /// Apply the unconditional coercions and validate the result.
+    /// Resolve the defaults and validate the result.
     pub fn build(self) -> Result<Finding, BrozaError> {
-        let category = self.finding.category;
-        let action = if category.is_inform_only() { Action::InformOnly } else { self.finding.action };
-        let risk = if category.is_inform_only() { Risk::Red } else { self.finding.risk };
-        let finding = Finding { action, risk, actionable: action.is_actionable(), ..self.finding };
-        finding.validate()?;
-        Ok(finding)
+        let category = self.category;
+        let refused = |reason: &str| BrozaError::Other(format!("finding `{}`: {reason}", self.id));
+        if category.is_inform_only() {
+            if self.action.is_some_and(|action| action != Action::InformOnly) {
+                return Err(refused("an inform-only category cannot be given another action"));
+            }
+            if self.risk.is_some_and(|risk| risk != Risk::Red) {
+                return Err(refused("an inform-only category is always red"));
+            }
+        }
+        let action = if category.is_inform_only() {
+            Action::InformOnly
+        } else {
+            self.action.unwrap_or(category.default_action())
+        };
+        let risk =
+            if category.is_inform_only() { Risk::Red } else { self.risk.unwrap_or(category.base_risk()) };
+        Finding::try_from(FindingRepr {
+            id: self.id,
+            category,
+            title: self.title,
+            description: self.description,
+            risk,
+            reclaimable_bytes: self.reclaimable_bytes,
+            item_count: self.item_count,
+            actionable: action.is_actionable(),
+            action,
+            reasoning: self.reasoning,
+            paths: self.paths,
+            snapshots: self.snapshots,
+            instructions: self.instructions,
+        })
     }
 }
 
@@ -133,43 +172,60 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cloud_synced_findings_are_forced_to_inform_only() {
-        let finding = FindingBuilder::new(id("cloud-synced.icloud"), Category::CloudSynced, "iCloud")
-            .action(Action::Purge)
-            .risk(Risk::Green)
+    fn cloud_builder() -> FindingBuilder {
+        FindingBuilder::new(id("cloud-synced.icloud"), Category::CloudSynced, "iCloud")
             .instructions(instructions())
-            .build()
-            .unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(finding.action, Action::InformOnly);
-        assert_eq!(finding.risk, Risk::Red);
-        assert!(!finding.actionable);
-        assert!(finding.instructions.is_some());
+    }
+
+    #[test]
+    fn a_cloud_synced_finding_defaults_to_red_and_inform_only() {
+        let finding = cloud_builder().build().unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(finding.action(), Action::InformOnly);
+        assert_eq!(finding.risk(), Risk::Red);
+        assert!(!finding.is_actionable());
+        assert!(finding.instructions().is_some());
+    }
+
+    #[test]
+    fn a_cloud_synced_finding_refuses_another_action_or_risk() {
+        for action in [Action::Quarantine, Action::Purge, Action::TmutilDelete] {
+            assert!(cloud_builder().action(action).build().is_err(), "{action:?}");
+        }
+        for risk in [Risk::Green, Risk::Amber] {
+            assert!(cloud_builder().risk(risk).build().is_err(), "{risk:?}");
+        }
+        assert!(cloud_builder().action(Action::InformOnly).risk(Risk::Red).build().is_ok());
     }
 
     #[test]
     fn actionable_always_mirrors_the_action() {
-        let cases = [
-            (Action::Quarantine, true),
-            (Action::Purge, true),
-            (Action::TmutilDelete, true),
-            (Action::InformOnly, false),
-        ];
+        let cases = [(Action::Quarantine, true), (Action::Purge, true), (Action::TmutilDelete, true)];
         for (action, expected) in cases {
             let finding = FindingBuilder::new(id("build-cache.docker-raw"), Category::BuildCache, "Docker")
                 .action(action)
                 .build()
                 .unwrap_or_else(|e| panic!("{e}"));
-            assert_eq!(finding.actionable, expected, "{action:?}");
+            assert_eq!(finding.is_actionable(), expected, "{action:?}");
         }
+        let inform = FindingBuilder::new(id("build-cache.docker-raw"), Category::BuildCache, "Docker")
+            .action(Action::InformOnly)
+            .instructions(instructions())
+            .build()
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(!inform.is_actionable());
     }
 
     #[test]
-    fn instructions_on_an_actionable_finding_are_rejected() {
-        let built = FindingBuilder::new(id("user-cache.logs"), Category::UserCache, "Logs")
+    fn instructions_are_required_by_and_limited_to_inform_only_findings() {
+        let stray = FindingBuilder::new(id("user-cache.logs"), Category::UserCache, "Logs")
             .instructions(instructions())
             .build();
-        assert!(built.is_err());
+        assert!(stray.is_err());
+
+        let missing = FindingBuilder::new(id("build-cache.docker-raw"), Category::BuildCache, "Docker")
+            .action(Action::InformOnly)
+            .build();
+        assert!(missing.is_err());
     }
 
     #[test]
@@ -201,13 +257,34 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
         let plain: Finding = base.build().unwrap_or_else(|e| panic!("{e}"));
 
-        assert_eq!(enriched.description.as_deref(), Some("APFS copy-on-write snapshots."));
-        assert_eq!(enriched.reasoning.as_deref(), Some("size not reported by macOS"));
-        assert_eq!(enriched.item_count, Some(4));
-        assert_eq!(enriched.paths.len(), 1);
-        assert_eq!(enriched.snapshots.len(), 1);
-        assert_eq!(enriched.action, Action::TmutilDelete);
-        assert!(plain.description.is_none(), "the shared builder was mutated");
-        assert!(plain.snapshots.is_empty(), "the shared builder was mutated");
+        assert_eq!(enriched.description(), Some("APFS copy-on-write snapshots."));
+        assert_eq!(enriched.item_count(), Some(4));
+        assert_eq!(enriched.paths().len(), 1);
+        assert_eq!(enriched.snapshots().len(), 1);
+        assert_eq!(enriched.action(), Action::TmutilDelete);
+        assert!(plain.description().is_none(), "the shared builder was mutated");
+        assert!(plain.snapshots().is_empty(), "the shared builder was mutated");
+    }
+
+    #[test]
+    fn a_finding_can_only_be_parsed_when_it_is_consistent() {
+        let valid = serde_json::json!({
+            "id": "user-cache.logs",
+            "category": "user-cache",
+            "title": "Logs",
+            "risk": "green",
+            "reclaimable_bytes": 10,
+            "actionable": true,
+            "action": "quarantine"
+        });
+        assert!(serde_json::from_value::<Finding>(valid.clone()).is_ok());
+
+        let mut lying = valid.clone();
+        lying["actionable"] = serde_json::json!(false);
+        assert!(serde_json::from_value::<Finding>(lying).is_err());
+
+        let mut stray_category = valid;
+        stray_category["category"] = serde_json::json!("trash");
+        assert!(serde_json::from_value::<Finding>(stray_category).is_err());
     }
 }

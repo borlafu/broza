@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 /// Envelope wrapping the `data` of every command.
@@ -11,8 +12,9 @@ pub struct Envelope<T> {
     pub schema_version: String,
     /// Version of the Broza binary that produced the output.
     pub broza_version: String,
-    /// RFC 3339 UTC timestamp.
-    pub generated_at: String,
+    /// When the output was produced, RFC 3339 UTC with whole seconds.
+    #[serde(with = "crate::model::timestamp")]
+    pub generated_at: Timestamp,
     /// Command that produced the output (`scan`, `suggest`, ...).
     pub command: String,
     /// Host information.
@@ -36,37 +38,31 @@ pub struct Host {
     pub arch: String,
 }
 
-/// A non-fatal warning.
+/// One entry of `warnings[]` or `errors[]`; both have the same shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Warning {
+pub struct Diagnostic {
     /// Stable machine-readable code.
     pub code: String,
     /// Human-readable message.
     pub message: String,
-    /// Path the warning refers to, if any.
+    /// Path the entry refers to, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
 }
 
-/// An error entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ErrorEntry {
-    /// Stable machine-readable code.
-    pub code: String,
-    /// Human-readable message.
-    pub message: String,
-    /// Path the error refers to, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<PathBuf>,
-}
+/// A non-fatal warning. Warnings never affect the exit code.
+pub type Warning = Diagnostic;
+
+/// An error entry. A non-empty `errors[]` implies exit code `5`.
+pub type ErrorEntry = Diagnostic;
 
 impl<T> Envelope<T> {
     /// Build an envelope for `command` around `data`.
-    pub fn new(command: impl Into<String>, host: Host, generated_at: impl Into<String>, data: T) -> Self {
+    pub fn new(command: impl Into<String>, host: Host, generated_at: Timestamp, data: T) -> Self {
         Self {
             schema_version: crate::SCHEMA_VERSION.to_owned(),
             broza_version: crate::BROZA_VERSION.to_owned(),
-            generated_at: generated_at.into(),
+            generated_at,
             command: command.into(),
             host,
             data,
@@ -99,26 +95,32 @@ impl<T> Envelope<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Diagnostic, Envelope, Host};
+    use jiff::Timestamp;
 
     fn host() -> Host {
         Host { macos_version: "26.1".into(), arch: "arm64".into() }
     }
 
+    fn at() -> Timestamp {
+        "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}"))
+    }
+
     #[test]
     fn serializes_with_schema_version_and_empty_arrays() {
-        let env = Envelope::new("about", host(), "2026-09-21T10:36:08Z", serde_json::json!({}));
+        let env = Envelope::new("about", host(), at(), serde_json::json!({}));
         let json = serde_json::to_value(&env).unwrap_or_default();
         assert_eq!(json["schema_version"], "1.1");
         assert_eq!(json["command"], "about");
+        assert_eq!(json["generated_at"], "2026-09-21T10:36:08Z");
         assert_eq!(json["warnings"], serde_json::json!([]));
         assert_eq!(json["errors"], serde_json::json!([]));
     }
 
     #[test]
     fn with_error_marks_partial_failure_without_mutating_original() {
-        let original = Envelope::new("clean", host(), "2026-09-21T10:36:08Z", 0_u8);
-        let with_err = original.clone().with_error(ErrorEntry {
+        let original = Envelope::new("clean", host(), at(), 0_u8);
+        let with_err = original.clone().with_error(Diagnostic {
             code: "cross_volume".into(),
             message: "skipped".into(),
             path: None,
@@ -129,8 +131,8 @@ mod tests {
 
     #[test]
     fn with_warning_appends_without_touching_the_exit_code() {
-        let original = Envelope::new("scan", host(), "2026-09-21T10:36:08Z", 0_u8);
-        let with_warning = original.clone().with_warning(Warning {
+        let original = Envelope::new("scan", host(), at(), 0_u8);
+        let with_warning = original.clone().with_warning(Diagnostic {
             code: "spotlight_unavailable".into(),
             message: "no last-used dates".into(),
             path: None,
@@ -146,6 +148,14 @@ mod tests {
             "command":"about","host":{"macos_version":"26.1","arch":"arm64"},"data":{},"future_field":1}"#;
         let env: Envelope<serde_json::Value> = serde_json::from_str(raw).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(env.command, "about");
+        assert_eq!(env.generated_at, at());
         assert!(env.warnings.is_empty());
+    }
+
+    #[test]
+    fn a_malformed_generated_at_is_rejected() {
+        let raw = r#"{"schema_version":"1.1","broza_version":"0.1.0","generated_at":"yesterday",
+            "command":"about","host":{"macos_version":"26.1","arch":"arm64"},"data":{}}"#;
+        assert!(serde_json::from_str::<Envelope<serde_json::Value>>(raw).is_err());
     }
 }

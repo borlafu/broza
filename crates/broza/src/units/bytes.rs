@@ -96,18 +96,20 @@ fn unit_factor(unit: &str) -> Option<u128> {
 
 /// Multiply the decimal literal `number` by `factor`, truncating towards zero.
 ///
-/// Returns `None` for a malformed literal or a result outside `u64`.
+/// Returns `None` for a malformed literal, a result outside `u64`, or a non-zero
+/// literal that truncates to zero bytes: `0.4B` is a mistake, not "no bytes".
 fn scale_decimal(number: &str, factor: u128) -> Option<u64> {
     let (integer, fraction) = number.split_once('.').unwrap_or((number, ""));
     if integer.is_empty() || (number.contains('.') && fraction.is_empty()) {
         return None;
     }
-    if !integer.bytes().chain(fraction.bytes()).all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let digits: u128 = format!("{integer}{fraction}").parse().ok()?;
+    let digits = integer.bytes().chain(fraction.bytes()).try_fold(0_u128, |value, byte| {
+        let digit = u128::from(byte.checked_sub(b'0').filter(|digit| *digit <= 9)?);
+        value.checked_mul(10)?.checked_add(digit)
+    })?;
     let divisor = 10_u128.checked_pow(u32::try_from(fraction.len()).ok()?)?;
-    u64::try_from(digits.checked_mul(factor)? / divisor).ok()
+    let bytes = u64::try_from(digits.checked_mul(factor)? / divisor).ok()?;
+    if bytes == 0 && digits != 0 { None } else { Some(bytes) }
 }
 
 impl Serialize for ByteSize {
@@ -186,6 +188,7 @@ mod tests {
             ("50MB", 50_000_000),
             ("2.25 mib", 2_359_296),
             ("1.999B", 1),
+            ("0.000001MB", 1),
             ("1.0TB", 1_000_000_000_000),
         ];
         for (raw, expected) in cases {
@@ -208,6 +211,8 @@ mod tests {
             ("1GB extra", "trailing text"),
             ("99999999999999999999GB", "overflow"),
             ("18446744073709551616B", "u64 overflow"),
+            ("0.4B", "truncates a non-zero size to zero"),
+            ("0.0000001MB", "truncates a non-zero size to zero"),
         ];
         for (raw, why) in cases {
             assert!(ByteSize::from_str(raw).is_err(), "expected error for {why}: {raw:?}");
@@ -229,6 +234,24 @@ mod tests {
             let value = ByteSize::new(bytes);
             assert_eq!(value.to_string(), expected, "{bytes}");
             assert_eq!(size(expected), bytes, "round trip {expected}");
+        }
+    }
+
+    #[test]
+    fn every_interesting_magnitude_survives_a_display_parse_round_trip() {
+        let mut cases = vec![u64::MAX, u64::MAX - 1];
+        for exponent in 0..20_u32 {
+            if let Some(power) = 10_u64.checked_pow(exponent) {
+                cases.extend([power, power.saturating_sub(1), power.saturating_add(1)]);
+            }
+        }
+        for exponent in 0..64_u32 {
+            let power = 1_u64 << exponent;
+            cases.extend([power, power - 1, power.saturating_add(1)]);
+        }
+        for bytes in cases {
+            let rendered = ByteSize::new(bytes).to_string();
+            assert_eq!(size(&rendered), bytes, "{bytes} rendered as {rendered}");
         }
     }
 

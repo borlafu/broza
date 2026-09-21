@@ -8,8 +8,8 @@
 use std::path::Path;
 
 use broza::model::{
-    CleanPlan, Envelope, Finding, QuarantineList, ReclaimReport, RestoreReport, ScanReport, SuggestReport,
-    VolumeRole,
+    CleanPlan, Envelope, Finding, FsKind, QuarantineList, ReclaimReport, RestoreReport, ScanReport,
+    SessionState, SuggestReport, VolumeRole,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -85,7 +85,7 @@ fn every_finding_in_the_specification_satisfies_its_invariants() {
     assert_eq!(report.data.findings.len(), 3);
     for finding in &report.data.findings {
         if let Err(error) = finding.validate() {
-            panic!("{}: {error}", finding.id);
+            panic!("{}: {error}", finding.id());
         }
     }
 }
@@ -95,10 +95,10 @@ fn the_clean_plan_in_the_specification_satisfies_its_invariants() {
     let plan: DataOnly<CleanPlan> =
         serde_json::from_value(fixture("4_4_clean.json")).unwrap_or_else(|e| panic!("{e}"));
     assert!(plan.data.validate().is_ok());
-    // The example abridges `items`, so its `planned_bytes` is larger than their sum.
-    assert!(!plan.data.planned_bytes_match_items());
-    assert!(!plan.data.dry_run);
-    assert_eq!(plan.data.items.len(), 2);
+    let sum: u64 = plan.data.items().iter().map(|item| item.size_bytes).sum();
+    assert_eq!(plan.data.planned_bytes(), sum);
+    assert!(!plan.data.is_dry_run());
+    assert_eq!(plan.data.items().len(), 2);
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn unknown_fields_are_ignored() {
 }
 
 #[test]
-fn an_unknown_role_deserialises_to_the_unknown_variant() {
+fn an_unknown_role_collapses_to_the_unknown_variant() {
     let mut value = fixture("4_2_scan.json");
     value["data"]["disks"][0]["containers"][0]["volumes"][0]["role"] = serde_json::json!("nursery");
     let parsed: DataOnly<ScanReport> = serde_json::from_value(value).unwrap_or_else(|e| panic!("{e}"));
@@ -123,13 +123,29 @@ fn an_unknown_role_deserialises_to_the_unknown_variant() {
 }
 
 #[test]
+fn a_persisted_enum_value_from_a_newer_broza_survives_a_round_trip() {
+    let mut scan = fixture("4_2_scan.json");
+    scan["data"]["disks"][0]["containers"][0]["type"] = serde_json::json!("zfs");
+    let parsed: DataOnly<ScanReport> = serde_json::from_value(scan.clone()).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(parsed.data.disks[0].containers[0].kind, FsKind::Unknown("zfs".into()));
+    assert_eq!(serde_json::to_value(&parsed).unwrap_or_else(|e| panic!("{e}")), scan);
+
+    let mut list = fixture("4_5_quarantine_list.json");
+    list["data"]["sessions"][0]["state"] = serde_json::json!("archived");
+    let parsed: DataOnly<QuarantineList> =
+        serde_json::from_value(list.clone()).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(parsed.data.sessions[0].state, SessionState::Unknown("archived".into()));
+    assert_eq!(serde_json::to_value(&parsed).unwrap_or_else(|e| panic!("{e}")), list);
+}
+
+#[test]
 fn an_unknown_closed_enum_value_is_an_error_and_never_a_panic() {
     let mut value = fixture("4_3_suggest.json");
     value["data"]["findings"][0]["risk"] = serde_json::json!("chartreuse");
     assert!(serde_json::from_value::<DataOnly<SuggestReport>>(value).is_err());
 
     let mut value = fixture("4_4_clean.json");
-    value["data"]["items"][0]["status"] = serde_json::json!("teleported");
+    value["data"]["items"][0]["action"] = serde_json::json!("teleport");
     assert!(serde_json::from_value::<DataOnly<CleanPlan>>(value).is_err());
 }
 
@@ -137,12 +153,54 @@ fn an_unknown_closed_enum_value_is_an_error_and_never_a_panic() {
 fn a_malformed_identifier_is_rejected_at_the_boundary() {
     let mut value = fixture("4_3_suggest.json");
     value["data"]["findings"][0]["id"] = serde_json::json!("Build Cache/Xcode");
-    let error = serde_json::from_value::<DataOnly<SuggestReport>>(value);
-    assert!(error.is_err());
+    assert!(serde_json::from_value::<DataOnly<SuggestReport>>(value).is_err());
 }
 
 #[test]
-fn findings_can_be_built_only_in_a_consistent_shape() {
+fn a_finding_that_contradicts_the_invariants_cannot_be_parsed() {
+    let cloud_synced = 2;
+    let mut value = fixture("4_3_suggest.json");
+    value["data"]["findings"][cloud_synced]["actionable"] = serde_json::json!(true);
+    value["data"]["findings"][cloud_synced]["action"] = serde_json::json!("purge");
+    assert!(
+        serde_json::from_value::<DataOnly<SuggestReport>>(value).is_err(),
+        "a cloud-synced finding must never parse as actionable"
+    );
+
+    let mut value = fixture("4_3_suggest.json");
+    value["data"]["findings"][cloud_synced]["instructions"] = serde_json::Value::Null;
+    assert!(
+        serde_json::from_value::<DataOnly<SuggestReport>>(value).is_err(),
+        "an inform-only finding must carry the provider's instructions"
+    );
+}
+
+#[test]
+fn a_clean_plan_that_contradicts_the_invariants_cannot_be_parsed() {
+    let mut value = fixture("4_4_clean.json");
+    value["data"]["dry_run"] = serde_json::json!(true);
+    assert!(
+        serde_json::from_value::<DataOnly<CleanPlan>>(value).is_err(),
+        "a dry run must not report quarantined or reclaimed bytes"
+    );
+
+    let mut value = fixture("4_4_clean.json");
+    value["data"]["planned_bytes"] = serde_json::json!(1);
+    assert!(
+        serde_json::from_value::<DataOnly<CleanPlan>>(value).is_err(),
+        "`planned_bytes` must be the sum of the item sizes"
+    );
+
+    let mut value = fixture("4_4_clean.json");
+    value["data"]["items"][0]["error"] = serde_json::json!("collision");
+    assert!(
+        serde_json::from_value::<DataOnly<CleanPlan>>(value).is_err(),
+        "a quarantined item must not carry an error"
+    );
+}
+
+#[test]
+fn findings_can_be_rebuilt_from_the_specification_examples() {
     let report: DataOnly<SuggestReport> =
         serde_json::from_value(fixture("4_3_suggest.json")).unwrap_or_else(|e| panic!("{e}"));
     let rebuilt: Vec<Finding> = report
@@ -150,16 +208,19 @@ fn findings_can_be_built_only_in_a_consistent_shape() {
         .findings
         .iter()
         .map(|finding| {
-            Finding::builder(finding.id.clone(), finding.category, finding.title.clone())
-                .action(finding.action)
-                .risk(finding.risk)
-                .build()
-                .unwrap_or_else(|e| panic!("{e}"))
+            let builder = Finding::builder(finding.id().clone(), finding.category(), finding.title())
+                .action(finding.action())
+                .risk(finding.risk());
+            let builder = match finding.instructions() {
+                Some(instructions) => builder.instructions(instructions.clone()),
+                None => builder,
+            };
+            builder.build().unwrap_or_else(|e| panic!("{e}"))
         })
         .collect();
     for (original, rebuilt) in report.data.findings.iter().zip(&rebuilt) {
-        assert_eq!(original.actionable, rebuilt.actionable, "{}", original.id);
-        assert_eq!(original.action, rebuilt.action, "{}", original.id);
-        assert_eq!(original.risk, rebuilt.risk, "{}", original.id);
+        assert_eq!(original.is_actionable(), rebuilt.is_actionable(), "{}", original.id());
+        assert_eq!(original.action(), rebuilt.action(), "{}", original.id());
+        assert_eq!(original.risk(), rebuilt.risk(), "{}", original.id());
     }
 }

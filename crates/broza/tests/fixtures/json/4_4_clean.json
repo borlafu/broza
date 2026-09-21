@@ -2,8 +2,8 @@
   "data": {
     "dry_run": false,
     "session_id": "cln_20260921103608_a1b2",
-    "planned_bytes": 138200000000,
-    "quarantined_bytes": 121400000000,
+    "planned_bytes": 111000000000,
+    "quarantined_bytes": 94200000000,
     "reclaimed_bytes": 12400000000,
     "quarantine_path": "/Users/x/.local/share/broza/quarantine/cln_20260921103608_a1b2",
     "expired_sessions": [{

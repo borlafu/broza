@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::model::ids::VolumeId;
+use crate::model::open_enum::open_enum;
 
 /// A physical disk as reported by `diskutil`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,18 +47,21 @@ pub struct Container {
 }
 
 /// Filesystem family of a [`Container`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+///
+/// An open enum: a filesystem Broza does not model keeps its original token, so a
+/// `zfs` container is still reported as `zfs`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum FsKind {
     /// Apple File System.
     Apfs,
     /// Mac OS Extended (`HFS+`).
     HfsPlus,
-    /// Anything Broza does not model; unknown values deserialise here.
-    #[serde(other)]
-    Unknown,
+    /// A filesystem this version of Broza does not model, with its original token.
+    Unknown(String),
 }
+
+open_enum!(FsKind { Apfs => "apfs", HfsPlus => "hfs_plus" });
 
 /// A mounted or mountable volume.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +86,10 @@ pub struct Volume {
 }
 
 /// Role of a volume (`docs/cli-spec.md` §4.1, stable enum `role`).
+///
+/// Unknown tokens collapse into [`VolumeRole::Unknown`] on purpose: the role drives
+/// the write protection of `AGENTS.md` §2.3, and a role Broza cannot recognise must
+/// behave like one it knows nothing about, never like a writable one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -174,11 +182,17 @@ mod tests {
     }
 
     #[test]
-    fn unknown_filesystem_kinds_do_not_fail_to_deserialize() {
+    fn an_unknown_filesystem_keeps_its_token_through_a_round_trip() {
         let kind: FsKind = serde_json::from_str("\"zfs\"").unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(kind, FsKind::Unknown);
+        assert_eq!(kind, FsKind::Unknown("zfs".into()));
+        assert!(!kind.is_known());
+        assert_eq!(kind.to_string(), "zfs");
+        assert_eq!(serde_json::to_string(&kind).unwrap_or_else(|e| panic!("{e}")), "\"zfs\"");
+
         let known: FsKind = serde_json::from_str("\"hfs_plus\"").unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(known, FsKind::HfsPlus);
+        assert!(known.is_known());
+        assert_eq!(serde_json::to_string(&FsKind::Apfs).unwrap_or_else(|e| panic!("{e}")), "\"apfs\"");
     }
 
     #[test]

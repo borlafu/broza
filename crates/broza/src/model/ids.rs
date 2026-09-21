@@ -19,6 +19,10 @@ const SESSION_TIMESTAMP_LEN: usize = 14;
 const SESSION_SUFFIX_LEN: usize = 4;
 /// Separator between the category and the detector inside a finding identifier.
 const FINDING_ID_SEPARATOR: char = '.';
+/// Separator between the session and the sequence number inside an entry identifier.
+const ENTRY_ID_SEPARATOR: char = '/';
+/// `strptime` pattern of the timestamp part of a session identifier.
+const SESSION_TIMESTAMP_PATTERN: &str = "%Y%m%d%H%M%S";
 
 /// Implement the shared surface of a validated string identifier.
 ///
@@ -90,6 +94,7 @@ string_id!(
     VolumeId,
     "BSD device identifier such as `disk0`, `disk3` or `disk3s1`.\n\nUsed for disks, containers and volumes: macOS names all three in the same namespace."
 );
+string_id!(EntryId, "Identifier of one quarantined item: `<session id>/<seq>` (`docs/cli-spec.md` §3.5).");
 
 impl SessionId {
     /// The `YYYYMMDDHHMMSS` part of the identifier.
@@ -146,6 +151,32 @@ impl FindingId {
     }
 }
 
+impl FromStr for EntryId {
+    type Err = BrozaError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let invalid = || BrozaError::Usage(format!("invalid entry id `{raw}`, expected <session id>/<seq>"));
+        let (session, sequence) = raw.split_once(ENTRY_ID_SEPARATOR).ok_or_else(invalid)?;
+        SessionId::from_str(session).map_err(|_| invalid())?;
+        if sequence.is_empty() || !sequence.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        Ok(Self(raw.to_owned()))
+    }
+}
+
+impl EntryId {
+    /// The session part of the identifier.
+    pub fn session_part(&self) -> &str {
+        self.0.split_once(ENTRY_ID_SEPARATOR).map_or("", |(session, _)| session)
+    }
+
+    /// The sequence part of the identifier.
+    pub fn sequence_part(&self) -> &str {
+        self.0.split_once(ENTRY_ID_SEPARATOR).map_or("", |(_, sequence)| sequence)
+    }
+}
+
 impl FromStr for VolumeId {
     type Err = BrozaError;
 
@@ -168,16 +199,16 @@ fn is_kebab_case(value: &str) -> bool {
     bytes.iter().all(|&b| is_alnum(b) || b == b'-')
 }
 
-/// `true` when `value` is a plausible `YYYYMMDDHHMMSS` stamp.
+/// `true` when `value` is a real calendar date and time written as `YYYYMMDDHHMMSS`.
+///
+/// Formatting the parsed value back must reproduce `value` exactly: `jiff` accepts a
+/// leap second and normalises it, and a session identifier must be verbatim.
 fn is_valid_session_timestamp(value: &str) -> bool {
     if value.len() != SESSION_TIMESTAMP_LEN || !value.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    let field =
-        |from: usize, to: usize| value.get(from..to).and_then(|s| s.parse::<u32>().ok()).unwrap_or(u32::MAX);
-    let (month, day) = (field(4, 6), field(6, 8));
-    let (hour, minute, second) = (field(8, 10), field(10, 12), field(12, 14));
-    (1..=12).contains(&month) && (1..=31).contains(&day) && hour <= 23 && minute <= 59 && second <= 59
+    jiff::civil::DateTime::strptime(SESSION_TIMESTAMP_PATTERN, value)
+        .is_ok_and(|parsed| parsed.strftime(SESSION_TIMESTAMP_PATTERN).to_string() == value)
 }
 
 /// `true` when `value` is the four-character lowercase random suffix.
@@ -197,7 +228,7 @@ fn is_bsd_device_name(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::model::ids::{FindingId, SessionId, VolumeId};
+    use crate::model::ids::{EntryId, FindingId, SessionId, VolumeId};
     use std::str::FromStr;
 
     fn session(raw: &str) -> SessionId {
@@ -229,6 +260,9 @@ mod tests {
             ("cln_20260921103608_A1B2", "uppercase suffix"),
             ("cln_20260921103608_a1b", "short suffix"),
             ("cln_20260921103608_a1b2z", "long suffix"),
+            ("cln_20260230103608_a1b2", "30 February"),
+            ("cln_20250229103608_a1b2", "29 February in a common year"),
+            ("cln_20260931103608_a1b2", "31 September"),
         ];
         for (raw, why) in cases {
             assert!(SessionId::from_str(raw).is_err(), "expected error for {why}: {raw}");
@@ -297,6 +331,30 @@ mod tests {
         let id = FindingId::from_str("user-cache.logs").unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(id.clone().into_inner(), "user-cache.logs");
         assert_eq!(id.as_ref(), "user-cache.logs");
+    }
+
+    #[test]
+    fn entry_ids_pair_a_session_with_a_sequence_number() {
+        let id = EntryId::from_str("cln_20260917103608_a1b2/0001").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(id.session_part(), "cln_20260917103608_a1b2");
+        assert_eq!(id.sequence_part(), "0001");
+        assert_eq!(id.to_string(), "cln_20260917103608_a1b2/0001");
+    }
+
+    #[test]
+    fn entry_ids_reject_a_missing_or_malformed_part() {
+        let cases = [
+            "",
+            "cln_20260917103608_a1b2",
+            "cln_20260917103608_a1b2/",
+            "cln_20260917103608_a1b2/x1",
+            "/0001",
+            "not-a-session/0001",
+            "cln_20261317103608_a1b2/0001",
+        ];
+        for raw in cases {
+            assert!(EntryId::from_str(raw).is_err(), "expected error for {raw:?}");
+        }
     }
 
     #[test]

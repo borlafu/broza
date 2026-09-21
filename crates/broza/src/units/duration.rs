@@ -20,8 +20,10 @@ const DAYS_PER_MONTH: u64 = 30;
 const DAYS_PER_YEAR: u64 = 365;
 
 /// Unit of a [`DurationSpec`]. Minutes are not supported: `m` always means months.
+///
+/// A closed set: this is the command-line grammar of `docs/cli-spec.md` §1.4, not a
+/// JSON contract enum, so adding a unit is a deliberate, breaking grammar change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
 pub enum DurationUnit {
     /// Hours (`h`).
     Hours,

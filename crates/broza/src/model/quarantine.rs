@@ -5,8 +5,10 @@ use std::path::PathBuf;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
-use crate::model::ids::SessionId;
-use crate::model::plan::{ItemErrorCode, ItemStatus};
+use crate::BrozaError;
+use crate::model::ids::{EntryId, SessionId};
+use crate::model::open_enum::open_enum;
+use crate::model::status::{ItemErrorCode, ItemStatus};
 
 /// Status of a quarantine entry.
 ///
@@ -36,8 +38,10 @@ pub struct QuarantineSession {
     /// Identifier of the session.
     pub id: SessionId,
     /// When the session was created.
+    #[serde(with = "crate::model::timestamp")]
     pub created_at: Timestamp,
     /// When the session becomes eligible for expiry.
+    #[serde(with = "crate::model::timestamp")]
     pub expires_at: Timestamp,
     /// Bytes held by the session.
     pub total_bytes: u64,
@@ -50,9 +54,27 @@ pub struct QuarantineSession {
     pub entries: Vec<QuarantineEntry>,
 }
 
+impl QuarantineSession {
+    /// Check that the session is valid as the content of a `manifest.json`.
+    ///
+    /// `expired` is derived at read time from `expires_at < now`; a manifest that
+    /// claims it is either corrupt or was written by a buggy version.
+    pub fn validate_manifest(&self) -> Result<(), BrozaError> {
+        if self.state.is_persistable() {
+            return Ok(());
+        }
+        Err(BrozaError::Other(format!(
+            "quarantine session `{}`: state `{}` is derived at read time and never stored",
+            self.id, self.state
+        )))
+    }
+}
+
 /// Lifecycle state of a [`QuarantineSession`] (`docs/cli-spec.md` §4.1, `state`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+///
+/// An open enum: the state is persisted in the manifest, so a value written by a
+/// newer Broza is preserved instead of rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SessionState {
     /// Items are still being moved into the session.
@@ -63,6 +85,22 @@ pub enum SessionState {
     Restoring,
     /// Derived at read time from `expires_at < now`. Never written to the manifest.
     Expired,
+    /// A state this version of Broza does not know, with its original token.
+    Unknown(String),
+}
+
+open_enum!(SessionState {
+    InProgress => "in_progress",
+    Complete => "complete",
+    Restoring => "restoring",
+    Expired => "expired",
+});
+
+impl SessionState {
+    /// `true` when the state may appear in a stored manifest.
+    pub fn is_persistable(&self) -> bool {
+        !matches!(self, Self::Expired)
+    }
 }
 
 /// One item inside a quarantine session.
@@ -70,7 +108,7 @@ pub enum SessionState {
 #[serde(rename_all = "snake_case")]
 pub struct QuarantineEntry {
     /// Identifier of the entry: `<session id>/<seq>`.
-    pub id: String,
+    pub id: EntryId,
     /// Where the item came from.
     pub original_path: PathBuf,
     /// Where the item is stored inside the session directory.
@@ -160,7 +198,7 @@ mod tests {
         EntryStatus, OperationKind, QuarantineEntry, QuarantineSession, ReclaimReport, ReclaimSession,
         SessionState,
     };
-    use crate::model::plan::ItemStatus;
+    use crate::model::status::ItemStatus;
 
     fn session_json() -> serde_json::Value {
         serde_json::json!({
@@ -173,13 +211,16 @@ mod tests {
         })
     }
 
+    fn session(raw: serde_json::Value) -> QuarantineSession {
+        serde_json::from_value(raw).unwrap_or_else(|e| panic!("{e}"))
+    }
+
     #[test]
     fn a_session_without_entries_round_trips_without_adding_fields() {
         let raw = session_json();
-        let session: QuarantineSession =
-            serde_json::from_value(raw.clone()).unwrap_or_else(|e| panic!("{e}"));
-        assert!(session.entries.is_empty());
-        assert_eq!(serde_json::to_value(&session).unwrap_or_else(|e| panic!("{e}")), raw);
+        let parsed = session(raw.clone());
+        assert!(parsed.entries.is_empty());
+        assert_eq!(serde_json::to_value(&parsed).unwrap_or_else(|e| panic!("{e}")), raw);
     }
 
     #[test]
@@ -187,6 +228,17 @@ mod tests {
         let mut raw = session_json();
         raw["created_at"] = serde_json::json!("17/09/2026");
         assert!(serde_json::from_value::<QuarantineSession>(raw).is_err());
+    }
+
+    #[test]
+    fn a_manifest_may_not_store_the_derived_expired_state() {
+        let mut raw = session_json();
+        raw["state"] = serde_json::json!("expired");
+        let parsed = session(raw);
+        assert_eq!(parsed.state, SessionState::Expired);
+        assert!(!parsed.state.is_persistable());
+        assert!(parsed.validate_manifest().is_err());
+        assert!(session(session_json()).validate_manifest().is_ok());
     }
 
     #[test]
@@ -199,8 +251,19 @@ mod tests {
         ];
         for (state, expected) in cases {
             assert_eq!(serde_json::to_string(&state).unwrap_or_else(|e| panic!("{e}")), expected);
+            assert!(state.is_known());
         }
-        assert!(serde_json::from_str::<SessionState>("\"vanished\"").is_err());
+    }
+
+    #[test]
+    fn a_state_from_a_newer_broza_survives_a_round_trip() {
+        let mut raw = session_json();
+        raw["state"] = serde_json::json!("archived");
+        let parsed = session(raw.clone());
+        assert_eq!(parsed.state, SessionState::Unknown("archived".into()));
+        assert!(!parsed.state.is_known());
+        assert!(parsed.state.is_persistable(), "an unknown state is not the derived one");
+        assert_eq!(serde_json::to_value(&parsed).unwrap_or_else(|e| panic!("{e}")), raw);
     }
 
     #[test]
@@ -212,7 +275,7 @@ mod tests {
     #[test]
     fn a_stored_entry_omits_the_paths_it_does_not_have_yet() {
         let entry = QuarantineEntry {
-            id: "cln_20260917103608_a1b2/0001".into(),
+            id: "cln_20260917103608_a1b2/0001".parse().unwrap_or_else(|e| panic!("{e}")),
             original_path: "/Users/x/Library/Caches/example".into(),
             stored_path: None,
             restored_to: None,
@@ -224,6 +287,20 @@ mod tests {
         assert!(json.get("stored_path").is_none());
         assert!(json.get("restored_to").is_none());
         assert!(json.get("error").is_none());
+        assert_eq!(json["id"], "cln_20260917103608_a1b2/0001");
+    }
+
+    #[test]
+    fn an_entry_identifier_must_name_its_session() {
+        let mut raw = serde_json::json!({
+            "id": "0001",
+            "original_path": "/x",
+            "size_bytes": 1,
+            "status": "quarantined"
+        });
+        assert!(serde_json::from_value::<QuarantineEntry>(raw.clone()).is_err());
+        raw["id"] = serde_json::json!("cln_20260917103608_a1b2/0001");
+        assert!(serde_json::from_value::<QuarantineEntry>(raw).is_ok());
     }
 
     #[test]
@@ -242,5 +319,6 @@ mod tests {
         assert_eq!(json["operation"], "expire");
         let back: ReclaimReport = serde_json::from_value(json).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(back, report);
+        assert!(serde_json::from_str::<OperationKind>("\"vacuum\"").is_err());
     }
 }

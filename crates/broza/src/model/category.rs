@@ -9,7 +9,7 @@ use crate::BrozaError;
 use crate::model::finding::{Action, Risk};
 
 /// A detection category. The identifiers are stable and usable in scripts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum Category {
@@ -36,7 +36,8 @@ pub enum Category {
 }
 
 /// Every category, in the order of the table in `docs/cli-spec.md` §3.3.
-pub const ALL_CATEGORIES: [Category; 10] = [
+/// Exposed through [`Category::all`].
+const ALL_CATEGORIES: [Category; 10] = [
     Category::UserCache,
     Category::BuildCache,
     Category::IosSimulators,

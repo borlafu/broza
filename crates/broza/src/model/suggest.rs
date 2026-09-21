@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::finding::{Finding, Risk};
 
 /// Payload of `broza suggest`.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SuggestReport {
     /// Sum of `reclaimable_bytes` over every finding.
@@ -26,7 +26,7 @@ impl SuggestReport {
 }
 
 /// Reclaimable bytes per risk level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RiskTotals {
     /// Bytes behind `green` findings.
@@ -41,8 +41,8 @@ impl RiskTotals {
     /// Sum the reclaimable bytes of `findings` per risk level, saturating on overflow.
     pub fn from_findings(findings: &[Finding]) -> Self {
         findings.iter().fold(Self::default(), |totals, finding| {
-            let bytes = finding.reclaimable_bytes;
-            match finding.risk {
+            let bytes = finding.reclaimable_bytes();
+            match finding.risk() {
                 Risk::Green => Self { green: totals.green.saturating_add(bytes), ..totals },
                 Risk::Amber => Self { amber: totals.amber.saturating_add(bytes), ..totals },
                 Risk::Red => Self { red: totals.red.saturating_add(bytes), ..totals },
@@ -60,14 +60,21 @@ impl RiskTotals {
 mod tests {
     use super::{RiskTotals, SuggestReport};
     use crate::model::category::Category;
-    use crate::model::finding::{Finding, Risk};
+    use crate::model::finding::{Finding, Instructions, Risk};
 
     fn finding(id: &str, category: Category, risk: Risk, bytes: u64) -> Finding {
-        Finding::builder(id.parse().unwrap_or_else(|e| panic!("{e}")), category, "t")
-            .risk(risk)
-            .reclaimable_bytes(bytes)
-            .build()
-            .unwrap_or_else(|e| panic!("{e}"))
+        let builder = Finding::builder(id.parse().unwrap_or_else(|e| panic!("{e}")), category, "t")
+            .reclaimable_bytes(bytes);
+        let builder = if category.is_inform_only() {
+            builder.instructions(Instructions {
+                provider: "iCloud Drive".into(),
+                summary: "Use Apple's official feature.".into(),
+                steps: vec!["System Settings".into()],
+            })
+        } else {
+            builder.risk(risk)
+        };
+        builder.build().unwrap_or_else(|e| panic!("{e}"))
     }
 
     #[test]

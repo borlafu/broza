@@ -10,6 +10,10 @@ authors.workspace = true
 keywords = ["macos", "apfs", "disk", "cleanup", "storage"]
 categories = ["filesystem", "command-line-utilities"]
 
+[features]
+# Exposes `broza::testing` (fakes for every port) to downstream test code.
+test-support = []
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
@@ -17,10 +21,10 @@ toml.workspace = true
 thiserror.workspace = true
 jiff.workspace = true
 globset.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
-tempfile.workspace = true
 
 [lints]
 workspace = true

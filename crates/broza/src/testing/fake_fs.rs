@@ -13,12 +13,13 @@
 //! tree (a file used as a directory). The [`FileOps`] methods never panic; they
 //! return the error the real filesystem would.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::BrozaError;
 use crate::adapters::io_error::not_found;
-use crate::ports::{EntryMetadata, FileOps};
+use crate::ports::{EntryMetadata, FileOps, FsLock, RenameMode};
 use crate::testing::fake_posix::{
     EEXIST, EISDIR, ENOTDIR, EXDEV, check_allowed, check_parent, check_replaceable, errno_error,
     expect_buildable, from_tree_error, resolve, resolve_parent,
@@ -42,11 +43,19 @@ mod builders;
 pub struct FakeFileOps {
     /// The tree, behind a lock so the fake can be shared as `Arc<dyn FileOps>`.
     pub(super) tree: Mutex<Tree>,
+    /// Paths currently locked by a live [`FsLock`] guard.
+    locks: Arc<Mutex<BTreeSet<PathBuf>>>,
+    /// Prefixes whose filesystem has no `renamex_np`, as exFAT does not.
+    no_exclusive_rename: Mutex<Vec<PathBuf>>,
 }
 
 impl Default for FakeFileOps {
     fn default() -> Self {
-        Self { tree: Mutex::new(Tree::new()) }
+        Self {
+            tree: Mutex::new(Tree::new()),
+            locks: Arc::new(Mutex::new(BTreeSet::new())),
+            no_exclusive_rename: Mutex::new(Vec::new()),
+        }
     }
 }
 
@@ -54,6 +63,35 @@ impl FakeFileOps {
     /// An empty filesystem with no roots.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Make everything under `prefix` answer `ENOTSUP` to an exclusive rename.
+    ///
+    /// What exFAT and several network filesystems do: the rename still happens,
+    /// but only after a separate existence check, and the caller is told so
+    /// with [`RenameMode::CheckedFallback`].
+    pub fn deny_exclusive_rename(&self, prefix: impl AsRef<Path>) {
+        lock(&self.no_exclusive_rename).push(prefix.as_ref().to_path_buf());
+    }
+
+    /// Builder form of [`FakeFileOps::deny_exclusive_rename`].
+    #[must_use]
+    pub fn with_denied_exclusive_rename(self, prefix: impl AsRef<Path>) -> Self {
+        self.deny_exclusive_rename(prefix);
+        self
+    }
+
+    /// `true` when `path` is currently locked by a live guard.
+    pub fn is_locked(&self, path: impl AsRef<Path>) -> bool {
+        lock(&self.locks).contains(path.as_ref())
+    }
+
+    /// Which kind of exclusive rename this destination supports.
+    fn rename_mode_for(&self, destination: &Path) -> RenameMode {
+        if lock(&self.no_exclusive_rename).iter().any(|prefix| destination.starts_with(prefix)) {
+            return RenameMode::CheckedFallback;
+        }
+        RenameMode::Exclusive
     }
 
     /// Insert `kind` at `path`, creating the parents a test did not spell out.
@@ -111,23 +149,7 @@ impl FileOps for FakeFileOps {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<(), BrozaError> {
-        let mut tree = lock(&self.tree);
-        check_allowed(&tree, from)?;
-        check_allowed(&tree, to)?;
-        let source = resolve_parent(&tree, from)?;
-        let destination = resolve_parent(&tree, to)?;
-        if !tree.exists(&source) {
-            return Err(not_found(from));
-        }
-        if tree.device_for(&source) != tree.device_for(&destination) {
-            let context = format!("rename {} to {} across devices", from.display(), to.display());
-            return Err(errno_error(context, EXDEV));
-        }
-        check_parent(&tree, &destination)?;
-        check_replaceable(&tree, &source, &destination)?;
-        tree.remove_subtree(&destination);
-        tree.move_subtree(&source, &destination);
-        Ok(())
+        rename_in(&mut lock(&self.tree), from, to)
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<(), BrozaError> {
@@ -185,17 +207,83 @@ impl FileOps for FakeFileOps {
         tree.create_dir_all(&resolved).map_err(|error| from_tree_error(path, &error))
     }
 
-    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<(), BrozaError> {
-        {
-            let tree = lock(&self.tree);
-            check_allowed(&tree, to)?;
-            let destination = resolve_parent(&tree, to)?;
-            if tree.exists(&destination) {
-                let context = format!("rename {} to {} without replacing it", from.display(), to.display());
-                return Err(errno_error(context, EEXIST));
-            }
+    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<RenameMode, BrozaError> {
+        // One lock for the check and the move: taking it twice would leave a
+        // window in which another thread could occupy the destination.
+        let mut tree = lock(&self.tree);
+        check_allowed(&tree, from)?;
+        check_allowed(&tree, to)?;
+        let source = resolve_parent(&tree, from)?;
+        let destination = resolve_parent(&tree, to)?;
+        if !tree.exists(&source) {
+            return Err(not_found(from));
         }
-        self.rename(from, to)
+        if source == destination {
+            // `rename(2)` on macOS succeeds and changes nothing.
+            return Ok(RenameMode::Exclusive);
+        }
+        if tree.exists(&destination) {
+            let context = format!("rename {} to {} without replacing it", from.display(), to.display());
+            return Err(errno_error(context, EEXIST));
+        }
+        let mode = self.rename_mode_for(&destination);
+        rename_in(&mut tree, from, to)?;
+        Ok(mode)
+    }
+
+    fn lock_exclusive(&self, path: &Path) -> Result<Box<dyn FsLock>, BrozaError> {
+        let mut tree = lock(&self.tree);
+        check_allowed(&tree, path)?;
+        let resolved = resolve(&tree, path)?;
+        check_parent(&tree, &resolved)?;
+        if !tree.exists(&resolved) {
+            tree.insert(&resolved, NodeKind::File(Vec::new()));
+        }
+        let mut held = lock(&self.locks);
+        if held.contains(&resolved) {
+            return Err(BrozaError::Io {
+                context: format!("lock {}: another Broza is working on it", path.display()),
+                source: std::io::Error::from(std::io::ErrorKind::WouldBlock),
+            });
+        }
+        held.insert(resolved.clone());
+        Ok(Box::new(FakeFsLock { locks: Arc::clone(&self.locks), path: resolved }))
+    }
+}
+
+/// Move a subtree, with the rules `rename(2)` applies. The caller holds the lock.
+fn rename_in(tree: &mut Tree, from: &Path, to: &Path) -> Result<(), BrozaError> {
+    check_allowed(tree, from)?;
+    check_allowed(tree, to)?;
+    let source = resolve_parent(tree, from)?;
+    let destination = resolve_parent(tree, to)?;
+    if !tree.exists(&source) {
+        return Err(not_found(from));
+    }
+    if tree.device_for(&source) != tree.device_for(&destination) {
+        let context = format!("rename {} to {} across devices", from.display(), to.display());
+        return Err(errno_error(context, EXDEV));
+    }
+    check_parent(tree, &destination)?;
+    check_replaceable(tree, &source, &destination)?;
+    tree.remove_subtree(&destination);
+    tree.move_subtree(&source, &destination);
+    Ok(())
+}
+
+/// A lock held in memory, released when the guard is dropped.
+struct FakeFsLock {
+    /// The set every [`FakeFileOps`] lock lives in.
+    locks: Arc<Mutex<BTreeSet<PathBuf>>>,
+    /// What this guard holds.
+    path: PathBuf,
+}
+
+impl FsLock for FakeFsLock {}
+
+impl Drop for FakeFsLock {
+    fn drop(&mut self) {
+        lock(&self.locks).remove(&self.path);
     }
 }
 

@@ -144,3 +144,77 @@ fn a_file_cannot_be_read_as_a_directory() {
         subject.expect_errno("read_dir a file", result, ENOTDIR);
     }
 }
+
+#[test]
+fn an_exclusive_directory_creation_reports_a_taken_name_the_same_way() {
+    for subject in subjects() {
+        let result = subject.fs.create_dir_exclusive(&subject.path("dir"));
+
+        subject.expect_errno("create_dir_exclusive over a directory", result, EEXIST);
+    }
+}
+
+#[test]
+fn an_exclusive_rename_reports_a_taken_destination_the_same_way() {
+    for subject in subjects() {
+        let result = subject.fs.rename_exclusive(&subject.path(FILE), &subject.path("other.txt"));
+
+        subject.expect_errno("rename_exclusive over a file", result, EEXIST);
+    }
+}
+
+#[test]
+fn an_exclusive_rename_of_a_missing_entry_reports_the_source_as_not_found() {
+    for subject in subjects() {
+        let result = subject.fs.rename_exclusive(&subject.path("ghost"), &subject.path("dir/ghost"));
+
+        subject.expect_not_found("rename_exclusive a missing entry", &result);
+    }
+}
+
+#[test]
+fn renaming_a_path_onto_itself_changes_nothing_and_succeeds() {
+    for subject in subjects() {
+        let result = subject.fs.rename_exclusive(&subject.path(FILE), &subject.path(FILE));
+
+        assert!(result.is_ok(), "{}: rename_exclusive onto itself: {result:?}", subject.name);
+        assert_eq!(
+            subject.fs.read(&subject.path(FILE)).ok().as_deref(),
+            Some(FILE_CONTENTS),
+            "{}: the file is untouched",
+            subject.name
+        );
+    }
+}
+
+#[test]
+fn a_lock_is_exclusive_until_it_is_dropped() {
+    for subject in subjects() {
+        let path = subject.path("session.lock");
+
+        let held = subject.fs.lock_exclusive(&path);
+        let second = subject.fs.lock_exclusive(&path);
+
+        assert!(held.is_ok(), "{}: the first lock has to be granted", subject.name);
+        assert!(
+            second.as_ref().err().is_some_and(broza::ports::is_busy),
+            "{}: the second must be told it is busy, not granted",
+            subject.name
+        );
+        drop(second);
+        drop(held);
+        assert!(subject.fs.lock_exclusive(&path).is_ok(), "{}: after release", subject.name);
+    }
+}
+
+#[test]
+fn locking_creates_the_lock_file_when_it_is_missing() {
+    for subject in subjects() {
+        let path = subject.path("fresh.lock");
+
+        let held = subject.fs.lock_exclusive(&path);
+
+        assert!(held.is_ok(), "{}: locking a missing path creates it", subject.name);
+        assert!(subject.fs.exists(&path), "{}: the lock file is there", subject.name);
+    }
+}

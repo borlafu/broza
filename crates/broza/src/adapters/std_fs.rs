@@ -1,14 +1,27 @@
 //! Real filesystem adapter built on `std::fs` and `std::os::unix::fs::MetadataExt`.
 //!
 //! Everything Broza needs from `stat` is already exposed by [`MetadataExt`], so
-//! the only `libc` call here is `renamex_np`: `std` has no wrapper for the
-//! `RENAME_EXCL` flag that makes a rename refuse to replace its destination.
-//! Symlinks are never followed — `metadata` is an `lstat` and `remove_tree` on a
-//! link removes the link, not what it points at.
+//! the only `libc` calls here are `renamex_np` and `flock`: `std` wraps neither
+//! the `RENAME_EXCL` flag that makes a rename refuse to replace its
+//! destination, nor an advisory whole-file lock. Symlinks are never followed —
+//! `metadata` is an `lstat` and `remove_tree` on a link removes the link, not
+//! what it points at.
+//!
+//! # Filesystems that do not have `renamex_np`
+//!
+//! APFS and HFS+ implement it. exFAT and several network filesystems answer
+//! `ENOTSUP`, and Broza then checks the destination itself and reports
+//! [`RenameMode::CheckedFallback`] so the caller can warn that the move was not
+//! atomic against a concurrent writer. The behaviour is pinned by a fake that
+//! reproduces `ENOTSUP`
+//! ([`FakeFileOps::deny_exclusive_rename`](crate::testing::FakeFileOps::deny_exclusive_rename));
+//! a real exFAT volume cannot be mounted from a test, so that path is verified
+//! against the documented errno rather than against hardware.
 
 use std::ffi::CString;
 use std::fs::{self, Permissions};
 use std::io::Write;
+use std::os::fd::AsRawFd;
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -19,7 +32,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::BrozaError;
 use crate::adapters::io_error::from_io;
-use crate::ports::{DirListing, EntryMetadata, FileOps};
+use crate::ports::{DirListing, EntryMetadata, FileOps, FsLock, RenameMode};
 
 /// Size of the blocks `st_blocks` counts, fixed at 512 bytes by POSIX.
 const STAT_BLOCK_BYTES: u64 = 512;
@@ -127,7 +140,7 @@ impl FileOps for StdFileOps {
             .map_err(|source| from_io(format!("create directory {}", path.display()), path, source))
     }
 
-    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<(), BrozaError> {
+    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<RenameMode, BrozaError> {
         let context = format!("rename {} to {} without replacing it", from.display(), to.display());
         let source = c_path(from, &context)?;
         let destination = c_path(to, &context)?;
@@ -135,14 +148,70 @@ impl FileOps for StdFileOps {
         // this statement, and `renamex_np` only reads them. `RENAME_EXCL` is the
         // documented flag that makes the call fail with `EEXIST` instead of
         // replacing an existing destination.
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, reason = "std has no wrapper for renamex_np's RENAME_EXCL flag")]
         let code = unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
         if code == 0 {
-            return Ok(());
+            return Ok(RenameMode::Exclusive);
         }
         let failure = std::io::Error::last_os_error();
+        if failure.raw_os_error() == Some(libc::ENOTSUP) {
+            return checked_rename(from, to, context);
+        }
         Err(from_io(context, blame_rename(from, to, &failure), failure))
     }
+
+    fn lock_exclusive(&self, path: &Path) -> Result<Box<dyn FsLock>, BrozaError> {
+        let context = format!("lock {}", path.display());
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|source| from_io(context.clone(), path, source))?;
+        // SAFETY: the descriptor is owned by `file`, which outlives the call and
+        // is not closed until the returned guard is dropped. `flock` reads no
+        // memory through it.
+        #[allow(unsafe_code, reason = "std has no wrapper for flock")]
+        let code = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if code == 0 {
+            return Ok(Box::new(StdFsLock { _file: file }));
+        }
+        let failure = std::io::Error::last_os_error();
+        if matches!(failure.raw_os_error(), Some(libc::EWOULDBLOCK)) {
+            return Err(BrozaError::Io {
+                context: format!("{context}: another Broza is working on it"),
+                source: std::io::Error::from(std::io::ErrorKind::WouldBlock),
+            });
+        }
+        Err(from_io(context, path, failure))
+    }
+}
+
+/// An exclusive `flock`, released when the descriptor closes.
+struct StdFsLock {
+    /// Never read: closing it is what releases the lock.
+    _file: fs::File,
+}
+
+impl FsLock for StdFsLock {}
+
+/// The `renamex_np` fallback for a filesystem that does not implement it.
+///
+/// exFAT and several network filesystems answer `ENOTSUP`. Checking the
+/// destination and renaming is the best a program can do there; the window
+/// between the two is real, which is why the caller is told
+/// ([`RenameMode::CheckedFallback`]) instead of being left to assume the
+/// kernel guaranteed something it did not.
+fn checked_rename(from: &Path, to: &Path, context: String) -> Result<RenameMode, BrozaError> {
+    if path_exists(to) {
+        return Err(BrozaError::Io {
+            context,
+            source: std::io::Error::from(std::io::ErrorKind::AlreadyExists),
+        });
+    }
+    fs::rename(from, to)
+        .map(|()| RenameMode::CheckedFallback)
+        .map_err(|source| from_io(context, blame_rename(from, to, &source), source))
 }
 
 /// The path as a NUL-terminated C string, for the one call that needs `libc`.
@@ -322,6 +391,52 @@ mod tests {
         StdFileOps.write_atomic(&path, b"still secret").unwrap_or_else(|e| panic!("{e}"));
 
         assert_eq!(mode_of(&path), 0o600);
+    }
+
+    #[test]
+    fn the_fallback_for_a_filesystem_without_renamex_np_moves_the_file() {
+        let dir = tempdir();
+        let (from, to) = (dir.path().join("from"), dir.path().join("to"));
+        StdFileOps.write_atomic(&from, b"content").unwrap_or_else(|e| panic!("{e}"));
+
+        let mode = super::checked_rename(&from, &to, "rename".to_owned());
+
+        assert_eq!(mode.ok(), Some(crate::ports::RenameMode::CheckedFallback));
+        assert_eq!(StdFileOps.read(&to).ok(), Some(b"content".to_vec()));
+        assert!(!StdFileOps.exists(&from));
+    }
+
+    #[test]
+    fn the_fallback_refuses_an_occupied_destination_instead_of_replacing_it() {
+        let dir = tempdir();
+        let (from, to) = (dir.path().join("from"), dir.path().join("to"));
+        StdFileOps.write_atomic(&from, b"new").unwrap_or_else(|e| panic!("{e}"));
+        StdFileOps.write_atomic(&to, b"old").unwrap_or_else(|e| panic!("{e}"));
+
+        let refused = super::checked_rename(&from, &to, "rename".to_owned());
+
+        assert!(refused.is_err_and(|error| crate::ports::already_exists(&error)));
+        assert_eq!(StdFileOps.read(&to).ok(), Some(b"old".to_vec()));
+    }
+
+    #[test]
+    fn the_fallback_reports_a_missing_source_like_any_other_rename() {
+        let dir = tempdir();
+        let from = dir.path().join("ghost");
+
+        let error = super::checked_rename(&from, &dir.path().join("to"), "rename".to_owned()).err();
+
+        assert!(matches!(error, Some(BrozaError::TargetNotFound(_))), "{error:?}");
+    }
+
+    #[test]
+    fn a_lock_on_a_path_that_cannot_be_opened_is_a_plain_failure() {
+        let dir = tempdir();
+
+        let error = StdFileOps.lock_exclusive(&dir.path().join("missing/dir/.lock")).err();
+
+        assert!(matches!(error, Some(BrozaError::TargetNotFound(_))), "{error:?}");
+        assert!(!error.is_some_and(|failure| crate::ports::is_busy(&failure)), "not a busy lock");
     }
 
     #[test]

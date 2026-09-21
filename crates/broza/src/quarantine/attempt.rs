@@ -13,11 +13,13 @@
 use std::path::{Path, PathBuf};
 
 use crate::BrozaError;
+use crate::model::Warning;
 use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry};
-use crate::ports::FileOps;
+use crate::ports::{FileOps, RenameMode};
 use crate::quarantine::codes::{changed_since_check, max_size_exceeded};
 use crate::quarantine::layout;
 use crate::quarantine::measure::{exceeds_cap, measure_dir_bytes};
+use crate::quarantine::report::rename_warning;
 use crate::safety::guard::ApprovedItem;
 
 /// What one item turned into.
@@ -28,6 +30,8 @@ pub enum Attempt {
         stored: PathBuf,
         /// What it measured immediately before the move.
         size_bytes: u64,
+        /// Whether the filesystem could make the rename exclusive itself.
+        mode: RenameMode,
     },
     /// The item stayed where it was.
     Refused {
@@ -102,7 +106,7 @@ pub fn move_into(
     let stored = destination.stored_path(source);
     let item_dir = layout::item_dir(destination.session_dir, destination.sequence);
     match fs.create_dir_all(&item_dir).and_then(|()| fs.rename_exclusive(source, &stored)) {
-        Ok(()) => Attempt::Moved { stored, size_bytes },
+        Ok(mode) => Attempt::Moved { stored, size_bytes, mode },
         Err(error) => failed_io(&error),
     }
 }
@@ -145,6 +149,14 @@ pub fn outcome_of(attempt: &Attempt) -> (ItemStatus, Option<ItemErrorCode>) {
     }
 }
 
+/// The warning an attempt earns, when the rename was not atomic.
+pub fn warning_of(attempt: &Attempt) -> Option<Warning> {
+    match attempt {
+        Attempt::Moved { stored, mode, .. } => rename_warning(*mode, stored),
+        Attempt::Refused { .. } => None,
+    }
+}
+
 /// Bytes an attempt added to the store.
 pub fn moved_of(attempt: &Attempt) -> u64 {
     match attempt {
@@ -160,7 +172,7 @@ pub fn moved_of(attempt: &Attempt) -> u64 {
 pub fn updated_entry(entry: &QuarantineEntry, attempt: &Attempt) -> QuarantineEntry {
     let (status, error) = outcome_of(attempt);
     match attempt {
-        Attempt::Moved { stored, size_bytes } => QuarantineEntry {
+        Attempt::Moved { stored, size_bytes, .. } => QuarantineEntry {
             stored_path: Some(stored.clone()),
             size_bytes: *size_bytes,
             status,
@@ -186,7 +198,7 @@ pub fn in_flight(entry: &QuarantineEntry, stored: &Path, size_bytes: u64) -> Qua
 mod tests {
     use std::path::Path;
 
-    use super::{Attempt, failed_io, in_flight, moved_of, outcome_of, updated_entry};
+    use super::{Attempt, RenameMode, failed_io, in_flight, moved_of, outcome_of, updated_entry, warning_of};
     use crate::BrozaError;
     use crate::model::{ItemErrorCode, ItemStatus};
     use crate::quarantine::codes::moving;
@@ -212,7 +224,8 @@ mod tests {
 
     #[test]
     fn a_moved_item_records_where_it_landed_and_what_it_measured() {
-        let attempt = Attempt::Moved { stored: "/store/0001/a".into(), size_bytes: 77 };
+        let attempt =
+            Attempt::Moved { stored: "/store/0001/a".into(), size_bytes: 77, mode: RenameMode::Exclusive };
         let before = entry(1, "/Users/dana/a", 10, ItemStatus::Planned);
 
         let after = updated_entry(&before, &attempt);
@@ -222,6 +235,7 @@ mod tests {
         assert_eq!(after.stored_path, Some("/store/0001/a".into()));
         assert!(after.error.is_none());
         assert_eq!(moved_of(&attempt), 77);
+        assert!(warning_of(&attempt).is_none(), "an atomic rename says nothing");
     }
 
     #[test]

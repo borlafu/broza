@@ -23,12 +23,15 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::BrozaError;
-use crate::model::{CleanPlan, CleanPlanRepr, ItemStatus, QuarantineSession, SessionId, SessionState};
+use crate::model::{
+    CleanPlan, CleanPlanRepr, ItemStatus, QuarantineSession, SessionId, SessionState, Warning,
+};
 use crate::ports::{Clock, FileOps, already_exists};
 use crate::quarantine::attempt::{
-    Attempt, Destination, in_flight, move_into, moved_of, outcome_of, precheck, updated_entry,
+    Attempt, Destination, in_flight, move_into, moved_of, outcome_of, precheck, updated_entry, warning_of,
 };
 use crate::quarantine::entries::{planned_entries, sequence_of, with_entry};
+use crate::quarantine::lock;
 use crate::quarantine::manifest::{self, Manifest};
 use crate::quarantine::{layout, ttl};
 use crate::safety::guard::{Approved, ApprovedItem, Write};
@@ -55,6 +58,8 @@ pub struct MoveOutcome {
     pub session: QuarantineSession,
     /// The plan, with each item's outcome and the byte counters filled in.
     pub plan: CleanPlan,
+    /// What the user should know about how the items got there.
+    pub warnings: Vec<Warning>,
 }
 
 /// Move every approved item into a new session of the store.
@@ -81,15 +86,26 @@ pub fn quarantine_items(
     })?;
     fs.create_dir_all(root)?;
     let (plan, dir) = claim_session(root, token.plan(), fs)?;
+    // Held until the move is over: nothing may expire, purge or restore a
+    // session while its items are still arriving.
+    let held = lock::take(fs, &dir)?;
+    if held.is_busy() {
+        return Err(desynchronised(&format!(
+            "session `{}` is already being written by another Broza",
+            plan.session_id()
+        )));
+    }
     let context = Context::new(&plan, dir, token.items(), request, fs)?;
     let session = new_session(&plan, &context, clock, request.ttl)?;
-    let progress = Progress { manifest: Manifest::new(session), plan, moved_bytes: 0 };
+    let progress = Progress::new(Manifest::new(session), plan);
     manifest::write(fs, &context.manifest, &progress.manifest)?;
     let moved =
         token.items().iter().enumerate().try_fold(progress, |progress, (position, item)| {
             move_one(progress, position, item, &context, fs)
         })?;
-    finish(moved, &context, fs)
+    let outcome = finish(moved, &context, fs);
+    drop(held);
+    outcome
 }
 
 /// Take a session directory nobody else has, and the plan that names it.
@@ -186,6 +202,15 @@ struct Progress {
     plan: CleanPlan,
     /// Bytes moved so far, against which `--max-size` is checked.
     moved_bytes: u64,
+    /// What the user should know about how the items got there.
+    warnings: Vec<Warning>,
+}
+
+impl Progress {
+    /// A run that has not moved anything yet.
+    fn new(manifest: Manifest, plan: CleanPlan) -> Self {
+        Self { manifest, plan, moved_bytes: 0, warnings: Vec::new() }
+    }
 }
 
 /// One item: check it, announce the move, do it, and record what happened.
@@ -216,11 +241,11 @@ fn announce(
     context: &Context,
     fs: &dyn FileOps,
 ) -> Result<Progress, BrozaError> {
-    let Progress { manifest, plan, moved_bytes } = progress;
+    let Progress { manifest, plan, moved_bytes, warnings } = progress;
     let session = with_entry(&manifest.session, position, flying);
     let manifest = manifest.with_session(session);
     manifest::write(fs, &context.manifest, &manifest)?;
-    Ok(Progress { manifest, plan, moved_bytes })
+    Ok(Progress { manifest, plan, moved_bytes, warnings })
 }
 
 /// Fold the outcome into the manifest, the plan and the running total.
@@ -231,7 +256,7 @@ fn record(
     context: &Context,
     fs: &dyn FileOps,
 ) -> Result<Progress, BrozaError> {
-    let Progress { manifest, plan, moved_bytes } = progress;
+    let Progress { manifest, plan, moved_bytes, warnings } = progress;
     let entry = entry_at(&manifest, position)?;
     let session = with_entry(&manifest.session, position, &updated_entry(&entry, attempt));
     let index = *context
@@ -243,6 +268,7 @@ fn record(
         manifest: manifest.with_session(session),
         plan: plan.with_item_status(index, status, error)?,
         moved_bytes: moved_bytes.saturating_add(moved_of(attempt)),
+        warnings: [warnings, warning_of(attempt).into_iter().collect()].concat(),
     };
     manifest::write(fs, &context.manifest, &progress.manifest)?;
     Ok(progress)
@@ -260,7 +286,7 @@ fn entry_at(manifest: &Manifest, position: usize) -> Result<crate::model::Quaran
 
 /// Close the session: mark it `complete` and fill in the plan's counters.
 fn finish(progress: Progress, context: &Context, fs: &dyn FileOps) -> Result<MoveOutcome, BrozaError> {
-    let Progress { manifest, plan, moved_bytes } = progress;
+    let Progress { manifest, plan, moved_bytes, warnings } = progress;
     let Manifest { manifest_version, session } = manifest;
     let manifest = Manifest {
         manifest_version,
@@ -272,7 +298,7 @@ fn finish(progress: Progress, context: &Context, fs: &dyn FileOps) -> Result<Mov
     let plan = plan
         .into_applied(holds_items.then(|| context.dir.clone()))?
         .with_bytes(moved_bytes, reclaimed_bytes)?;
-    Ok(MoveOutcome { session: manifest.session, plan })
+    Ok(MoveOutcome { session: manifest.session, plan, warnings })
 }
 
 /// A fresh session: one planned entry per approved item, nothing moved yet.

@@ -37,12 +37,18 @@ pub struct RestoreRequest {
     /// because the user typed the path. Everything else must be under one of the
     /// standard roots.
     pub to: Option<PathBuf>,
+    /// Root of the quarantine store, when one is configured.
+    ///
+    /// Nothing may be restored into it, `--to` included: the store is where the
+    /// items come *from*, and writing a restored file back into it would make
+    /// the item its own orphan.
+    pub quarantine_root: Option<PathBuf>,
 }
 
 impl RestoreRequest {
     /// A request that restores to the original paths under `home`.
     pub fn new(home: impl Into<PathBuf>) -> Self {
-        Self { home: home.into(), uid_temp_dirs: Vec::new(), to: None }
+        Self { home: home.into(), uid_temp_dirs: Vec::new(), to: None, quarantine_root: None }
     }
 }
 
@@ -76,6 +82,14 @@ fn check_target(
     reject_relative_components(target)?;
     if is_volume_root(target, mounts) {
         return Err(GuardRejection::RootItself(target.to_path_buf()));
+    }
+    if let Some(store_root) = request.quarantine_root.as_ref()
+        && target.starts_with(store_root)
+    {
+        return Err(GuardRejection::InsideQuarantineStore {
+            path: target.to_path_buf(),
+            store_root: store_root.clone(),
+        });
     }
     let existing = reject_symlinked_ancestors(target, fs)?;
     let mount =
@@ -210,6 +224,31 @@ mod tests {
             approve_restore_targets(&targets, &RestoreRequest::new(HOME), &mac_mount_table(), &tree);
 
         assert!(matches!(rejection, Err(GuardRejection::SymlinkComponent(_))), "{rejection:?}");
+    }
+
+    #[test]
+    fn nothing_is_ever_restored_back_into_the_store() {
+        let store = PathBuf::from("/Users/dana/.local/share/broza/quarantine");
+        let request = RestoreRequest { quarantine_root: Some(store.clone()), ..RestoreRequest::new(HOME) };
+
+        let refused =
+            approve(&[&store.join("cln_20260921103608_a1b2/items/0001/a").to_string_lossy()], &request);
+
+        assert!(matches!(refused, Err(GuardRejection::InsideQuarantineStore { .. })), "{refused:?}");
+    }
+
+    #[test]
+    fn an_alternative_directory_inside_the_store_is_refused_too() {
+        let store = PathBuf::from("/Users/dana/.local/share/broza/quarantine");
+        let request = RestoreRequest {
+            to: Some(store.join("rescued")),
+            quarantine_root: Some(store.clone()),
+            ..RestoreRequest::new(HOME)
+        };
+
+        let refused = approve(&[&store.join("rescued/0001_a").to_string_lossy()], &request);
+
+        assert!(matches!(refused, Err(GuardRejection::InsideQuarantineStore { .. })), "{refused:?}");
     }
 
     #[test]

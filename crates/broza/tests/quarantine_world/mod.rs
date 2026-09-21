@@ -120,7 +120,11 @@ pub fn store_token(fs: &FakeFileOps, session: &QuarantineSession) -> Approved<Qu
 pub fn restore_token(fs: &FakeFileOps, session: &SessionId, to: Option<&Path>) -> Approved<RestoreWrite> {
     let wanted = restore::session_destinations(fs, Path::new(ROOT), session, to)
         .unwrap_or_else(|error| panic!("{error}"));
-    let request = RestoreRequest { to: to.map(Path::to_path_buf), ..RestoreRequest::new(HOME) };
+    let request = RestoreRequest {
+        to: to.map(Path::to_path_buf),
+        quarantine_root: Some(PathBuf::from(ROOT)),
+        ..RestoreRequest::new(HOME)
+    };
     approve_restore_targets(&wanted, &request, &mac_mount_table(), fs)
         .unwrap_or_else(|error| panic!("{error}"))
 }
@@ -145,6 +149,7 @@ pub fn real_mounts(device: u64) -> broza::scan::MountTable {
         volume: Volume {
             id: "disk3s5".parse().unwrap_or_else(|error| panic!("{error}")),
             name: "Test".to_owned(),
+            uuid: None,
             role: VolumeRole::Data,
             mount_point: Some(PathBuf::from("/")),
             used_bytes: 0,

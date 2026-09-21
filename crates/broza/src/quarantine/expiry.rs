@@ -30,6 +30,8 @@ use crate::model::{
 use crate::ports::{Clock, FileOps};
 use crate::quarantine::entries::held_bytes;
 use crate::quarantine::guarded::{Recheck, io_code, recheck};
+use crate::quarantine::lock;
+use crate::quarantine::measure::measure_dir_bytes;
 use crate::quarantine::report::{Reported, diagnostic};
 use crate::quarantine::store::{self, StoredSession};
 use crate::quarantine::{layout, ttl};
@@ -52,13 +54,23 @@ pub fn expired_sessions(
     retention: Duration,
 ) -> Result<Vec<SessionId>, BrozaError> {
     let now = clock.now();
-    Ok(store::read_all(fs, root)?
-        .sessions
-        .into_iter()
-        .filter(|found| is_expirable(&found.session().state))
-        .filter(|found| ttl::is_past_ttl(found.session().created_at, retention, now))
-        .map(|found| found.id)
-        .collect())
+    let mut due = Vec::new();
+    for found in store::read_all(fs, root)?.sessions {
+        if !is_expirable(&found.session().state) {
+            continue;
+        }
+        if !ttl::is_past_ttl(found.session().created_at, retention, now) {
+            continue;
+        }
+        // A session a Broza is writing is not idle, whatever its age says: with
+        // `quarantine-ttl 0` every session is past its time the moment it is
+        // created, and the one being filled right now must not be swept away.
+        if lock::take_if_present(fs, &found.dir)?.is_busy() {
+            continue;
+        }
+        due.push(found.id);
+    }
+    Ok(due)
 }
 
 /// `true` for the states an automatic expiry may act on.
@@ -154,16 +166,37 @@ fn remove_session(
     if found.session().state == SessionState::Restoring {
         return Ok(refused(&found, &ItemErrorCode::SessionBusy));
     }
+    let held = lock::take(fs, &found.dir)?;
+    if held.is_busy() {
+        return Ok(refused(&found, &ItemErrorCode::SessionBusy));
+    }
     if operation == OperationKind::Expire && !found.is_accounted_for() {
         return Ok(Removed { errors: found.orphan_errors(), ..refused(&found, &orphaned()) });
     }
-    match recheck(token.items(), &found.dir, fs)? {
-        Recheck::Refused(code) => Ok(refused(&found, &code)),
-        Recheck::Unchanged => Ok(match fs.remove_tree(&found.dir) {
-            Ok(()) => purged(&found),
-            Err(error) => refused(&found, &io_code(&error)),
-        }),
-    }
+    let removed = match recheck(token.items(), &found.dir, fs)? {
+        Recheck::Refused(code) => refused(&found, &code),
+        Recheck::Unchanged => {
+            let orphan_bytes = measure_orphans(&found, fs)?;
+            match fs.remove_tree(&found.dir) {
+                Ok(()) => purged(&found, orphan_bytes),
+                Err(error) => refused(&found, &io_code(&error)),
+            }
+        }
+    };
+    drop(held);
+    Ok(removed)
+}
+
+/// What the unlisted items of a session occupy, before they are removed.
+///
+/// They are freed like everything else in the directory, so they count towards
+/// `reclaimed_bytes`: reporting only what the manifest knew about would
+/// under-report the space the user got back.
+fn measure_orphans(found: &StoredSession, fs: &dyn FileOps) -> Result<u64, BrozaError> {
+    found
+        .orphans
+        .iter()
+        .try_fold(0_u64, |sum, path| Ok(sum.saturating_add(measure_dir_bytes(fs, path, None)?)))
 }
 
 /// The item error code for a session holding more than it lists.
@@ -191,8 +224,8 @@ fn unreadable(id: &SessionId, root: &Path, error: &BrozaError) -> Removed {
 }
 
 /// The report line of a session that was removed.
-fn purged(found: &StoredSession) -> Removed {
-    let reclaimed_bytes = held_bytes(&found.session().entries);
+fn purged(found: &StoredSession, orphan_bytes: u64) -> Removed {
+    let reclaimed_bytes = held_bytes(&found.session().entries).saturating_add(orphan_bytes);
     Removed {
         session: line(found, ItemStatus::Purged, reclaimed_bytes),
         errors: Vec::new(),

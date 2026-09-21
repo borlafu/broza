@@ -20,7 +20,7 @@ use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry, QuarantineSession
 use crate::ports::FileOps;
 use crate::quarantine::codes::moving;
 use crate::quarantine::entries::with_entries;
-use crate::quarantine::layout::ITEMS_DIR;
+use crate::quarantine::layout::{ITEMS_DIR, LOCK_FILE, MANIFEST_FILE};
 
 /// What a session looks like once the manifest and the disk agree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +77,31 @@ pub fn stored_items(fs: &dyn FileOps, dir: &Path) -> Result<Vec<PathBuf>, BrozaE
     Ok(stored)
 }
 
+/// Everything in the session directory that is not the session's own plumbing.
+///
+/// `manifest.json`, the `.lock` file and an `items/` tree are what a session
+/// *is*; the stored items inside `items/` and anything else at all are what it
+/// *holds*. An empty result is the only thing that licenses removing the
+/// directory (`docs/cli-spec.md` §3.5).
+///
+/// # Errors
+///
+/// Whatever reading the session directory reports.
+pub fn leftovers(fs: &dyn FileOps, dir: &Path) -> Result<Vec<PathBuf>, BrozaError> {
+    let mut left = stored_items(fs, dir)?;
+    let plumbing = [ITEMS_DIR, MANIFEST_FILE, LOCK_FILE];
+    for child in fs.read_dir(dir)? {
+        let name = child.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        if plumbing.contains(&name.as_str()) {
+            continue;
+        }
+        left.push(child);
+    }
+    left.sort();
+    left.dedup();
+    Ok(left)
+}
+
 /// One entry, settled against the items on disk.
 fn settle(entry: &QuarantineEntry, on_disk: &[PathBuf]) -> QuarantineEntry {
     if entry.status != moving() {
@@ -129,6 +154,28 @@ mod tests {
         let found = stored_items(&fs, &session_dir()).unwrap_or_else(|error| panic!("{error}"));
 
         assert_eq!(found, vec![stored(1, "app.cache")], "an emptied sequence directory holds nothing");
+    }
+
+    #[test]
+    fn the_plumbing_of_a_session_is_not_something_it_holds() {
+        let fs = session_fs();
+        crate::quarantine::manifest::write(
+            &fs,
+            &crate::quarantine::fixtures::manifest_file(),
+            &crate::quarantine::manifest::Manifest::new(session(SessionState::Complete, Vec::new())),
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+        fs.add_file(session_dir().join(".lock"), b"");
+        fs.add_dir(session_dir().join("items/0001"));
+
+        assert_eq!(super::leftovers(&fs, &session_dir()).ok(), Some(Vec::new()));
+
+        fs.add_file(session_dir().join("stray"), b"x");
+        assert_eq!(
+            super::leftovers(&fs, &session_dir()).ok(),
+            Some(vec![session_dir().join("stray")]),
+            "anything else is content and keeps the session alive"
+        );
     }
 
     #[test]

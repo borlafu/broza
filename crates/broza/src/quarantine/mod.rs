@@ -34,6 +34,7 @@
 //! session is empty — only because the disk agrees.
 
 pub mod attempt;
+pub mod closing;
 pub mod codes;
 pub mod entries;
 pub mod expiry;
@@ -44,6 +45,7 @@ mod fixtures;
 pub mod guarded;
 pub mod layout;
 pub mod list;
+pub mod lock;
 pub mod manifest;
 pub mod measure;
 pub mod mover;

@@ -185,7 +185,11 @@ pub fn restore_targets(
 ) -> Approved<RestoreWrite> {
     let wanted = crate::quarantine::restore::session_destinations(fs, Path::new(ROOT), &session.id, to)
         .unwrap_or_else(|error| panic!("{error}"));
-    let request = RestoreRequest { to: to.map(Path::to_path_buf), ..RestoreRequest::new(HOME) };
+    let request = RestoreRequest {
+        to: to.map(Path::to_path_buf),
+        quarantine_root: Some(PathBuf::from(ROOT)),
+        ..RestoreRequest::new(HOME)
+    };
     approve_restore_targets(&wanted, &request, &mac_mount_table(), fs)
         .unwrap_or_else(|error| panic!("{error}"))
 }

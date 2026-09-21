@@ -25,6 +25,8 @@ use crate::ports::Clock;
 pub const MANIFEST_FILE: &str = "manifest.json";
 /// Name of the directory holding the moved items of a session.
 pub const ITEMS_DIR: &str = "items";
+/// Name of the lock file that says a Broza is working on a session.
+pub const LOCK_FILE: &str = ".lock";
 /// Width of the zero-padded sequence number of an item directory.
 const SEQUENCE_WIDTH: usize = 4;
 /// Sequence number of the first item of a session.
@@ -70,6 +72,14 @@ pub fn session_dir(root: &Path, session: &SessionId) -> PathBuf {
 /// Manifest of a session: `<session dir>/manifest.json`.
 pub fn manifest_path(session_dir: &Path) -> PathBuf {
     session_dir.join(MANIFEST_FILE)
+}
+
+/// Lock of a session: `<session dir>/.lock`.
+///
+/// Inside the session on purpose: it is removed with it, and two sessions of
+/// the same store never block each other.
+pub fn lock_path(session_dir: &Path) -> PathBuf {
+    session_dir.join(LOCK_FILE)
 }
 
 /// Directory of one item: `<session dir>/items/<seq>`, the sequence zero-padded.

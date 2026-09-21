@@ -14,20 +14,20 @@
 //! lost track of a file is exactly the case where deleting the directory would
 //! destroy user data.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::BrozaError;
 use crate::model::{
-    EntryId, ErrorEntry, ItemStatus, OperationKind, QuarantineEntry, QuarantineSession, RestoreReport,
+    EntryId, ErrorEntry, ItemErrorCode, ItemStatus, OperationKind, QuarantineEntry, RestoreReport,
     RestoreSession, SessionId, SessionState, Warning,
 };
 use crate::ports::FileOps;
+use crate::quarantine::closing::{Closing, close, write_state};
 use crate::quarantine::entries::{sequence_in, with_entries};
-use crate::quarantine::guarded::{Recheck, recheck};
 use crate::quarantine::layout;
+use crate::quarantine::lock;
 use crate::quarantine::manifest::{self, Manifest};
 use crate::quarantine::putback::put_back;
-use crate::quarantine::reconcile::stored_items;
 use crate::quarantine::report::{Reported, diagnostic};
 use crate::quarantine::selection::{Wanted, group_by_session, restore_order};
 use crate::quarantine::store::{self, StoredSession};
@@ -115,6 +115,11 @@ fn restore_all(
 }
 
 /// Mark the session `restoring`, put its items back, then close it.
+///
+/// The session is held for the whole of it. A session another Broza is working
+/// on is skipped rather than fought over, and one whose manifest cannot be read
+/// is reported and the next session still runs: a restore that already moved
+/// files must not abort halfway through the list.
 fn restore_one(
     sources: &Approved<QuarantineWrite>,
     targets: &Approved<RestoreWrite>,
@@ -123,15 +128,23 @@ fn restore_one(
     fs: &dyn FileOps,
     to: Option<&Path>,
 ) -> Result<Restored, BrozaError> {
-    let found = store::read_one(fs, root, &wanted.session)?;
+    let found = match store::read_one(fs, root, &wanted.session) {
+        Ok(found) => found,
+        Err(error) => return Ok(unreadable(&wanted.session, root, &error)),
+    };
+    let held = lock::take(fs, &found.dir)?;
+    if held.is_busy() {
+        return Ok(busy(&found));
+    }
     let manifest = write_state(&found.dir, &found.manifest, SessionState::Restoring, fs)?;
     let order = restore_order(manifest.session.entries.clone(), wanted);
-    let pass = order.iter().try_fold(Pass { manifest, reported: Vec::new() }, |pass, id| {
-        put_one(pass, id, &found, (sources, targets), fs, to)
-    })?;
+    let pass = order
+        .iter()
+        .try_fold(Pass::new(manifest), |pass, id| put_one(pass, id, &found, (sources, targets), fs, to))?;
     let touched = in_sequence_order(pass.reported);
     let retryable = touched.iter().any(|entry| entry.status.is_unsuccessful());
     let closing = close(&found, &pass.manifest, sources, fs, retryable)?;
+    drop(held);
     Ok(Restored {
         session: RestoreSession {
             id: found.id.clone(),
@@ -143,9 +156,38 @@ fn restore_one(
             .filter_map(|entry| failure_of(entry, &found))
             .chain(closing.errors.clone())
             .collect(),
-        warnings: closing.warnings,
+        warnings: [pass.warnings, closing.warnings].concat(),
         restored_bytes: restored_bytes(&touched),
     })
+}
+
+/// The report line of a session whose manifest could not be read.
+fn unreadable(id: &SessionId, root: &Path, error: &BrozaError) -> Restored {
+    let dir = layout::session_dir(root, id);
+    Restored {
+        session: RestoreSession { id: id.clone(), status: ItemStatus::Failed, items: Vec::new() },
+        errors: vec![store::corrupt(&dir, error)],
+        warnings: Vec::new(),
+        restored_bytes: 0,
+    }
+}
+
+/// The report line of a session another Broza is working on.
+fn busy(found: &StoredSession) -> Restored {
+    Restored {
+        session: RestoreSession { id: found.id.clone(), status: ItemStatus::Skipped, items: Vec::new() },
+        errors: vec![diagnostic(
+            ItemErrorCode::SessionBusy.as_str(),
+            format!(
+                "quarantine session `{}` is being written by another Broza; nothing was restored \
+                 from it. Try again when that run has finished.",
+                found.id
+            ),
+            Some(&found.dir),
+        )],
+        warnings: Vec::new(),
+        restored_bytes: 0,
+    }
 }
 
 /// The manifest as it stands, and what each attempt is reported as.
@@ -154,6 +196,15 @@ struct Pass {
     manifest: Manifest,
     /// One entry per attempt, in the order they were attempted.
     reported: Vec<QuarantineEntry>,
+    /// What the user should know about how the items got back.
+    warnings: Vec<Warning>,
+}
+
+impl Pass {
+    /// A pass that has not attempted anything yet.
+    fn new(manifest: Manifest) -> Self {
+        Self { manifest, reported: Vec::new(), warnings: Vec::new() }
+    }
 }
 
 /// Put one entry back and persist the manifest that describes the result.
@@ -170,135 +221,28 @@ fn put_one(
     fs: &dyn FileOps,
     to: Option<&Path>,
 ) -> Result<Pass, BrozaError> {
-    let Pass { manifest, reported } = pass;
+    let Pass { manifest, reported, warnings } = pass;
     let Some(position) = manifest.session.entries.iter().position(|entry| entry.id == *id) else {
-        return Ok(Pass { manifest, reported });
+        return Ok(Pass { manifest, reported, warnings });
     };
     let entry = manifest.session.entries.get(position).ok_or_else(|| missing(id))?;
     let put = put_back(entry, to, tokens.0.items(), tokens.1, fs)?;
-    let reported = [reported, vec![put.clone()]].concat();
-    if put.status != ItemStatus::Restored {
-        return Ok(Pass { manifest, reported });
+    let reported = [reported, vec![put.entry.clone()]].concat();
+    let warnings = [warnings, put.warning.into_iter().collect()].concat();
+    if put.entry.status != ItemStatus::Restored {
+        return Ok(Pass { manifest, reported, warnings });
     }
     let entries = manifest
         .session
         .entries
         .iter()
         .enumerate()
-        .map(|(index, existing)| if index == position { put.clone() } else { existing.clone() })
+        .map(|(index, existing)| if index == position { put.entry.clone() } else { existing.clone() })
         .collect();
     let session = with_entries(&manifest.session, entries);
     let updated = manifest.with_session(session);
     manifest::write(fs, &layout::manifest_path(&found.dir), &updated)?;
-    Ok(Pass { manifest: updated, reported })
-}
-
-/// What closing the session produced.
-#[derive(Default)]
-struct Closing {
-    /// `errors[]` entries the session as a whole earned.
-    errors: Vec<ErrorEntry>,
-    /// `warnings[]` entries the user should read.
-    warnings: Vec<Warning>,
-}
-
-/// Remove an emptied session, or leave it in a state that can be retried.
-///
-/// The manifest saying "nothing left" is not enough. The directory is read
-/// again, and anything still under `items/` — an entry that was lost, a file a
-/// crash left behind — keeps the session, is reported, and makes the restore
-/// unsuccessful. Deleting a directory that still holds user data because a
-/// *manifest* claims it is empty is the one mistake this function exists to
-/// prevent.
-fn close(
-    found: &StoredSession,
-    manifest: &Manifest,
-    sources: &Approved<QuarantineWrite>,
-    fs: &dyn FileOps,
-    retryable: bool,
-) -> Result<Closing, BrozaError> {
-    let left = stored_items(fs, &found.dir)?;
-    let untracked_items = unlisted(&left, manifest);
-    if !untracked_items.is_empty() {
-        write_state(&found.dir, manifest, SessionState::Restoring, fs)?;
-        return Ok(Closing { errors: vec![untracked(found, &untracked_items)], ..Closing::default() });
-    }
-    if !left.is_empty() {
-        // Items the manifest still lists: an entry that could not go back, or
-        // one this run was not asked about. Only the first is worth retrying.
-        let state = if retryable { SessionState::Restoring } else { SessionState::Complete };
-        write_state(&found.dir, manifest, state, fs)?;
-        return Ok(Closing::default());
-    }
-    match drop_session(found, sources, fs) {
-        Ok(()) => Ok(Closing::default()),
-        Err(error) => {
-            write_state(&found.dir, manifest, SessionState::Complete, fs)?;
-            Ok(Closing { warnings: vec![left_behind(found, &error)], ..Closing::default() })
-        }
-    }
-}
-
-/// The stored items no entry of `manifest` accounts for.
-fn unlisted(left: &[PathBuf], manifest: &Manifest) -> Vec<PathBuf> {
-    left.iter()
-        .filter(|stored| {
-            !manifest.session.entries.iter().any(|entry| entry.stored_path.as_ref() == Some(*stored))
-        })
-        .cloned()
-        .collect()
-}
-
-/// Re-check the session directory against the token and remove it.
-fn drop_session(
-    found: &StoredSession,
-    sources: &Approved<QuarantineWrite>,
-    fs: &dyn FileOps,
-) -> Result<(), BrozaError> {
-    match recheck(sources.items(), &found.dir, fs)? {
-        Recheck::Unchanged => fs.remove_tree(&found.dir),
-        Recheck::Refused(code) => {
-            Err(BrozaError::Other(format!("the directory changed since it was checked ({code})")))
-        }
-    }
-}
-
-/// The error a session whose manifest lost track of its contents earns.
-fn untracked(found: &StoredSession, left: &[PathBuf]) -> ErrorEntry {
-    diagnostic(
-        SESSION_HAS_UNTRACKED_ITEMS,
-        format!(
-            "quarantine session `{}` still holds {} item(s) its manifest does not list, so it was \
-             kept; inspect `{}` and remove it with `broza quarantine purge {}` once it is empty.",
-            found.id,
-            left.len(),
-            found.dir.display(),
-            found.id
-        ),
-        Some(&found.dir),
-    )
-}
-
-/// The warning an emptied session that could not be removed earns.
-fn left_behind(found: &StoredSession, error: &BrozaError) -> Warning {
-    diagnostic(
-        SESSION_LEFT_BEHIND,
-        format!("quarantine session `{}` is empty but was not removed: {error}", found.id),
-        Some(&found.dir),
-    )
-}
-
-/// Rewrite the manifest of `dir` with a new state, keeping everything else.
-fn write_state(
-    dir: &Path,
-    manifest: &Manifest,
-    state: SessionState,
-    fs: &dyn FileOps,
-) -> Result<Manifest, BrozaError> {
-    let session = QuarantineSession { state, ..manifest.session.clone() };
-    let updated = manifest.clone().with_session(session);
-    manifest::write(fs, &layout::manifest_path(dir), &updated)?;
-    Ok(updated)
+    Ok(Pass { manifest: updated, reported, warnings })
 }
 
 /// The entries the report shows, in sequence order rather than restore order.

@@ -16,12 +16,14 @@ use crate::quarantine::entries::held_bytes;
 use crate::quarantine::measure::measure_dir_bytes;
 use crate::quarantine::report::{Reported, diagnostic};
 use crate::quarantine::store::StoredSession;
-use crate::quarantine::{store, ttl};
+use crate::quarantine::{lock, store, ttl};
 
 /// Warning code for a session a `clean --apply` never finished.
 pub const SESSION_INCOMPLETE: &str = "session_incomplete";
 /// Warning code for a session holding more than its manifest accounts for.
 pub const UNTRACKED_BYTES: &str = "untracked_bytes";
+/// Warning code for a session another Broza is writing right now.
+pub const SESSION_BUSY: &str = "session_busy";
 
 /// Every session in the store, newest first.
 ///
@@ -48,7 +50,12 @@ pub fn list_sessions(
         .iter()
         .map(|stored| summarise(stored, retention, now, fs))
         .collect::<Result<Vec<QuarantineSession>, BrozaError>>()?;
-    let warnings = found.sessions.iter().flat_map(session_warnings).collect();
+    let warnings = found
+        .sessions
+        .iter()
+        .map(|stored| session_warnings(stored, fs))
+        .collect::<Result<Vec<Vec<Warning>>, BrozaError>>()?
+        .concat();
     let list = QuarantineList {
         quarantine_path: root.to_path_buf(),
         total_bytes: sum_bytes(&sessions, |_| true),
@@ -94,15 +101,37 @@ fn orphan_bytes(stored: &StoredSession, fs: &dyn FileOps) -> Result<u64, BrozaEr
 }
 
 /// The warnings one session earns.
-fn session_warnings(stored: &StoredSession) -> Vec<Warning> {
+///
+/// A session another Broza is writing is still listed — its manifest is
+/// written atomically, so what is read is a complete document — with a warning
+/// that the figures are a snapshot of something in motion. Hiding it would be
+/// the one thing worse than showing it: the user would think the space was
+/// already gone.
+fn session_warnings(stored: &StoredSession, fs: &dyn FileOps) -> Result<Vec<Warning>, BrozaError> {
     let mut warnings = Vec::new();
+    if lock::take_if_present(fs, &stored.dir)?.is_busy() {
+        warnings.push(busy(stored));
+    }
     if stored.session().state == SessionState::InProgress {
         warnings.push(incomplete(stored.id.as_str(), &stored.dir));
     }
     if !stored.is_accounted_for() {
         warnings.push(untracked(stored));
     }
-    warnings
+    Ok(warnings)
+}
+
+/// The warning a session someone is working on earns.
+fn busy(stored: &StoredSession) -> Warning {
+    diagnostic(
+        SESSION_BUSY,
+        format!(
+            "session `{}` is being written by another Broza; its size and state are a snapshot \
+             of a run in progress.",
+            stored.id
+        ),
+        Some(&stored.dir),
+    )
 }
 
 /// The warning a session holding unaccounted items earns.
@@ -144,8 +173,8 @@ fn incomplete(id: &str, dir: &Path) -> Warning {
     diagnostic(
         SESSION_INCOMPLETE,
         format!(
-            "session `{id}` was never finished; its items may be half moved. \
-             Restore it or remove it with `broza quarantine purge {id}`."
+            "session `{id}` is not marked finished: a clean may still be running. If none is, \
+             restore it or remove it with `broza quarantine purge {id}`."
         ),
         Some(dir),
     )

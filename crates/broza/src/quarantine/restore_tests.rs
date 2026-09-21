@@ -130,15 +130,28 @@ fn a_session_whose_directory_was_not_approved_is_emptied_and_reported() {
 }
 
 #[test]
-fn an_unknown_session_is_a_missing_target() {
+fn an_unknown_session_is_a_missing_target_before_anything_is_written() {
+    let (fs, _session) = two_items();
+    let ghost: SessionId = "cln_20260801091200_c3d4".parse().unwrap_or_else(|e| panic!("{e}"));
+
+    let error = crate::quarantine::selection::session_destinations(&fs, Path::new(ROOT), &ghost, None);
+
+    assert!(matches!(error, Err(BrozaError::TargetNotFound(_))), "{error:?}");
+}
+
+#[test]
+fn a_session_that_cannot_be_read_is_reported_and_the_run_goes_on() {
     let (fs, session) = two_items();
     let sources = quarantine_write(&fs, &writable_paths(&session));
     let targets = restore_targets(&fs, &session, None);
     let ghost: SessionId = "cln_20260801091200_c3d4".parse().unwrap_or_else(|e| panic!("{e}"));
 
-    let error = restore_session(&sources, &targets, &ghost, Path::new(ROOT), &fs, None);
+    let reported = restore_session(&sources, &targets, &ghost, Path::new(ROOT), &fs, None)
+        .unwrap_or_else(|error| panic!("{error}"));
 
-    assert!(matches!(error, Err(BrozaError::TargetNotFound(_))), "{error:?}");
+    assert_eq!(reported.data.sessions[0].status, ItemStatus::Failed);
+    assert_eq!(reported.errors[0].code, store::MANIFEST_CORRUPT);
+    assert!(reported.is_partial(), "exit 5, never an abort in the middle of a list");
 }
 
 #[test]

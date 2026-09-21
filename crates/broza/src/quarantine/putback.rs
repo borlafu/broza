@@ -22,11 +22,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::BrozaError;
-use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry};
+use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry, Warning};
 use crate::ports::FileOps;
 use crate::quarantine::entries::sequence_in;
 use crate::quarantine::guarded::{Recheck, io_code, recheck};
 use crate::quarantine::layout;
+use crate::quarantine::report::rename_warning;
 use crate::safety::guard::{Approved, ApprovedItem, RestoreWrite};
 
 /// Where an entry goes back to.
@@ -65,27 +66,44 @@ pub fn put_back(
     sources: &[ApprovedItem],
     targets: &Approved<RestoreWrite>,
     fs: &dyn FileOps,
-) -> Result<QuarantineEntry, BrozaError> {
+) -> Result<PutBack, BrozaError> {
     let Some(stored) = entry.stored_path.clone() else {
-        return Ok(refused(entry, ItemStatus::Failed, ItemErrorCode::NotFound));
+        return Ok(PutBack::from(refused(entry, ItemStatus::Failed, ItemErrorCode::NotFound)));
     };
     let destination = destination(entry, to);
     if !targets.covers(&destination) {
         return Err(unapproved(&destination));
     }
     if fs.exists(&destination) {
-        return Ok(refused(entry, ItemStatus::Skipped, ItemErrorCode::Collision));
+        return Ok(PutBack::from(refused(entry, ItemStatus::Skipped, ItemErrorCode::Collision)));
     }
     if let Recheck::Refused(code) = recheck(sources, &stored, fs)? {
-        return Ok(refused(entry, ItemStatus::Failed, code));
+        return Ok(PutBack::from(refused(entry, ItemStatus::Failed, code)));
     }
     if let Err(error) = make_room(&destination, fs) {
-        return Ok(refused(entry, ItemStatus::Failed, io_code(&error)));
+        return Ok(PutBack::from(refused(entry, ItemStatus::Failed, io_code(&error))));
     }
     Ok(match fs.rename_exclusive(&stored, &destination) {
-        Ok(()) => restored(entry, destination),
-        Err(error) => refused(entry, ItemStatus::Failed, io_code(&error)),
+        Ok(mode) => {
+            PutBack { warning: rename_warning(mode, &destination), entry: restored(entry, destination) }
+        }
+        Err(error) => PutBack::from(refused(entry, ItemStatus::Failed, io_code(&error))),
     })
+}
+
+/// What putting one entry back produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PutBack {
+    /// The entry it became.
+    pub entry: QuarantineEntry,
+    /// What the user should know about how it got there.
+    pub warning: Option<Warning>,
+}
+
+impl From<QuarantineEntry> for PutBack {
+    fn from(entry: QuarantineEntry) -> Self {
+        Self { entry, warning: None }
+    }
 }
 
 /// A destination the guard never approved.
@@ -159,7 +177,11 @@ mod tests {
 
     fn targets(fs: &FakeFileOps, to: Option<&Path>) -> Approved<RestoreWrite> {
         let wanted = vec![destination(&quarantined(), to)];
-        let request = RestoreRequest { to: to.map(Path::to_path_buf), ..RestoreRequest::new(HOME) };
+        let request = RestoreRequest {
+            to: to.map(Path::to_path_buf),
+            quarantine_root: Some(PathBuf::from(ROOT)),
+            ..RestoreRequest::new(HOME)
+        };
         approve_restore_targets(&wanted, &request, &mac_mount_table(), fs)
             .unwrap_or_else(|error| panic!("{error}"))
     }
@@ -167,6 +189,7 @@ mod tests {
     fn back(fs: &FakeFileOps, to: Option<&Path>) -> QuarantineEntry {
         put_back(&quarantined(), to, &sources(fs), &targets(fs, to), fs)
             .unwrap_or_else(|error| panic!("{error}"))
+            .entry
     }
 
     #[test]
@@ -221,7 +244,8 @@ mod tests {
         let never_moved = QuarantineEntry { stored_path: None, ..quarantined() };
 
         let failed = put_back(&never_moved, None, &sources(&fs), &targets(&fs, None), &fs)
-            .unwrap_or_else(|error| panic!("{error}"));
+            .unwrap_or_else(|error| panic!("{error}"))
+            .entry;
 
         assert_eq!(failed.status, ItemStatus::Failed);
         assert_eq!(failed.error, Some(ItemErrorCode::NotFound));
@@ -236,7 +260,8 @@ mod tests {
         fs.add_file(stored_path(), b"an impostor");
 
         let failed = put_back(&quarantined(), None, &items, &destinations, &fs)
-            .unwrap_or_else(|error| panic!("{error}"));
+            .unwrap_or_else(|error| panic!("{error}"))
+            .entry;
 
         assert_eq!(failed.status, ItemStatus::Failed);
         assert!(!fs.exists(Path::new(ORIGINAL)));

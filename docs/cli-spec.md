@@ -389,6 +389,14 @@ broza restore [ID...] [OPTIONS]
 
 Quarantine lives in `~/.local/share/broza/quarantine/` (configurable via `quarantine-path`), one directory per cleanup session, with a configurable TTL (default **30 days**). Every cleanup session receives an identifier of the form `cln_YYYYMMDDHHMMSS_xxxx`. Each session directory holds a `manifest.json` (written atomically via temp file + rename; `state` is `in_progress`, `complete` or `restoring`) and an `items/<seq>/<basename>` tree.
 
+**Concurrency:** every operation that writes to a session holds an advisory lock on
+`<session>/.lock` for its whole duration. `restore`, `quarantine expire` and `quarantine purge`
+take it without waiting: a session another Broza is working on is reported `session_busy` and
+left untouched, never half-restored and never removed. `quarantine list` never waits and never
+creates a lock file; it reports a busy session with the `session_busy` warning. An unknown
+session id is still exit `4`, refused before anything is written; a session that becomes
+unreadable *during* a multi-session run is reported in `errors[]` and the run continues (exit `5`).
+
 **Restore semantics:**
 
 - Restoration is **per session**: items are restored in reverse sequence order. Each item that goes back leaves the manifest immediately, so a restore is never all-or-nothing on disk; an item that cannot go back is reported (`skipped` or `failed`) and **stays in quarantine**, and the session keeps `state: restoring` so the whole command can simply be run again. A session is removed only once its `items/` directory is empty — never because its manifest lists nothing, which is the corruption case and is reported as `session_has_untracked_items` instead.
@@ -536,6 +544,19 @@ Every `--json` output shares this structure:
 - Field names are `snake_case`; identifiers (categories, finding ids) are `kebab-case` with `.` as the detector separator.
 - `errors[]` entries have the shape `{ "code": "<stable_code>", "message": "<human text>", "path": "<optional>" }`. A non-empty `errors[]` implies exit code `5` when the operation was partial.
 - `warnings[]` entries have the same shape; they never affect the exit code.
+
+**Envelope codes of the quarantine store** (stable; consumers ignore codes they do not know):
+
+| Code | Where | Meaning |
+|---|---|---|
+| `manifest_corrupt` | `errors[]` | A session's `manifest.json` cannot be read. The session is skipped and never removed; the rest of the store is still listed or processed. |
+| `orphaned_item` | `errors[]` on `expire`, `warnings[]` on `purge` | The session holds an item its manifest does not list. `expire` refuses such a session; `purge` removes it and says so. |
+| `untracked_bytes` | `warnings[]` | `quarantine list`: the session holds more than its manifest accounts for, and its `total_bytes` includes it. |
+| `session_incomplete` | `warnings[]` | The session is not marked finished: a `clean` may still be running. |
+| `session_busy` | `errors[]`, or `warnings[]` on `list` | Another Broza holds the session's lock. Nothing is moved or removed; `list` still shows it. |
+| `session_left_behind` | `warnings[]` | Every item was restored but the empty session directory could not be removed. |
+| `session_has_untracked_items` | `errors[]` | A restore emptied the manifest while the directory still holds files. The session is kept in `restoring` and reported; this is the corruption case. |
+| `exclusive_rename_unsupported` | `warnings[]` | The filesystem has no atomic exclusive rename (exFAT, some network volumes), so the destination was checked first. Nothing was replaced, but the move was not atomic. |
 
 **Stable enums** (consumers ignore unknown values; producers MUST NOT rename existing values without a major bump):
 
@@ -1018,3 +1039,6 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
   the session only when its directory is empty.
 - §4.5 (M3, unreleased): `expires_at` documented as derived from `created_at` plus the current
   `quarantine-ttl`; the stored value is a cache.
+- §4.1 (M3, unreleased): the envelope codes of the quarantine store are listed.
+- §3.5/§3.8 (M3, unreleased): every operation that writes to a session holds `<session>/.lock`
+  for its duration; a session another Broza holds is reported `session_busy` and left alone.

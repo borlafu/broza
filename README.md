@@ -65,17 +65,24 @@ Example `scan` output:
 
 ```
 Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
-└─ APFS container  disk3  (994.66 GB)
-   ├─ Used          812.40 GB  ████████████████░░░░  81.7%
-   ├─ Free          98.12 GB
-   └─ Purgeable     84.14 GB   ← macOS shows this as "available"
+└─ APFS container  disk3  (994.7 GB)
+   ├─ Used        812.4 GB  ████████████████░░░░  81.7%
+   ├─ Free         98.1 GB
+   └─ Purgeable    84.1 GB  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
-   ┌ Macintosh HD            System    11.30 GB   read-only, sealed
-   ├ Macintosh HD - Data     Data     798.21 GB   ← your data
-   ├ Preboot                 Preboot    6.52 GB
-   ├ Recovery                Recovery   1.20 GB
-   └ VM                      VM         3.00 GB   swap
+   ┌ Macintosh HD         System     11.3 GB   read-only, sealed
+   ├ Macintosh HD - Data  Data      798.2 GB   ← your data
+   ├ Preboot              Preboot     6.5 GB
+   ├ Recovery             Recovery    1.2 GB
+   └ VM                   VM          3.0 GB   swap
+```
+
+Ask what any volume, path or category actually is:
+
+```bash
+broza explain /System/Volumes/Data
+broza explain cloud-synced --short
 ```
 
 ## Why it is safe

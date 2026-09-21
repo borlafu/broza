@@ -9,6 +9,7 @@
 pub mod adapters;
 pub mod clean;
 pub mod config;
+pub mod detect;
 pub mod error;
 pub mod model;
 pub mod ports;

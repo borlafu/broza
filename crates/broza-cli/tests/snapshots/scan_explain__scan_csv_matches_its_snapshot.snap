@@ -1,0 +1,22 @@
+---
+source: crates/broza-cli/tests/scan_explain.rs
+expression: "stdout_of(&[\"scan\", \"--csv\"])"
+---
+disk_id,container_id,volume_id,name,role,mount_point,used_bytes,writable_by_broza
+disk0,disk1,disk1s1,iSCPreboot,preboot,/System/Volumes/iSCPreboot,5877760,false
+disk0,disk1,disk1s2,xART,unknown,/System/Volumes/xarts,6311936,false
+disk0,disk1,disk1s3,Hardware,unknown,/System/Volumes/Hardware,2641920,false
+disk0,disk1,disk1s4,Recovery,recovery,,20480,false
+disk0,disk2,disk2s1,Recovery,recovery,/System/Volumes/Update/SFR/mnt1,2297442304,false
+disk0,disk2,disk2s2,Update,unknown,,2461696,false
+disk0,disk3,disk3s1,Macintosh HD,system,/,17116610560,false
+disk0,disk3,disk3s2,Preboot,preboot,/System/Volumes/Preboot,17999499264,false
+disk0,disk3,disk3s3,Recovery,recovery,,2593611776,false
+disk0,disk3,disk3s4,Update,unknown,/System/Volumes/Update,801103872,false
+disk0,disk3,disk3s5,Data,data,/System/Volumes/Data,409422745600,true
+disk0,disk3,disk3s6,VM,vm,/System/Volumes/VM,6442795008,false
+disk4,disk4s1,disk4s1,Kiro CLI,unknown,/Volumes/Kiro CLI,1875832832,false
+disk5,disk5s2,disk5s2,Docker,unknown,/private/var/folders/dd/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018,2304745472,false
+disk6,disk6s1,disk6s1,Kiro CLI,unknown,/Volumes/Kiro CLI 1,1257394176,false
+disk7,disk7s1,disk7s1,Kiro CLI,unknown,/Volumes/Kiro CLI 2,1119182848,false
+disk8,disk8s1,disk8s1,Kiro CLI,unknown,/Volumes/Kiro CLI 3,1120415744,false

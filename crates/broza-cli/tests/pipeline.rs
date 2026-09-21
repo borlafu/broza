@@ -68,12 +68,27 @@ fn rejected_flag_combinations_never_reach_a_command() {
 #[test]
 fn pending_commands_exit_one() {
     let home = temp_home();
-    for command in ["scan", "suggest", "clean"] {
+    // `scan` and `explain` landed in M2 and are covered by `scan_explain.rs`,
+    // which drives them against recorded plists. They are deliberately absent
+    // here: running them in process would spawn the real `diskutil`.
+    for command in ["suggest", "clean"] {
         assert_eq!(run_in(home.path(), &["broza", command]).0, ExitCode::GenericError, "{command}");
     }
-    assert_eq!(run_in(home.path(), &["broza", "explain", "snapshots"]).0, ExitCode::GenericError);
     assert_eq!(run_in(home.path(), &["broza", "restore", "--all"]).0, ExitCode::GenericError);
     assert_eq!(run_in(home.path(), &["broza", "quarantine", "list"]).0, ExitCode::GenericError);
+}
+
+/// A category explanation is pure text: it enumerates nothing, so it is safe
+/// to run in process and must not be mistaken for a pending command.
+#[test]
+fn explaining_a_category_needs_no_disk_at_all() {
+    let home = temp_home();
+
+    let (code, text) = run_in(home.path(), &["broza", "explain", "snapshots"]);
+
+    assert_eq!(code, ExitCode::Ok);
+    assert!(text.starts_with("snapshots"), "{text}");
+    assert!(text.contains("Is it safe to touch?"), "{text}");
 }
 
 #[test]

@@ -5,9 +5,12 @@ use std::path::PathBuf;
 use clap::Args;
 
 /// Default depth of the folder tree shown.
-const DEFAULT_DEPTH: &str = "2";
-/// Default number of largest items listed.
-const DEFAULT_TOP: &str = "20";
+///
+/// Public because the command has to tell an explicit `--depth 2` from no
+/// flag at all: until the folder walker lands, supplying one earns a note.
+pub const DEFAULT_DEPTH: u32 = 2;
+/// Default number of largest items listed. Public for the same reason.
+pub const DEFAULT_TOP: u32 = 20;
 /// Default minimum size of a listed item.
 ///
 /// The one place where a command default deliberately differs from the
@@ -24,11 +27,11 @@ pub struct ScanArgs {
     pub paths: Vec<PathBuf>,
 
     /// Depth of the folder tree shown.
-    #[arg(long, value_name = "N", default_value = DEFAULT_DEPTH)]
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_DEPTH)]
     pub depth: u32,
 
     /// Number of largest items to list.
-    #[arg(long, value_name = "N", default_value = DEFAULT_TOP)]
+    #[arg(long, value_name = "N", default_value_t = DEFAULT_TOP)]
     pub top: u32,
 
     /// Ignore items below this size, for example 500MB, 2GB, 1GiB [default: 100MB].

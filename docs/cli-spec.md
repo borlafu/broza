@@ -148,27 +148,35 @@ broza scan [PATH...] [OPTIONS]
 | `--depth <n>` | int | `2` | Depth of the folder tree shown. |
 | `--top <n>` | int | `20` | Number of largest items to list. |
 | `--min-size <s>` | size | `100MB` | Ignore items below this size. Accepts `500MB`, `2GB`, `1GiB`. |
-| `--volume <id>` | string | all | Restrict the scan to one volume (device id, name or mount point). |
-| `--no-external` | bool | `false` | Exclude mounted external disks. By default externals are included. |
+| `--volume <id>` | string | all | Restrict the scan to one volume (device id, name or mount point). A disk or container identifier selects that whole level. Blank → exit `2`; names nothing → exit `4`. |
+| `--no-external` | bool | `false` | Exclude mounted external disks. By default externals are included. Applied before `--volume`, so a volume on an excluded disk is then "not found". |
 | `--tree` | bool | `false` | Force the hierarchical tree view. |
 
-Supports `--json` and `--csv`. The CSV output is the flattened `largest_items` table (`path,size_bytes,kind,volume_id`).
+Supports `--json` and `--csv`. The CSV output is the **volume table**, one row per volume, with the header:
+
+```
+disk_id,container_id,volume_id,name,role,mount_point,used_bytes,writable_by_broza
+```
+
+`role` is a value of the `role` enum of §4.1, `used_bytes` an integer, `writable_by_broza` `true` or `false`, and `mount_point` empty for a volume macOS does not mount. Fields are quoted only when their content requires it (RFC 4180).
+
+> `scan --csv` reports volumes and not `largest_items`. The two tables live at different levels — one row per volume against one row per path — and mixing them in one file would give a consumer no stable column set. `largest_items` is reachable through `--json`; if a flat form of it is ever needed it gets its own command or flag, not this one.
 
 **Human output (sketch):**
 
 ```
 Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
-└─ APFS container  disk3  (994.66 GB)
-   ├─ Used            812.40 GB  ████████████████░░░░  81.7%
-   ├─ Really free      98.12 GB
-   └─ Purgeable        84.14 GB   ← macOS reports this as "available"
+└─ APFS container  disk3  (994.7 GB)
+   ├─ Used        812.4 GB  ████████████████░░░░  81.7%
+   ├─ Free         98.1 GB
+   └─ Purgeable    84.1 GB  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
-   ┌ Macintosh HD            System    11.30 GB   read-only, sealed
-   ├ Macintosh HD - Data     Data     798.21 GB   ← your data
-   ├ Preboot                 Preboot    6.52 GB
-   ├ Recovery                Recovery   1.20 GB
-   └ VM                      VM         3.00 GB   swap
+   ┌ Macintosh HD         System     11.3 GB   read-only, sealed
+   ├ Macintosh HD - Data  Data      798.2 GB   ← your data
+   ├ Preboot              Preboot     6.5 GB
+   ├ Recovery             Recovery    1.2 GB
+   └ VM                   VM          3.0 GB   swap
 
 Largest consumers on Macintosh HD - Data:
   312.4 GB  ~/Library/Developer            (Xcode)
@@ -176,7 +184,13 @@ Largest consumers on Macintosh HD - Data:
    61.7 GB  ~/Documents
 ```
 
-> **Mandatory UX rule:** purgeable space is **always** shown on its own line and is never added to "really free" without a label. Usage percentages are computed at container level, never per volume (APFS volumes share space).
+A disk macOS does not report as internal is marked `(external)` after its size; a partition
+carrying `HFS+` is announced as `HFS+ volume` rather than as an APFS container. A volume row
+carries `not writable` when its role would allow writing but the volume does not (`data` and
+`user` volumes only), and `swap`, `Time Machine` or `read-only, sealed` for the roles that have
+a standing explanation.
+
+> **Mandatory UX rule:** purgeable space is **always** shown on its own line and is never added to free space without a label. Usage percentages are computed at container level, never per volume (APFS volumes share space).
 
 ---
 
@@ -192,7 +206,7 @@ broza explain <PATH|VOLUME|CATEGORY> [OPTIONS]
 |---|---|---|---|
 | `--short` | bool | `false` | One-line summary only. |
 
-The target is resolved in this order: exact category id (§3.3) → volume (device id, name or mount point) → filesystem path. Unknown targets exit `4`.
+The target is resolved in this order: exact category id (§3.3) → volume (device id, name or mount point) → filesystem path. Unknown targets exit `4`. A path target is made absolute against the working directory and cleaned of `.` and `..` **lexically** — nothing is followed and `..` never climbs above `/` — and it must exist: a path that does not exist is an unknown target, not an excuse to describe the working directory's volume. The explanation of a path is the explanation of the volume it lives on, plus one line naming that volume. The JSON form is §4.7; `--csv` exits `2`.
 
 Examples of valid targets: `broza explain /System/Volumes/Data`, `broza explain disk3s1`, `broza explain "Macintosh HD"`, `broza explain cloud-synced`, `broza explain snapshots`.
 
@@ -201,7 +215,7 @@ Examples of valid targets: `broza explain /System/Volumes/Data`, `broza explain 
 ```
 $ broza explain /System/Volumes/Data
 
-Macintosh HD - Data   ·   APFS role: Data   ·   798.21 GB
+Macintosh HD - Data   ·   APFS role: Data   ·   798.2 GB
 
 What it is:
   The mutable data volume of macOS. It holds /Users, the applications you
@@ -801,6 +815,49 @@ An item of a session has this shape:
 }
 ```
 
+### 4.7 `explain`
+
+```json
+{
+  "data": {
+    "kind": "path",
+    "volume": {
+      "id": "disk3s5",
+      "name": "Macintosh HD - Data",
+      "role": "data",
+      "mount_point": "/System/Volumes/Data",
+      "used_bytes": 798210000000,
+      "writable_by_broza": true,
+      "purpose": "The writable volume that holds your home folder, your applications and your settings."
+    },
+    "path": "/Users",
+    "explanation": {
+      "what_it_is": "The mutable data volume of macOS. …",
+      "what_it_is_for": "This is where practically everything that belongs to you lives. …",
+      "is_it_safe": "Yes, with judgement. It is not a system volume. …"
+    }
+  }
+}
+```
+
+| Field | Contract |
+|---|---|
+| `kind` | `volume` · `category` · `path`. Says which of the three optional target fields is present. |
+| `volume` | Optional. The [`Volume`](#42-scan) object of §4.2. Present for `kind` `volume` and `path`, absent for `category`. |
+| `category` | Optional. A value of the `category` enum of §4.1. Present only for `kind` `category`. |
+| `path` | Optional. The target path, made absolute and cleaned of `.` and `..` **lexically** — nothing is followed, and `..` never climbs above `/`. Present only for `kind` `path`. |
+| `filesystem` | Optional. The `type` of the container the volume belongs to (same open enum as §4.2), when Broza could determine it. The human header uses it to say `APFS role:` or `HFS+ role:` instead of assuming APFS. |
+| `explanation` | Always present. Three prose fields: `what_it_is`, `what_it_is_for`, `is_it_safe`. English, one paragraph each; the same text the human output prints under its three headings. |
+| `risk` | Optional. Base risk of the category (§3.3). Present only for `kind` `category`. |
+| `action` | Optional. Default action of the category (§3.3). Present only for `kind` `category`. |
+
+A `path` target is explained through the volume it lives on: `volume` and `path` are both present,
+and the human output adds one line saying which volume the path is on. A path that does not exist
+is not a target: it exits `4` like any other unknown target, rather than being answered with the
+volume the working directory happens to be on.
+
+`explain` supports `--json` and `--short`. It does **not** support `--csv` (exit `2`).
+
 ---
 
 ## 5. Donation message behaviour (RF-17)
@@ -908,3 +965,23 @@ Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<vol
 - §4 (while 1.1 is unreleased, so no bump): documented what the model of `crates/broza/src/model/` already implements — optional `volumes[].mount_point` (unmounted `Preboot` / `Recovery`), optional `snapshots[].uuid`, optional `clean.quarantine_path`, the `entries` array of `manifest.json` and the item fields `stored_path` / `restored_to`; `type` added to the stable-enum table with pass-through of unknown tokens; unknown-value handling made explicit per enum (verbatim pass-through for the persisted ones, collapse to `unknown` for `role`); `instructions` required for every `inform_only` finding; normative consistency rules for `clean`, and its example renumbered so `planned_bytes` is the sum of the items shown.
 - §2 (M1 safety kernel, unreleased): explicit exit-code rows for safety-kernel refusals (`2`), vanished items (`skipped` + `not_found`), OS permission errors on single items (`failed` + `permission_denied`), and dry runs whose selection is entirely `inform_only` (`0` with a warning).
 - §3.4 (M1, unreleased): confirmation row for natively irreversible actions (`trash`, `snapshots`) without `--purge`.
+- §3.1, §3.2, §4.7 (M2 read-only disk, unreleased): the `scan` and `explain` sketches now show the
+  output the implementation actually produces — sizes follow the precision of §1.4 (one decimal
+  below a terabyte, so `798.2 GB`, not `798.21 GB`), the free line is labelled `Free`, and the
+  purgeable line reads `← estimate; macOS shows this as "available"`. §3.1 documents the
+  `(external)` marker, the `HFS+ volume` label, the volume-row notes and the continuation gutter
+  drawn for a disk with more than one container. New §4.7 specifies the `explain` payload
+  (`kind`, optional `volume` / `category` / `path` / `filesystem`, `explanation`, optional `risk` /
+  `action`), states that a path target is resolved lexically and must exist, and records that
+  `explain` has no `--csv` form.
+- §3.1 (M2, unreleased): **`scan --csv` emits the volume table**, header
+  `disk_id,container_id,volume_id,name,role,mount_point,used_bytes,writable_by_broza`, and not the
+  flattened `largest_items` table draft 1.1 named. The two tables sit at different levels — one row
+  per volume against one row per path — so a single file holding both would have no stable column
+  set, and `largest_items` does not exist until the folder walker lands. It stays available through
+  `--json`.
+- §3.1 (M2, unreleased): `--volume` accepts a device id, a volume name or a mount point, the same
+  three forms `explain` accepts, matched exactly. A blank value is a usage error (`2`); any other
+  value that names nothing is `4`. The folder-walking inputs (`PATH`, `--depth`, `--top`,
+  `--min-size`, `--tree`) are accepted and raise the warning `folder_scan_pending`, which
+  disappears once the walker is wired.

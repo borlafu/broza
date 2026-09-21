@@ -15,6 +15,13 @@ name = "broza"
 path = "src/main.rs"
 doc = false
 
+[features]
+# Debug-only test seam: lets `BROZA_FAKE_DISKUTIL_FIXTURES=<dir>` swap the
+# process runner for one replaying recorded `diskutil` plists, so the binary can
+# be tested end to end without a disk (`AGENTS.md` §7). Never in a release
+# build: the code behind it is also gated on `debug_assertions`.
+fake-diskutil = ["broza/test-support"]
+
 [dependencies]
 broza.workspace = true
 clap.workspace = true
@@ -26,6 +33,7 @@ toml_edit.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
+broza = { workspace = true, features = ["test-support"] }
 assert_cmd.workspace = true
 predicates.workspace = true
 insta.workspace = true

@@ -184,6 +184,26 @@ Exit criteria: cold `scan` < 10 s and warm < 1 s on a 512 GB Data volume (benchm
 purgeable on its own line; fixture-driven enumeration tests; cache corruption → exit 9.
 Homebrew tap publishes 0.1.
 
+Progress:
+
+- [x] `ProcessRunner` with a hard timeout and its own process group (`adapters/std_process.rs`).
+- [x] `diskutil` plist adapters with macOS 26 fixtures (`adapters/diskutil/`). macOS 27 fixtures
+      are still to be recorded.
+- [x] Mount table, firmlink-aware (`scan/mount.rs`, `adapters/mount_table.rs`).
+- [x] NSURL purgeable adapter (`adapters/nsurl_space.rs`).
+- [x] `scan`: human, `--json`, `--csv`; `--volume`, `--no-external`; purgeable always on its own
+      line; container-level percentages and usage bar.
+- [x] `explain` for volumes, paths and categories, with `--short` and `--json` (spec §4.7).
+- [x] CLI wiring of the real adapters (`broza-cli/src/wiring.rs`), TTY prompter, and the host
+      block behind the `ProcessRunner` port.
+- [x] Debug-only `BROZA_FAKE_DISKUTIL_FIXTURES` seam so the binary is testable end to end.
+- [ ] `dua-core` walker with hard-link dedupe; aggregate, top-N, tree (`scan/walker.rs`,
+      `scan/aggregate.rs`). Until it lands `largest_items` is `[]` and `--depth`, `--top`,
+      `--min-size`, `--tree` and `PATH` arguments earn a note on stderr.
+- [ ] Cache store and cache corruption → exit `9` (`scan/cache.rs`).
+- [ ] Benchmark script for the cold and warm `scan` targets.
+- [ ] Homebrew tap publishing 0.1.
+
 ### M3 — Green detectors and quarantine (release 0.2)
 
 Scope: `Detector` trait, `Registry`, filters, exclusions; detectors `user-cache` and `build-cache`
@@ -224,6 +244,22 @@ fully covered by tests; coverage ≥ 80%; tag `v1.0.0`.
 - No test touches real disks or spawns system tools; all macOS behavior goes through fakes.
 - Coverage gate 80% lines via `cargo llvm-cov` in CI.
 - Benchmarks (`scan`, `suggest`) as a script, not a CI gate; results recorded per release.
+
+### 5.1 Debug-only test seams of the binary
+
+Two environment variables let `assert_cmd` drive the real `broza` binary without a real Mac
+underneath it. Both are read only in **debug** builds; a release binary ignores them entirely, so
+neither can be used to talk a shipped Broza out of looking at the actual system.
+
+| Variable | Effect | Gate |
+|---|---|---|
+| `BROZA_HOST=<macos_version>/<arch>` | Pins the `host` block of the envelope instead of asking `sw_vers`. | `#[cfg(debug_assertions)]` |
+| `BROZA_FAKE_DISKUTIL_FIXTURES=<dir>` | Replaces the `ProcessRunner` with one replaying the recorded `diskutil` / `tmutil` plists in `<dir>`, and pins the purgeable estimate (which comes from Foundation, not from a command). | `#[cfg(debug_assertions)]` **and** the `broza-cli` feature `fake-diskutil` |
+
+`<dir>` is a directory such as `crates/broza/tests/fixtures/plist/macos26`. The mapping is by file
+name: `list.plist`, `apfs_list.plist`, `tmutil_destinationinfo.plist`, and one `info_*.plist` per
+device, filed under the `DeviceIdentifier` the recording itself declares
+(`broza::testing::fixture_runner`).
 
 ## 6. Requirements traceability
 

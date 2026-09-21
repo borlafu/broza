@@ -138,7 +138,7 @@ ApfsList {
             ),
             container_reference: "disk3",
             capacity_ceiling: 494384795648,
-            capacity_free: 38527500288,
+            capacity_free: 39848054784,
             physical_stores: [
                 ApfsPhysicalStore {
                     device_identifier: "disk0s2",
@@ -221,7 +221,7 @@ ApfsList {
                     roles: [
                         "Data",
                     ],
-                    capacity_in_use: 410743300096,
+                    capacity_in_use: 409422745600,
                     encryption: true,
                     file_vault: true,
                     locked: false,

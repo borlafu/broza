@@ -11,6 +11,7 @@ use super::plist_apfs::ApfsList;
 use super::plist_info::DeviceInfo;
 use super::plist_list::DiskList;
 use super::roles::TIME_MACHINE_MARKER;
+use crate::adapters::tmutil_destinations::{BackupDestinations, parse_destination_info};
 use crate::testing::{FakeFileOps, FakeSpace};
 
 /// The parsed output and fake ports of one imagined machine.
@@ -22,6 +23,8 @@ pub(crate) struct Scenario {
     pub apfs: ApfsList,
     /// What `diskutil info` would have said, per device.
     pub infos: InfoByDevice,
+    /// What `tmutil destinationinfo -X` would have said.
+    pub destinations: BackupDestinations,
     /// Purgeable estimates per mount point.
     pub space: FakeSpace,
     /// The filesystem the Time Machine marker is looked for in.
@@ -62,6 +65,15 @@ impl Scenario {
         self
     }
 
+    /// Let Time Machine claim the destinations in `destination_info`, which is
+    /// the output `tmutil destinationinfo -X` would have printed.
+    #[must_use]
+    pub fn with_destination_info(mut self, destination_info: &[u8]) -> Self {
+        self.destinations =
+            parse_destination_info(destination_info).unwrap_or_else(|error| panic!("{error}"));
+        self
+    }
+
     /// Put a Time Machine backup directory at the root of `mount_point`.
     #[must_use]
     pub fn with_backup_marker(self, mount_point: &str) -> Self {
@@ -71,6 +83,13 @@ impl Scenario {
 
     /// Borrow everything as the assembly expects it.
     pub fn inputs(&self) -> Inputs<'_> {
-        Inputs { list: &self.list, apfs: &self.apfs, infos: &self.infos, space: &self.space, fs: &self.fs }
+        Inputs {
+            list: &self.list,
+            apfs: &self.apfs,
+            infos: &self.infos,
+            destinations: &self.destinations,
+            space: &self.space,
+            fs: &self.fs,
+        }
     }
 }

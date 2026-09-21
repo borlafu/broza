@@ -50,6 +50,9 @@ pub struct DeviceInfo {
     /// Volume name as Finder shows it, when the device carries a filesystem.
     #[serde(deserialize_with = "optional_text")]
     pub volume_name: Option<String>,
+    /// UUID of the volume, which is how Time Machine names a destination.
+    #[serde(rename = "VolumeUUID", deserialize_with = "optional_text")]
+    pub volume_uuid: Option<String>,
     /// Where the device is mounted, when it is.
     #[serde(deserialize_with = "optional_path")]
     pub mount_point: Option<PathBuf>,

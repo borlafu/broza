@@ -16,6 +16,7 @@ DeviceInfo {
         "GUID_partition_scheme",
     ),
     volume_name: None,
+    volume_uuid: None,
     mount_point: None,
     sealed: None,
     filesystem_type: None,

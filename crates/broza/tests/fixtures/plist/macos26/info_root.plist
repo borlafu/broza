@@ -5,7 +5,7 @@
 	<key>AESHardware</key>
 	<true/>
 	<key>APFSContainerFree</key>
-	<integer>38528081920</integer>
+	<integer>39847915520</integer>
 	<key>APFSContainerReference</key>
 	<string>disk3</string>
 	<key>APFSContainerSize</key>
@@ -116,19 +116,19 @@
 		<key>CONTROLLER_BUSY_TIME_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_READ_0</key>
-		<integer>781740999</integer>
+		<integer>781788242</integer>
 		<key>DATA_UNITS_READ_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_WRITTEN_0</key>
-		<integer>142997112</integer>
+		<integer>143026985</integer>
 		<key>DATA_UNITS_WRITTEN_1</key>
 		<integer>0</integer>
 		<key>HOST_READ_COMMANDS_0</key>
-		<integer>63337103013</integer>
+		<integer>63338139871</integer>
 		<key>HOST_READ_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>HOST_WRITE_COMMANDS_0</key>
-		<integer>3982030877</integer>
+		<integer>3982550225</integer>
 		<key>HOST_WRITE_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>MEDIA_ERRORS_0</key>
@@ -150,7 +150,7 @@
 		<key>POWER_ON_HOURS_1</key>
 		<integer>0</integer>
 		<key>TEMPERATURE</key>
-		<integer>309</integer>
+		<integer>311</integer>
 		<key>UNSAFE_SHUTDOWNS_0</key>
 		<integer>7</integer>
 		<key>UNSAFE_SHUTDOWNS_1</key>

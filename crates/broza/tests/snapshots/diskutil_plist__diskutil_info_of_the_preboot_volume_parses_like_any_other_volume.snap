@@ -16,6 +16,9 @@ DeviceInfo {
     volume_name: Some(
         "Preboot",
     ),
+    volume_uuid: Some(
+        "0000000E-1111-4222-8333-00000000000E",
+    ),
     mount_point: Some(
         "/System/Volumes/Preboot",
     ),

@@ -8,14 +8,14 @@
 //! Every command goes through a [`ProcessRunner`], which enforces the timeout
 //! and is the seam tests replace with `FakeRunner`. Parsing is split per
 //! command into pure functions, and turning the outputs into the JSON contract
-//! is [`assemble`], which runs nothing at all.
+//! is the private `assemble` module, which runs nothing at all.
 
 mod assemble;
 mod budget;
 mod devices;
 mod hfs;
 mod inputs;
-mod parse;
+pub(crate) mod parse;
 pub mod plist_apfs;
 pub mod plist_info;
 pub mod plist_list;
@@ -27,6 +27,7 @@ pub mod snapshots;
 mod tests_support;
 mod volumes;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,6 +40,8 @@ pub use roles::{VolumeFacts, roles_to_volume_role, volume_role};
 pub use snapshots::DiskutilSnapshots;
 
 use crate::BrozaError;
+use crate::adapters::tmutil_destinations::{self, BackupDestinations};
+use crate::model::Warning;
 use crate::ports::{DiskEnumerator, EnumerationReport, FileOps, ProcessRunner, SpaceProvider};
 use budget::Budget;
 use inputs::{InfoByDevice, Inputs};
@@ -53,6 +56,8 @@ pub const DISKUTIL_TIMEOUT: Duration = Duration::from_secs(20);
 /// a per-command timeout alone would let a slow machine spend minutes before
 /// the caller hears anything. This bounds the lot.
 pub const ENUMERATION_BUDGET: Duration = Duration::from_secs(60);
+/// Warning code for an enumeration that could not ask Time Machine anything.
+pub const TM_DESTINATIONS_UNAVAILABLE_CODE: &str = "tm_destinations_unavailable";
 
 /// [`DiskEnumerator`] backed by `diskutil`.
 ///
@@ -114,6 +119,41 @@ impl DiskutilEnumerator {
         }
         Ok(infos)
     }
+
+    /// The volumes Time Machine backs up to, or none plus a warning.
+    ///
+    /// Time Machine's own answer is the only reliable way to recognise an APFS
+    /// destination the user renamed. Losing it is not fatal — the heuristics
+    /// in [`roles`] still catch the obvious cases — but the user has to be
+    /// told that a backup disk might now look like an ordinary one.
+    fn backup_destinations(&self, budget: &Budget, warnings: &mut Vec<Warning>) -> BackupDestinations {
+        let timeout = match budget.next_timeout(DISKUTIL_TIMEOUT) {
+            Ok(timeout) => timeout,
+            Err(error) => {
+                warnings.push(destinations_unavailable(&error));
+                return BackupDestinations::none();
+            }
+        };
+        match tmutil_destinations::backup_destinations(self.runner.as_ref(), timeout) {
+            Ok(destinations) => destinations,
+            Err(error) => {
+                warnings.push(destinations_unavailable(&error));
+                BackupDestinations::none()
+            }
+        }
+    }
+}
+
+/// The warning for an enumeration that had to guess at backup volumes.
+fn destinations_unavailable(error: &BrozaError) -> Warning {
+    Warning {
+        code: TM_DESTINATIONS_UNAVAILABLE_CODE.to_owned(),
+        message: format!(
+            "Time Machine destinations could not be read, so a backup volume may be reported as an \
+             ordinary one: {error}"
+        ),
+        path: None,
+    }
 }
 
 impl DiskEnumerator for DiskutilEnumerator {
@@ -122,37 +162,52 @@ impl DiskEnumerator for DiskutilEnumerator {
         let list = parse_list(&self.capture(&["list", "-plist"], &budget)?)?;
         let apfs = parse_apfs_list(&self.capture(&["apfs", "list", "-plist"], &budget)?)?;
         let infos = self.collect_info(&list, &apfs, &budget)?;
+        let mut warnings = Vec::new();
+        let destinations = self.backup_destinations(&budget, &mut warnings);
         let inputs = Inputs {
             list: &list,
             apfs: &apfs,
             infos: &infos,
+            destinations: &destinations,
             space: self.space.as_ref(),
             fs: self.fs.as_ref(),
         };
-        let mut warnings = Vec::new();
         let disks = assemble::assemble_disks(&inputs, &mut warnings);
         Ok(EnumerationReport { disks, warnings })
     }
 }
 
 /// Every device `diskutil info` has to be run for, in a stable order.
+///
+/// Physical disks and `HFS+` partitions for their model and their free space;
+/// APFS volumes with no role and the data volumes, because both need
+/// `WritableVolume` before Broza will call them writable. Duplicates are
+/// dropped wherever they come from: one device must never cost two spawns.
 fn devices_to_inspect(list: &DiskList, apfs: &ApfsList) -> Vec<String> {
     let physical = list.physical_devices().flat_map(|device| {
         std::iter::once(device.device_identifier.clone())
             .chain(device.hfs_partitions().map(|partition| partition.device_identifier.clone()))
     });
-    let roleless = apfs
+    let mounted_volumes = apfs
         .containers
         .iter()
         .flat_map(|container| &container.volumes)
-        .filter(|volume| volume.roles.is_empty())
+        .filter(|volume| needs_writability_check(volume))
         .filter(|volume| {
             list.apfs_volume(&volume.device_identifier).is_some_and(|listed| listed.mount_point.is_some())
         })
         .map(|volume| volume.device_identifier.clone());
-    let mut devices: Vec<String> = physical.chain(roleless).collect();
-    devices.dedup();
-    devices
+    let mut seen = BTreeSet::new();
+    physical.chain(mounted_volumes).filter(|device| seen.insert(device.clone())).collect()
+}
+
+/// `true` for the volumes whose writability has to be observed, not assumed.
+///
+/// A volume with no role at all may turn out to be the user's disk, and a
+/// `Data` volume is the one Broza actually cleans — neither may be called
+/// writable on the strength of a role alone (`AGENTS.md` §2.3).
+fn needs_writability_check(volume: &ApfsVolume) -> bool {
+    volume.roles.is_empty() || roles_to_volume_role(&volume.roles).writable_by_broza()
 }
 
 /// Turn a refusal from `diskutil` into the error that describes it.
@@ -189,8 +244,12 @@ pub(crate) fn first_line(message: &str) -> String {
 mod tests {
     use std::sync::Arc;
 
-    use super::{DISKUTIL, DISKUTIL_TIMEOUT, DiskutilEnumerator, classify, first_line};
+    use super::{
+        DISKUTIL, DISKUTIL_TIMEOUT, DiskutilEnumerator, TM_DESTINATIONS_UNAVAILABLE_CODE, classify,
+        devices_to_inspect, first_line, parse_apfs_list, parse_list,
+    };
     use crate::BrozaError;
+    use crate::adapters::tmutil_destinations::{DESTINATION_INFO_ARGS, TMUTIL};
     use crate::ports::{DiskEnumerator, FileOps, ProcessOutput, ProcessRunner, SpaceProvider};
     use crate::testing::{FakeFileOps, FakeRunner, FakeSpace};
 
@@ -211,6 +270,28 @@ mod tests {
     /// An `apfs list` output without a single container.
     const NO_CONTAINERS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>Containers</key><array/></dict></plist>"#;
+    /// What `tmutil` answers on a Mac with Time Machine switched off.
+    const NO_DESTINATIONS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict></dict></plist>"#;
+    /// Two containers naming the same unmounted volume.
+    const REPEATED_VOLUME: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Containers</key>
+  <array>
+    <dict>
+      <key>ContainerReference</key><string>disk3</string>
+      <key>Volumes</key>
+      <array><dict><key>DeviceIdentifier</key><string>disk3s1</string></dict></array>
+    </dict>
+    <dict>
+      <key>ContainerReference</key><string>disk4</string>
+      <key>Volumes</key>
+      <array><dict><key>DeviceIdentifier</key><string>disk3s1</string></dict></array>
+    </dict>
+  </array>
+</dict>
+</plist>"#;
     /// A `diskutil info` output for `disk0`.
     const DISK0_INFO: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -248,7 +329,8 @@ mod tests {
             FakeRunner::new()
                 .with_output(DISKUTIL, &["list", "-plist"], ok(LIST))
                 .with_output(DISKUTIL, &["apfs", "list", "-plist"], ok(NO_CONTAINERS))
-                .with_output(DISKUTIL, &["info", "-plist", "disk0"], ok(DISK0_INFO)),
+                .with_output(DISKUTIL, &["info", "-plist", "disk0"], ok(DISK0_INFO))
+                .with_output(TMUTIL, &DESTINATION_INFO_ARGS, ok(NO_DESTINATIONS)),
         )
     }
 
@@ -259,13 +341,41 @@ mod tests {
         let report = enumerator(&runner).enumerate().unwrap_or_else(|e| panic!("{e}"));
 
         assert_eq!(report.disks.len(), 1);
-        assert!(report.warnings.is_empty());
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         let calls = runner.calls();
-        assert_eq!(calls.len(), 3, "list, apfs list and one info");
-        assert!(calls.iter().all(|call| call.program == DISKUTIL));
+        assert_eq!(calls.len(), 4, "list, apfs list, one info and the Time Machine destinations");
+        assert!(calls.iter().all(|call| call.program == DISKUTIL || call.program == TMUTIL));
         assert!(calls.iter().all(|call| call.timeout <= DISKUTIL_TIMEOUT));
         assert!(calls.iter().all(|call| !call.timeout.is_zero()));
         assert_eq!(calls[0].args, vec!["list".to_owned(), "-plist".to_owned()]);
+    }
+
+    #[test]
+    fn an_enumeration_that_cannot_ask_time_machine_says_so_and_carries_on() {
+        let runner = Arc::new(
+            FakeRunner::new()
+                .with_output(DISKUTIL, &["list", "-plist"], ok(LIST))
+                .with_output(DISKUTIL, &["apfs", "list", "-plist"], ok(NO_CONTAINERS))
+                .with_output(DISKUTIL, &["info", "-plist", "disk0"], ok(DISK0_INFO))
+                .with_failure(TMUTIL, &DESTINATION_INFO_ARGS, "tmutil is not installed"),
+        );
+
+        let report = enumerator(&runner).enumerate().unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(report.disks.len(), 1, "the machine is still enumerated");
+        assert_eq!(report.warnings.len(), 1);
+        assert_eq!(report.warnings[0].code, TM_DESTINATIONS_UNAVAILABLE_CODE);
+        assert!(report.warnings[0].message.contains("tmutil is not installed"));
+    }
+
+    #[test]
+    fn one_device_is_never_inspected_twice() {
+        let list = parse_list(LIST).unwrap_or_else(|e| panic!("{e}"));
+        let apfs = parse_apfs_list(REPEATED_VOLUME).unwrap_or_else(|e| panic!("{e}"));
+
+        let devices = devices_to_inspect(&list, &apfs);
+
+        assert_eq!(devices, vec!["disk0".to_owned()], "a volume nobody mounted needs no info");
     }
 
     #[test]

@@ -60,11 +60,16 @@ pub fn purpose_for(role: VolumeRole, name: &str) -> String {
 /// decides write protection, but "a volume with a role Broza does not
 /// recognise" is a poor thing to print four times in one `scan`. When a token
 /// or the name is one Broza can name, it supplies the sentence instead.
+///
+/// The name is only consulted for a volume whose role is `unknown`. A role
+/// Broza does model already describes the volume better than its name could,
+/// and a user is free to call an external disk `Hardware`.
 pub fn purpose_for_volume(role: VolumeRole, roles: &[String], name: &str) -> String {
+    let by_name = (role == VolumeRole::Unknown).then_some(name);
     roles
         .iter()
         .map(String::as_str)
-        .chain(std::iter::once(name))
+        .chain(by_name)
         .find_map(purpose_for_token)
         .map_or_else(|| purpose_for(role, name), ToOwned::to_owned)
 }
@@ -256,9 +261,18 @@ mod tests {
 
     #[test]
     fn a_volume_recognisable_only_by_its_name_is_named_too() {
-        let purpose = purpose_for_volume(VolumeRole::Preboot, &["Preboot".to_owned()], "iSCPreboot");
+        let purpose = purpose_for_volume(VolumeRole::Unknown, &[], "iSCPreboot");
 
         assert!(purpose.contains("internal storage controller"), "{purpose}");
+    }
+
+    #[test]
+    fn a_name_never_overrides_the_sentence_of_a_role_broza_models() {
+        let by_role = purpose_for_volume(VolumeRole::Preboot, &["Preboot".to_owned()], "iSCPreboot");
+        let mistaken = purpose_for_volume(VolumeRole::User, &[], "Hardware");
+
+        assert_eq!(by_role, purpose_for(VolumeRole::Preboot, "iSCPreboot"));
+        assert_eq!(mistaken, purpose_for(VolumeRole::User, "Hardware"), "a user may name a disk anything");
     }
 
     #[test]

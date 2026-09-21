@@ -16,6 +16,9 @@ DeviceInfo {
     volume_name: Some(
         "Macintosh HD",
     ),
+    volume_uuid: Some(
+        "00000013-1111-4222-8333-000000000013",
+    ),
     mount_point: Some(
         "/",
     ),

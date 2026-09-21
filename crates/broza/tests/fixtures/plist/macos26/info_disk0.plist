@@ -75,19 +75,19 @@
 		<key>CONTROLLER_BUSY_TIME_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_READ_0</key>
-		<integer>781740995</integer>
+		<integer>781788228</integer>
 		<key>DATA_UNITS_READ_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_WRITTEN_0</key>
-		<integer>142997112</integer>
+		<integer>143026974</integer>
 		<key>DATA_UNITS_WRITTEN_1</key>
 		<integer>0</integer>
 		<key>HOST_READ_COMMANDS_0</key>
-		<integer>63337102804</integer>
+		<integer>63338139806</integer>
 		<key>HOST_READ_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>HOST_WRITE_COMMANDS_0</key>
-		<integer>3982030850</integer>
+		<integer>3982549899</integer>
 		<key>HOST_WRITE_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>MEDIA_ERRORS_0</key>
@@ -109,7 +109,7 @@
 		<key>POWER_ON_HOURS_1</key>
 		<integer>0</integer>
 		<key>TEMPERATURE</key>
-		<integer>310</integer>
+		<integer>312</integer>
 		<key>UNSAFE_SHUTDOWNS_0</key>
 		<integer>7</integer>
 		<key>UNSAFE_SHUTDOWNS_1</key>

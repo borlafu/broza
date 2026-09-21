@@ -16,12 +16,15 @@ use std::sync::Arc;
 
 use broza::BrozaError;
 use broza::adapters::diskutil::{DISKUTIL, DiskutilEnumerator};
+use broza::adapters::tmutil_destinations::{DESTINATION_INFO_ARGS, TMUTIL};
 use broza::model::{FsKind, VolumeRole};
 use broza::ports::{DiskEnumerator, EnumerationReport, FileOps, ProcessRunner, SpaceProvider};
 use broza::testing::{FakeFileOps, FakeRunner, FakeSpace};
 
 /// Fixture directory of the macOS major this test replays.
 const MACOS_MAJOR: &str = "macos26";
+/// BSD name of the data volume in the recorded machine.
+const DATA_VOLUME: &str = "disk3s5";
 /// Mount point of the data volume in the recorded machine.
 const DATA_MOUNT_POINT: &str = "/System/Volumes/Data";
 /// Purgeable bytes the space provider reports for the data volume.
@@ -33,11 +36,22 @@ const HFS_PARTITIONS: [&str; 5] = ["disk4s1", "disk5s2", "disk6s1", "disk7s1", "
 
 /// A runner answering every command the enumerator issues on this machine.
 fn recorded_runner() -> FakeRunner {
+    recorded_runner_with_destinations("tmutil_destinationinfo.plist")
+}
+
+/// The same machine, with Time Machine answering out of `destination_fixture`.
+fn recorded_runner_with_destinations(destination_fixture: &str) -> FakeRunner {
     let fixture = |name: &str| format!("plist/{MACOS_MAJOR}/{name}");
     let mut runner = FakeRunner::new()
         .with_fixture(DISKUTIL, &["list", "-plist"], &fixture("list.plist"))
         .and_then(|runner| {
             runner.with_fixture(DISKUTIL, &["apfs", "list", "-plist"], &fixture("apfs_list.plist"))
+        })
+        .and_then(|runner| runner.with_fixture(TMUTIL, &DESTINATION_INFO_ARGS, &fixture(destination_fixture)))
+        .and_then(|runner| {
+            // `diskutil info -plist /System/Volumes/Data` was recorded for the
+            // data volume, which the enumerator asks for by its BSD name.
+            runner.with_fixture(DISKUTIL, &["info", "-plist", DATA_VOLUME], &fixture("info_data.plist"))
         })
         .unwrap_or_else(|error| panic!("{error}"));
     for device in PHYSICAL_DISKS.iter().chain(HFS_PARTITIONS.iter()) {

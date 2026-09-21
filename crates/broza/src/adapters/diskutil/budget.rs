@@ -10,6 +10,9 @@ use std::time::{Duration, Instant};
 
 use crate::BrozaError;
 
+/// Deadline used when a budget is so large that adding it would overflow.
+const FAR_FUTURE: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+
 /// Deadline shared by every command of one enumeration.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Budget {
@@ -22,12 +25,13 @@ pub(crate) struct Budget {
 impl Budget {
     /// Start a budget of `total`, now.
     ///
-    /// A duration so large that adding it overflows the clock is clamped to
-    /// "now", which simply means the first command gets no time — never a
-    /// panic.
+    /// A duration so large that adding it overflows the clock is clamped to a
+    /// year from now rather than to this instant: an absurd budget means "do
+    /// not bound me", not "you already ran out".
     pub(crate) fn start(total: Duration) -> Self {
         let now = Instant::now();
-        Self { at: now.checked_add(total).unwrap_or(now), total }
+        let at = now.checked_add(total).or_else(|| now.checked_add(FAR_FUTURE)).unwrap_or(now);
+        Self { at, total }
     }
 
     /// The timeout for the next command: `limit`, or less when time is short.
@@ -80,9 +84,11 @@ mod tests {
     }
 
     #[test]
-    fn an_absurd_budget_does_not_overflow_the_clock() {
+    fn an_absurd_budget_does_not_overflow_the_clock_and_still_allows_commands() {
         let budget = Budget::start(Duration::MAX);
 
-        assert!(budget.next_timeout(Duration::from_secs(1)).is_err(), "clamped to now, not panicking");
+        let timeout = budget.next_timeout(Duration::from_secs(1)).unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(timeout, Duration::from_secs(1), "a budget nobody can exhaust bounds nothing");
     }
 }

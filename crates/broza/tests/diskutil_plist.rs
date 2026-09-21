@@ -9,7 +9,10 @@
 //! compiles to nothing.
 #![cfg(feature = "test-support")]
 
+use std::path::Path;
+
 use broza::adapters::diskutil::{parse_apfs_list, parse_info, parse_list, parse_snapshots};
+use broza::adapters::tmutil_destinations::parse_destination_info;
 use broza::testing::FakeRunner;
 
 /// Fixture directory of the macOS major these snapshots belong to.
@@ -77,6 +80,26 @@ fn the_system_volume_snapshots_are_the_os_update_ones_and_none_is_purgeable() {
 
     assert!(parsed.iter().all(|snapshot| !snapshot.purgeable));
     insta::assert_debug_snapshot!(parsed);
+}
+
+#[test]
+fn a_mac_without_time_machine_reports_no_destination() {
+    let parsed =
+        parse_destination_info(&fixture("tmutil_destinationinfo.plist")).unwrap_or_else(|e| panic!("{e}"));
+
+    assert!(parsed.is_empty(), "the recorded machine has Time Machine switched off");
+}
+
+#[test]
+fn a_local_destination_is_recognised_by_mount_point_name_and_identifier() {
+    let parsed = parse_destination_info(&fixture("tmutil_destinationinfo_local_synthetic.plist"))
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    let mount_point = Path::new("/Volumes/Backup4TB");
+    assert!(parsed.contains(Some(mount_point), "", None));
+    assert!(parsed.contains(None, "Backup4TB", None));
+    assert!(parsed.contains(None, "", Some("00000101-1111-4222-8333-000000000101")));
+    assert!(!parsed.contains(Some(Path::new("/System/Volumes/Data")), "Data", None));
 }
 
 #[test]

@@ -24,6 +24,7 @@
 #   info_data.plist                   diskutil info -plist /System/Volumes/Data
 #   info_preboot.plist                diskutil info -plist /System/Volumes/Preboot
 #   tmutil_listlocalsnapshots.txt     tmutil listlocalsnapshots /
+#   tmutil_destinationinfo.plist      tmutil destinationinfo -X (Time Machine destinations)
 #
 # What is redacted (all files are redacted in one pass, so a UUID keeps the same
 # fake value everywhere it appears)
@@ -44,6 +45,11 @@
 #     images, which describe software rather than a person.
 #   * roles, mount points, filesystem types and flags: they are the contract
 #     Broza parses.
+#
+# Hand-written, not captured (this Mac has no Time Machine destination):
+#   tmutil_destinationinfo_local_synthetic.plist   one local destination, written by
+#                                     hand from the documented shape. The script never
+#                                     touches it.
 #
 # Review the result before committing it: the redaction list above is the known
 # set of identifying fields, not a guarantee about a machine nobody has seen.
@@ -133,6 +139,7 @@ capture_all() {
   done
 
   "${TMUTIL}" listlocalsnapshots / >"${raw_dir}/tmutil_listlocalsnapshots.txt"
+  "${TMUTIL}" destinationinfo -X >"${raw_dir}/tmutil_destinationinfo.plist"
 }
 
 # Write `diskutil <args…>` into "${1}", skipping a target this machine does not

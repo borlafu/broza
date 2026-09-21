@@ -32,6 +32,12 @@ const TIME_MACHINE_HINTS: [&str; 3] = ["com.apple.TimeMachine", "Time Machine", 
 pub struct VolumeFacts<'a> {
     /// `true` only when `diskutil info` reports `WritableVolume`.
     pub writable_volume: bool,
+    /// `true` when Time Machine itself lists this volume as a destination.
+    ///
+    /// The authority on the question
+    /// ([`crate::adapters::tmutil_destinations`]); the two heuristics below
+    /// only matter when `tmutil` could not be asked.
+    pub backup_destination: bool,
     /// `true` when a Time Machine backup directory sits at the volume root.
     pub time_machine_marker: bool,
     /// Partition content token (`Apple_HFS`, `Apple_APFS`), when known.
@@ -73,6 +79,12 @@ pub fn roles_to_volume_role(roles: &[String]) -> VolumeRole {
 /// mounted at `/`, and a Time Machine snapshot is browsed under `/Volumes`,
 /// which would otherwise make the system volume look like a user disk.
 pub fn volume_role(roles: &[String], mount_point: Option<&Path>, facts: VolumeFacts<'_>) -> VolumeRole {
+    // Time Machine's own answer outranks everything, including a declared
+    // role: a volume it backs up to is a backup volume, and Broza writes to
+    // backups only through `tmutil` (`AGENTS.md` §2.3).
+    if facts.backup_destination {
+        return VolumeRole::Backup;
+    }
     let declared = roles_to_volume_role(roles);
     if declared != VolumeRole::Unknown || !roles.is_empty() {
         return declared;
@@ -236,6 +248,24 @@ mod tests {
             assert_eq!(role, VolumeRole::Backup, "{facts:?}");
             assert!(!role.writable_by_broza(), "{facts:?}");
         }
+    }
+
+    #[test]
+    fn a_volume_time_machine_backs_up_to_is_a_backup_volume_whatever_it_is_called() {
+        let mount = Path::new("/Volumes/Backup4TB");
+        let facts = VolumeFacts { backup_destination: true, ..writable() };
+
+        let role = volume_role(&[], Some(mount), facts);
+
+        assert_eq!(role, VolumeRole::Backup, "a writable APFS destination with a chosen name");
+        assert!(!role.writable_by_broza());
+    }
+
+    #[test]
+    fn time_machine_outranks_even_a_declared_role() {
+        let facts = VolumeFacts { backup_destination: true, ..writable() };
+
+        assert_eq!(volume_role(&roles(&["Data"]), Some(Path::new("/x")), facts), VolumeRole::Backup);
     }
 
     #[test]

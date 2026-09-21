@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use super::plist_apfs::ApfsList;
 use super::plist_info::DeviceInfo;
 use super::plist_list::DiskList;
+use crate::adapters::tmutil_destinations::BackupDestinations;
 use crate::model::Warning;
 use crate::ports::{FileOps, SpaceProvider};
 
@@ -25,6 +26,8 @@ pub(crate) struct Inputs<'a> {
     pub apfs: &'a ApfsList,
     /// Per-device details: model, writability, free space.
     pub infos: &'a InfoByDevice,
+    /// The volumes Time Machine backs up to, straight from `tmutil`.
+    pub destinations: &'a BackupDestinations,
     /// The purgeable estimate of a mount point.
     pub space: &'a dyn SpaceProvider,
     /// Used only to look for a Time Machine marker at a volume root.

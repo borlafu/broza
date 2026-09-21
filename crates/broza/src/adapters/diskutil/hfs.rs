@@ -12,8 +12,15 @@ use super::inputs::{Inputs, warning};
 use super::plist_list::ListPartition;
 use super::purpose::purpose_for_volume;
 use super::roles::volume_role;
-use super::volumes::{UNKNOWN_PURGEABLE_BYTES, UNREADABLE_ID_CODE, facts, purgeable_of};
+use super::volumes::{UNREADABLE_ID_CODE, facts, purgeable_of, writable};
 use crate::model::{Container, FsKind, Volume, VolumeId, Warning};
+
+/// Bytes reported for a volume nothing could be measured on.
+///
+/// Not the same zero as "measured zero": an unmounted partition has a size but
+/// no measurable usage, and reporting `0` used is the only honest placeholder
+/// (`AGENTS.md` §2.7).
+const UNMEASURED_BYTES: u64 = 0;
 
 /// Build the container of one `HFS+` partition.
 ///
@@ -42,20 +49,22 @@ pub(crate) fn hfs_container(
         .clone()
         .or_else(|| info.and_then(|info| info.volume_name.clone()))
         .unwrap_or_default();
-    let role = volume_role(&[], mount_point.as_deref(), facts(info, &name, mount_point.as_deref(), inputs));
+    let uuid = info.and_then(|info| info.volume_uuid.clone());
+    let observed = facts(info, &name, uuid.as_deref(), mount_point.as_deref(), inputs);
+    let role = volume_role(&[], mount_point.as_deref(), observed);
     let size_bytes = info.map_or(partition.size, |info| nonzero_or(info.total_size, partition.size));
     let (used_bytes, free_bytes) = match (mount_point.as_ref(), info) {
         (Some(_), Some(info)) => (info.used_bytes(), info.free_space),
-        _ => (0, UNKNOWN_PURGEABLE_BYTES),
+        _ => (UNMEASURED_BYTES, UNMEASURED_BYTES),
     };
     let volumes = vec![Volume {
         id: id.clone(),
         purpose: purpose_for_volume(role, &[], &name),
+        writable_by_broza: writable(role, observed, &name, warnings),
         name,
         role,
         mount_point,
         used_bytes,
-        writable_by_broza: role.writable_by_broza(),
     }];
     Some(Container {
         id,

@@ -22,6 +22,8 @@ use crate::model::{Container, FsKind, Volume, VolumeId, VolumeRole, Warning};
 pub(super) const UNKNOWN_PURGEABLE_BYTES: u64 = 0;
 /// Warning code for a device `diskutil` named in a way Broza cannot parse.
 pub(crate) const UNREADABLE_ID_CODE: &str = "unreadable_device_id";
+/// Warning code for a data volume macOS mounted read-only.
+pub(crate) const DATA_NOT_WRITABLE_CODE: &str = "data_volume_not_writable";
 
 /// One APFS container with its volumes, or `None` when it cannot be identified.
 pub(crate) fn apfs_container(
@@ -75,31 +77,69 @@ fn apfs_volume(volume: &ApfsVolume, inputs: &Inputs<'_>, warnings: &mut Vec<Warn
     // for a sealed system volume decides only what Broza reports.
     let own_mount_point = listed.and_then(|listed| listed.mount_point.clone());
     let info = inputs.infos.get(&volume.device_identifier);
-    let role = volume_role(
-        &volume.roles,
-        own_mount_point.as_deref(),
-        facts(info, &name, own_mount_point.as_deref(), inputs),
-    );
+    let observed = facts(info, &name, volume.apfs_volume_uuid.as_deref(), own_mount_point.as_deref(), inputs);
+    let role = volume_role(&volume.roles, own_mount_point.as_deref(), observed);
     Some(Volume {
         id,
         purpose: purpose_for_volume(role, &volume.roles, &name),
+        writable_by_broza: writable(role, observed, &name, warnings),
         name,
         role,
         mount_point: listed.and_then(ListApfsVolume::effective_mount_point),
         used_bytes: volume.capacity_in_use,
-        writable_by_broza: role.writable_by_broza(),
     })
+}
+
+/// Whether Broza may write to a volume: its role must allow it *and* macOS
+/// must agree that the volume is writable.
+///
+/// The role is the first gate and no flag can open it (`AGENTS.md` §2.3). The
+/// second gate is `WritableVolume`: a data volume mounted read-only — by
+/// `FileVault` before unlock, by a failing disk macOS remounted read-only, by a
+/// recovery boot — is not somewhere Broza can move files to, and planning a
+/// cleanup for it would only produce failures at apply time. The disagreement
+/// is worth saying out loud, so it becomes a warning.
+pub(super) fn writable(
+    role: VolumeRole,
+    facts: VolumeFacts<'_>,
+    name: &str,
+    warnings: &mut Vec<Warning>,
+) -> bool {
+    if !role.writable_by_broza() {
+        return false;
+    }
+    if facts.writable_volume {
+        return true;
+    }
+    if role == VolumeRole::Data {
+        warnings.push(warning(
+            DATA_NOT_WRITABLE_CODE,
+            format!(
+                "the data volume {} is mounted read-only, so Broza cannot clean anything on it",
+                display_name(name)
+            ),
+            None,
+        ));
+    }
+    false
+}
+
+/// How a warning refers to a volume that may have no name.
+fn display_name(name: &str) -> &str {
+    if name.is_empty() { "(unnamed)" } else { name }
 }
 
 /// Everything Broza observed about a volume besides its declared roles.
 pub(super) fn facts<'a>(
     info: Option<&'a DeviceInfo>,
     name: &'a str,
+    uuid: Option<&str>,
     mount_point: Option<&Path>,
     inputs: &Inputs<'_>,
 ) -> VolumeFacts<'a> {
     VolumeFacts {
         writable_volume: info.is_some_and(|info| info.writable_volume),
+        backup_destination: inputs.destinations.contains(mount_point, name, uuid),
         time_machine_marker: mount_point
             .is_some_and(|mount_point| inputs.fs.exists(&mount_point.join(TIME_MACHINE_MARKER))),
         content: info.and_then(|info| info.content.as_deref()),
@@ -250,6 +290,129 @@ mod tests {
 
         assert_eq!(built.volumes[1].role, VolumeRole::User);
         assert_eq!(built.purgeable_bytes, 4_096, "one shared pool, counted once");
+    }
+
+    /// Time Machine backing up to an APFS volume the user renamed.
+    const RENAMED_DESTINATION: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Destinations</key>
+  <array>
+    <dict>
+      <key>ID</key><string>00000101-1111-4222-8333-000000000101</string>
+      <key>Kind</key><string>Local</string>
+      <key>MountPoint</key><string>/Volumes/Backup4TB</string>
+      <key>Name</key><string>Backup4TB</string>
+    </dict>
+  </array>
+</dict>
+</plist>"#;
+
+    #[test]
+    fn a_writable_apfs_volume_time_machine_backs_up_to_is_a_backup_volume() {
+        let list = DiskList { all_disks_and_partitions: vec![listed("disk5s1", Some("/Volumes/Backup4TB"))] };
+        let scenario = Scenario::new()
+            .with_list(list)
+            .with_infos(vec![info("disk5s1", Some("/Volumes/Backup4TB"), true)])
+            .with_destination_info(RENAMED_DESTINATION);
+
+        let built = apfs_container(
+            &container(vec![apfs_volume("disk5s1", "Backup4TB", &[])]),
+            &scenario.inputs(),
+            &mut Vec::new(),
+        )
+        .unwrap_or_else(|| panic!("no container"));
+
+        assert_eq!(
+            built.volumes[0].role,
+            VolumeRole::Backup,
+            "a roleless, writable volume under /Volumes would otherwise be the user's"
+        );
+        assert!(!built.volumes[0].writable_by_broza);
+        assert_eq!(built.purgeable_bytes, 0, "a backup volume is not asked for purgeable space");
+    }
+
+    #[test]
+    fn the_same_volume_without_time_machine_is_the_users() {
+        let list = DiskList { all_disks_and_partitions: vec![listed("disk5s1", Some("/Volumes/Backup4TB"))] };
+        let scenario = Scenario::new().with_list(list).with_infos(vec![info(
+            "disk5s1",
+            Some("/Volumes/Backup4TB"),
+            true,
+        )]);
+
+        let built = apfs_container(
+            &container(vec![apfs_volume("disk5s1", "Backup4TB", &[])]),
+            &scenario.inputs(),
+            &mut Vec::new(),
+        )
+        .unwrap_or_else(|| panic!("no container"));
+
+        assert_eq!(built.volumes[0].role, VolumeRole::User);
+    }
+
+    #[test]
+    fn a_data_volume_macos_mounted_read_only_is_not_writable_and_is_reported() {
+        let list =
+            DiskList { all_disks_and_partitions: vec![listed("disk3s5", Some("/System/Volumes/Data"))] };
+        let scenario = Scenario::new().with_list(list).with_infos(vec![info(
+            "disk3s5",
+            Some("/System/Volumes/Data"),
+            false,
+        )]);
+        let mut warnings: Vec<Warning> = Vec::new();
+
+        let built = apfs_container(
+            &container(vec![apfs_volume("disk3s5", "Data", &["Data"])]),
+            &scenario.inputs(),
+            &mut warnings,
+        )
+        .unwrap_or_else(|| panic!("no container"));
+
+        assert_eq!(built.volumes[0].role, VolumeRole::Data, "the role is what macOS says it is");
+        assert!(!built.volumes[0].writable_by_broza, "but Broza cannot write to it");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "data_volume_not_writable");
+        assert!(warnings[0].message.contains("Data"), "{}", warnings[0].message);
+    }
+
+    #[test]
+    fn a_data_volume_macos_calls_writable_stays_writable_without_a_warning() {
+        let list =
+            DiskList { all_disks_and_partitions: vec![listed("disk3s5", Some("/System/Volumes/Data"))] };
+        let scenario = Scenario::new().with_list(list).with_infos(vec![info(
+            "disk3s5",
+            Some("/System/Volumes/Data"),
+            true,
+        )]);
+        let mut warnings: Vec<Warning> = Vec::new();
+
+        let built = apfs_container(
+            &container(vec![apfs_volume("disk3s5", "Data", &["Data"])]),
+            &scenario.inputs(),
+            &mut warnings,
+        )
+        .unwrap_or_else(|| panic!("no container"));
+
+        assert!(built.volumes[0].writable_by_broza);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn a_protected_volume_that_happens_to_be_writable_is_still_not_writable_by_broza() {
+        let list = DiskList { all_disks_and_partitions: vec![listed("disk3s1", Some("/"))] };
+        let scenario = Scenario::new().with_list(list).with_infos(vec![info("disk3s1", Some("/"), true)]);
+        let mut warnings: Vec<Warning> = Vec::new();
+
+        let built = apfs_container(
+            &container(vec![apfs_volume("disk3s1", "Macintosh HD", &["System"])]),
+            &scenario.inputs(),
+            &mut warnings,
+        )
+        .unwrap_or_else(|| panic!("no container"));
+
+        assert!(!built.volumes[0].writable_by_broza, "the role gate comes first");
+        assert!(warnings.is_empty(), "a protected volume being read-only is not news");
     }
 
     #[test]

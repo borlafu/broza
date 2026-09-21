@@ -32,7 +32,7 @@ const CAPACITY_MISMATCH_CODE: &str = "capacity_mismatch";
 pub(crate) fn assemble_disks(inputs: &Inputs<'_>, warnings: &mut Vec<Warning>) -> Vec<Disk> {
     let disks: Vec<Disk> =
         inputs.list.physical_devices().filter_map(|device| disk_for(device, inputs, warnings)).collect();
-    report_unattached_containers(inputs, &disks, warnings);
+    report_unattached_containers(inputs, warnings);
     ordered_by_device(disks, |disk| disk.id.as_str())
 }
 
@@ -67,8 +67,10 @@ fn disk_for(device: &ListDevice, inputs: &Inputs<'_>, warnings: &mut Vec<Warning
 /// `true` when the largest physical store of `container` lives on `device`.
 ///
 /// A fusion container spans several stores and belongs, for a reader trying to
-/// find it in Disk Utility, to the one holding most of it. Ties keep the order
-/// `diskutil` reported, which is stable across runs.
+/// find it in Disk Utility, to the one holding most of it. On a tie the last
+/// of the equal stores wins, because that is what [`Iterator::max_by_key`]
+/// returns; either answer is arbitrary and this one is at least the same on
+/// every run.
 fn owns_container(device: &str, container: &ApfsContainer) -> bool {
     container
         .physical_stores
@@ -83,30 +85,17 @@ fn owns_container(device: &str, container: &ApfsContainer) -> bool {
 /// disk to attach it to, and inventing one would report hardware that does not
 /// exist. Leaving it silently out would understate the machine, so it is a
 /// warning.
-fn report_unattached_containers(inputs: &Inputs<'_>, disks: &[Disk], warnings: &mut Vec<Warning>) {
-    let attached = disks.iter().flat_map(|disk| &disk.containers).count();
-    let apfs_containers = inputs
-        .apfs
-        .containers
-        .iter()
-        .filter(|container| container.container_reference.parse::<VolumeId>().is_ok())
-        .count();
-    let hfs_partitions = inputs.list.physical_devices().flat_map(ListDevice::hfs_partitions).count();
-    if attached >= apfs_containers + hfs_partitions {
-        return;
-    }
-    for container in &inputs.apfs.containers {
-        if is_unattached(inputs, container) {
-            warnings.push(warning(
-                UNATTACHED_CONTAINER_CODE,
-                format!(
-                    "container {} is not reported: its physical store {} belongs to no listed disk",
-                    container.container_reference,
-                    physical_store_name(container)
-                ),
-                None,
-            ));
-        }
+fn report_unattached_containers(inputs: &Inputs<'_>, warnings: &mut Vec<Warning>) {
+    for container in inputs.apfs.containers.iter().filter(|c| is_unattached(inputs, c)) {
+        warnings.push(warning(
+            UNATTACHED_CONTAINER_CODE,
+            format!(
+                "container {} is not reported: its physical store {} belongs to no listed disk",
+                container.container_reference,
+                physical_store_name(container)
+            ),
+            None,
+        ));
     }
 }
 

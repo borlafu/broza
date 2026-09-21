@@ -12,6 +12,7 @@ pub mod process_error;
 pub mod std_fs;
 pub mod std_process;
 pub mod system_clock;
+pub mod tmutil_destinations;
 
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ pub use process_error::{ProcessError, ProcessErrorKind};
 pub use std_fs::StdFileOps;
 pub use std_process::StdProcessRunner;
 pub use system_clock::SystemClock;
+pub use tmutil_destinations::{BackupDestinations, TMUTIL, parse_destination_info};
 
 use crate::ports::{
     DiskEnumerator, FileOps, Ports, ProcessRunner, Prompter, SnapshotProvider, SpaceProvider,
@@ -82,6 +84,7 @@ mod tests {
     use std::time::Duration;
 
     use super::diskutil::DISKUTIL;
+    use super::tmutil_destinations::{DESTINATION_INFO_ARGS, TMUTIL};
     use super::{system_disk_ports, system_ports, system_ports_with_disks};
     use crate::model::VolumeId;
     use crate::ports::{Answer, ProcessOutput, ProcessRunner};
@@ -115,6 +118,9 @@ mod tests {
     /// A volume without snapshots.
     const NO_SNAPSHOTS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict><key>Snapshots</key><array/></dict></plist>"#;
+    /// A Mac with Time Machine switched off.
+    const NO_DESTINATIONS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict></dict></plist>"#;
 
     fn ok(stdout: &[u8]) -> ProcessOutput {
         ProcessOutput { success: true, code: Some(0), stdout: stdout.to_vec(), stderr: Vec::new() }
@@ -126,7 +132,8 @@ mod tests {
             FakeRunner::new()
                 .with_output(DISKUTIL, &["list", "-plist"], ok(EMPTY_LIST))
                 .with_output(DISKUTIL, &["apfs", "list", "-plist"], ok(NO_CONTAINERS))
-                .with_output(DISKUTIL, &["apfs", "listSnapshots", "-plist", "disk3s5"], ok(NO_SNAPSHOTS)),
+                .with_output(DISKUTIL, &["apfs", "listSnapshots", "-plist", "disk3s5"], ok(NO_SNAPSHOTS))
+                .with_output(TMUTIL, &DESTINATION_INFO_ARGS, ok(NO_DESTINATIONS)),
         );
         let volume: VolumeId = "disk3s5".parse().unwrap_or_else(|e| panic!("{e}"));
 
@@ -134,7 +141,7 @@ mod tests {
 
         assert!(disks.enumerate().unwrap_or_else(|e| panic!("{e}")).disks.is_empty());
         assert!(snapshots.list(&volume).unwrap_or_else(|e| panic!("{e}")).is_empty());
-        assert_eq!(runner.calls().len(), 3, "both adapters recorded on the same runner");
+        assert_eq!(runner.calls().len(), 4, "both adapters recorded on the same runner");
     }
 
     #[test]

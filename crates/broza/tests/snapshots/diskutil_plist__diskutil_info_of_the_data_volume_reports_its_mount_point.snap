@@ -16,6 +16,9 @@ DeviceInfo {
     volume_name: Some(
         "Data",
     ),
+    volume_uuid: Some(
+        "00000011-1111-4222-8333-000000000011",
+    ),
     mount_point: Some(
         "/System/Volumes/Data",
     ),

@@ -24,7 +24,7 @@ expression: recorded_disks()
             "mount_point": "/System/Volumes/iSCPreboot",
             "used_bytes": 5877760,
             "writable_by_broza": false,
-            "purpose": "Boot loader data for the internal storage controller, managed entirely by macOS."
+            "purpose": "Boot loader data that macOS needs before the system volume is available."
           },
           {
             "id": "disk1s2",
@@ -85,8 +85,8 @@ expression: recorded_disks()
         "id": "disk3",
         "type": "apfs",
         "size_bytes": 494384795648,
-        "used_bytes": 455857295360,
-        "free_bytes": 38527500288,
+        "used_bytes": 454536740864,
+        "free_bytes": 39848054784,
         "purgeable_bytes": 84140000000,
         "volumes": [
           {
@@ -129,7 +129,7 @@ expression: recorded_disks()
             "name": "Data",
             "role": "data",
             "mount_point": "/System/Volumes/Data",
-            "used_bytes": 410743300096,
+            "used_bytes": 409422745600,
             "writable_by_broza": true,
             "purpose": "The writable volume that holds your home folder, your applications and your settings."
           },

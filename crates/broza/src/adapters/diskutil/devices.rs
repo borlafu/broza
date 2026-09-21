@@ -26,7 +26,7 @@ pub(crate) fn device_order(id: &str) -> Vec<u64> {
 
 /// `items` in BSD order, which is the order two runs have to agree on.
 pub(crate) fn ordered_by_device<T>(mut items: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
-    items.sort_by_key(|item| device_order(key(item)));
+    items.sort_by_cached_key(|item| device_order(key(item)));
     items
 }
 

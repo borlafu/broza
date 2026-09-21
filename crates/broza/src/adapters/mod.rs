@@ -7,6 +7,7 @@
 pub mod diskutil;
 pub(crate) mod io_error;
 pub mod mount_table;
+pub mod nsurl_space;
 pub mod process_error;
 pub mod std_fs;
 pub mod std_process;
@@ -14,19 +15,41 @@ pub mod system_clock;
 
 use std::sync::Arc;
 
+pub use diskutil::{DiskutilEnumerator, DiskutilSnapshots};
 pub use mount_table::{FIRMLINKS_PATH, MountTableReport, parse_firmlinks, system_mount_table};
+pub use nsurl_space::NsUrlSpaceProvider;
 pub use process_error::{ProcessError, ProcessErrorKind};
 pub use std_fs::StdFileOps;
 pub use std_process::StdProcessRunner;
 pub use system_clock::SystemClock;
 
-use crate::ports::{DiskEnumerator, Ports, Prompter, SnapshotProvider, SpaceProvider};
+use crate::ports::{DiskEnumerator, Ports, ProcessRunner, Prompter, SnapshotProvider, SpaceProvider};
+
+/// The three storage ports of a real Mac, sharing one process runner.
+///
+/// They belong together: the enumerator needs the space provider to fill the
+/// purgeable estimate of each container, and the enumerator and the snapshot
+/// provider run their `diskutil` commands through the same runner, so a test
+/// that scripts one scripts both.
+pub fn system_disk_ports<R>(
+    runner: R,
+) -> (Arc<dyn DiskEnumerator>, Arc<dyn SpaceProvider>, Arc<dyn SnapshotProvider>)
+where
+    R: ProcessRunner + Clone + 'static,
+{
+    let space: Arc<dyn SpaceProvider> = Arc::new(NsUrlSpaceProvider);
+    let disks: Arc<dyn DiskEnumerator> =
+        Arc::new(DiskutilEnumerator::new(runner.clone(), Arc::clone(&space)));
+    let snapshots: Arc<dyn SnapshotProvider> = Arc::new(DiskutilSnapshots::new(runner));
+    (disks, space, snapshots)
+}
 
 /// Wire the real adapters into a [`Ports`] bundle.
 ///
-/// The disk, space, and snapshot providers arrive from the caller because they are
-/// still milestone M2 work, and the prompter because it needs a terminal and
-/// therefore lives in `broza-cli` (`AGENTS.md` §4).
+/// The disk, space, and snapshot providers arrive from the caller — usually
+/// straight from [`system_disk_ports`], but a test or a future GUI may pass its
+/// own — and the prompter because it needs a terminal and therefore lives in
+/// `broza-cli` (`AGENTS.md` §4).
 pub fn system_ports(
     disks: Arc<dyn DiskEnumerator>,
     space: Arc<dyn SpaceProvider>,
@@ -42,6 +65,14 @@ pub fn system_ports(
         clock: Arc::new(SystemClock),
         prompter,
     }
+}
+
+/// Every real adapter of a Mac, wired into one [`Ports`] bundle.
+///
+/// The prompter is still the caller's: it needs a terminal.
+pub fn system_ports_with_disks(prompter: Arc<dyn Prompter>) -> Ports {
+    let (disks, space, snapshots) = system_disk_ports(StdProcessRunner);
+    system_ports(disks, space, snapshots, prompter)
 }
 
 #[cfg(test)]

@@ -26,6 +26,7 @@ insta = { version = "1", features = ["json", "redactions"] }
 assert_cmd = "2"
 predicates = "3"
 libc = "0.2"
+trybuild = "1"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

@@ -2,6 +2,23 @@
 //!
 //! Every mutating method exists so that the safety kernel can gate it: callers outside
 //! `clean/` and `quarantine/` must not need them.
+//!
+//! # Second audit surface
+//!
+//! `Approved<_>` proves that a write was *authorised*; this trait is where a write
+//! actually happens, so it is the other list a reviewer has to read:
+//!
+//! ```text
+//! grep -rn "fn rename\|fn remove_tree\|fn write_atomic\|fn create_dir_all" crates/
+//! ```
+//!
+//! Only `clean::executor` and `quarantine::{mover,restore,expiry}` may call those
+//! four methods, and only while holding an
+//! [`Approved`](crate::safety::guard::Approved) token whose
+//! [`ApprovedItem`](crate::safety::guard::ApprovedItem) covers the path — after
+//! re-`lstat`ing it and comparing `(device, inode)`. Any other call site is a bug,
+//! and review rejects it; the trait is deliberately not split, because splitting it
+//! would only move the obligation somewhere less visible.
 
 use std::path::{Path, PathBuf};
 

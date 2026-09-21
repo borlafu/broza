@@ -1,0 +1,18 @@
+error[E0451]: fields `payload`, `seal` and `kind` of struct `Approved` are private
+  --> tests/compile_fail/forge_approved_token.rs:13:46
+   |
+13 |     let _token: Approved<Write> = Approved { payload: todo!(), seal: todo!(), kind: todo!() };
+   |                                              ^^^^^^^           ^^^^           ^^^^ private field
+   |                                              |                 |
+   |                                              |                 private field
+   |                                              private field
+
+error[E0451]: fields `payload`, `mode`, `request` and `seal` of struct `PendingApproval` are private
+  --> tests/compile_fail/forge_approved_token.rs:20:27
+   |
+20 |         PendingApproval { payload: todo!(), mode: todo!(), request: todo!(), seal: todo!() };
+   |                           ^^^^^^^           ^^^^           ^^^^^^^           ^^^^ private field
+   |                           |                 |              |
+   |                           |                 |              private field
+   |                           |                 private field
+   |                           private field

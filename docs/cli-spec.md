@@ -346,7 +346,7 @@ Supports `--json`. Does not support `--csv` (exit `2`).
 3. The volume role is not `system`, `preboot`, `recovery` or `vm`.
 4. The path is under an allowed root: `$HOME`, `/Users/Shared`, `/private/var/folders/<uid>`, `/Library/Caches`, `.Trashes` on data or user volumes, `/Applications` (only for `unused-apps`).
 5. The path does not match any exclusion.
-6. Total planned bytes do not exceed `--max-size`.
+6. Total planned bytes do not exceed `--max-size`. File sizes are re-measured by the safety kernel before confirmation; directory sizes come from the scan and are re-measured by the executor immediately before removal, which aborts the item if the cap would be exceeded.
 7. No item in the plan is `inform_only`.
 
 > **Safety invariant:** no combination of flags allows Broza to write to a volume with role `System`, `Preboot`, `Recovery` or `VM`. There is no override flag, and there will not be one. Any request to add such a flag MUST be rejected.

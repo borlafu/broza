@@ -18,7 +18,7 @@ pub struct ExpiredSession {
     pub freed_bytes: u64,
 }
 
-/// One item of a [`CleanPlan`].
+/// One item of a [`CleanPlan`](crate::model::CleanPlan).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CleanItem {

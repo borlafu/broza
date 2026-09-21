@@ -159,6 +159,10 @@ impl CleanPlan {
     ///
     /// The executor records progress this way: nothing is mutated in place, and the
     /// result is validated, so a `purged` item can never keep an error code.
+    ///
+    /// `skipped` and `failed` are terminal. An item the safety kernel refused, or
+    /// one the executor already gave up on, must not be quietly revived into a
+    /// `purged` a later step could act on.
     pub fn with_item_status(
         self,
         index: usize,
@@ -170,6 +174,12 @@ impl CleanPlan {
             .items
             .get(index)
             .ok_or_else(|| BrozaError::Other(format!("clean plan: no item at index {index}")))?;
+        if item.status.is_unsuccessful() && item.status != status {
+            return Err(BrozaError::Other(format!(
+                "clean plan: item {index} is already `{:?}` and cannot become `{status:?}`",
+                item.status
+            )));
+        }
         let updated = CleanItem { status, error, ..item.clone() };
         repr.items = replace_at(repr.items, index, &updated);
         Self::try_from(repr)
@@ -343,6 +353,28 @@ mod tests {
         assert_eq!(executed.items()[1].error, Some(ItemErrorCode::CrossVolume));
         assert_eq!(executed.quarantined_bytes(), 10);
         assert!(executed.with_item_status(9, ItemStatus::Purged, None).is_err());
+    }
+
+    /// An item the kernel or the executor gave up on stays given up on: reviving
+    /// it would hand a later step a target nobody checked.
+    #[test]
+    fn a_skipped_or_failed_item_never_comes_back() {
+        let applied =
+            dry_run(vec![item(10, ItemStatus::Planned)]).into_applied(None).unwrap_or_else(|e| panic!("{e}"));
+        for terminal in [ItemStatus::Skipped, ItemStatus::Failed] {
+            let stopped = applied
+                .clone()
+                .with_item_status(0, terminal.clone(), Some(ItemErrorCode::NotFound))
+                .unwrap_or_else(|e| panic!("{e}"));
+            for revival in [ItemStatus::Purged, ItemStatus::Quarantined, ItemStatus::Restored] {
+                let error = stopped.clone().with_item_status(0, revival.clone(), None);
+                assert!(error.is_err(), "{terminal:?} must not become {revival:?}");
+            }
+            // Re-recording the same terminal outcome stays allowed: a retry that
+            // fails again must be able to update its error code.
+            let again = stopped.with_item_status(0, terminal, Some(ItemErrorCode::IoError));
+            assert!(again.is_ok(), "{again:?}");
+        }
     }
 
     #[test]

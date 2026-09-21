@@ -33,8 +33,10 @@ pub fn render(
 ) -> String {
     if plan.is_dry_run() {
         render_dry_run(plan, due, home, rerun)
-    } else if plan.items().is_empty() {
-        render_nothing_moved(plan, errors)
+    } else if plan.quarantine_path().is_none() {
+        // No session was created: every planned path was gone, or there was
+        // nothing to plan. There is nothing to undo either.
+        render_nothing_moved(plan, errors, home)
     } else {
         render_applied(plan, errors, home)
     }
@@ -75,12 +77,18 @@ fn render_dry_run(plan: &CleanPlan, due: &[(SessionId, u64)], home: &Path, rerun
             format_bytes(bytes)
         );
     }
-    let consequence = if is_purge(plan) {
-        "deletes for good after you type PURGE; nothing can be restored"
-    } else {
-        "moves to quarantine; `broza restore` brings items back until they expire"
-    };
-    let _ignored = write!(text, "\n\nNext step:\n  {rerun} --apply    ({consequence})");
+    if is_purge(plan) {
+        let _ignored = write!(
+            text,
+            "\n\nNote: irreversible deletion lands in milestone M4; `{rerun} --apply` is refused today.\nQuarantine the items instead ({} --apply) and `broza quarantine purge` the session afterwards.",
+            rerun.trim_end_matches(" --purge")
+        );
+        return text;
+    }
+    let _ignored = write!(
+        text,
+        "\n\nNext step:\n  {rerun} --apply    (moves to quarantine; `broza restore` brings items back until they expire)"
+    );
     text
 }
 
@@ -107,8 +115,11 @@ fn render_applied(plan: &CleanPlan, errors: &[Warning], home: &Path) -> String {
 }
 
 /// `--apply` with nothing to move: no session was created, so nothing to undo.
-fn render_nothing_moved(plan: &CleanPlan, errors: &[Warning]) -> String {
+fn render_nothing_moved(plan: &CleanPlan, errors: &[Warning], home: &Path) -> String {
     let mut text = String::from("Nothing to move: no item of the selection is left to clean.");
+    for item in plan.items().iter().filter(|item| item.status.is_unsuccessful()) {
+        render_item(&mut text, item, home);
+    }
     render_expiry(&mut text, plan);
     if !errors.is_empty() {
         let _ignored =
@@ -219,7 +230,8 @@ mod tests {
         let text = render(&plan, &[], &[], Path::new("/Users/dana"), "broza clean --category trash --purge");
 
         assert!(text.contains("Would delete permanently (no quarantine, no restore) 1 item(s)"), "{text}");
-        assert!(text.contains("--purge --apply    (deletes for good after you type PURGE"), "{text}");
+        assert!(text.contains("irreversible deletion lands in milestone M4"), "{text}");
+        assert!(text.contains("(broza clean --category trash --apply)"), "{text}");
         assert!(!text.contains("restore` brings"), "{text}");
     }
 
@@ -259,6 +271,25 @@ mod tests {
             "{text}"
         );
         assert!(text.ends_with("Undo: broza restore --session cln_20260921103608_a1b2"), "{text}");
+    }
+
+    #[test]
+    fn an_applied_run_whose_every_path_vanished_lists_the_skips_and_offers_no_undo() {
+        let plan = CleanPlan::dry_run(
+            session(),
+            vec![item("/Users/dana/Library/Caches/gone", 0, Action::Quarantine)],
+        )
+        .unwrap()
+        .into_applied(None)
+        .unwrap()
+        .with_item_status(0, ItemStatus::Skipped, Some(ItemErrorCode::NotFound))
+        .unwrap();
+
+        let text = render(&plan, &[], &[], Path::new("/Users/dana"), RERUN);
+
+        assert!(text.starts_with("Nothing to move:"), "{text}");
+        assert!(text.contains("skipped           0 B  ~/Library/Caches/gone  (not_found)"), "{text}");
+        assert!(!text.contains("Session ") && !text.contains("Undo"), "{text}");
     }
 
     #[test]

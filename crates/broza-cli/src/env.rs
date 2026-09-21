@@ -91,8 +91,8 @@ impl RuntimeEnv {
             Err(_) => tmpdir.to_path_buf(),
         };
         let Ok(rest) = canonical.strip_prefix(UID_TEMP_PARENT) else { return Vec::new() };
-        // A `.` or `..` anywhere is a shape Broza does not name a root for,
-        // rather than something to normalise away.
+        // A `.` or `..` in the two components that name the root is a shape
+        // Broza does not name a root for, rather than something to normalise away.
         let mut parts = rest.components().map(|c| match c {
             Component::Normal(name) => Some(name),
             _ => None,

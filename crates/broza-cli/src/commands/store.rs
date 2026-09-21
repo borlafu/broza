@@ -50,6 +50,34 @@ pub fn session_dirs_token(
     Ok(approve_quarantine_write(&paths, root, mounts, ports.fs.as_ref())?)
 }
 
+/// Readable sessions with their bytes, and the store's complaint about each one that is not.
+pub type ResolvedSessions = (Vec<(SessionId, u64)>, Vec<Warning>);
+
+/// The sessions of `ids` that can be read, with their bytes, and the store's
+/// complaint about each one that cannot.
+///
+/// # Errors
+///
+/// [`BrozaError::TargetNotFound`] (exit `4`) for an identifier the store does
+/// not hold at all; a session that exists but cannot be read is an `errors[]`
+/// entry, not a failure.
+pub fn resolve_sessions(
+    ports: &Ports,
+    root: &Path,
+    ids: &[SessionId],
+) -> Result<ResolvedSessions, BrozaError> {
+    let mut readable = Vec::with_capacity(ids.len());
+    let mut errors = Vec::new();
+    for id in ids {
+        match store::read_one(ports.fs.as_ref(), root, id) {
+            Ok(found) => readable.push((id.clone(), found.session().total_bytes)),
+            Err(error @ BrozaError::TargetNotFound(_)) => return Err(error),
+            Err(error) => errors.push(store::corrupt(&layout::session_dir(root, id), &error)),
+        }
+    }
+    Ok((readable, errors))
+}
+
 /// The bytes each of `ids` holds, as the store reports them.
 ///
 /// # Errors

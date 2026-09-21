@@ -16,11 +16,14 @@ const SIZE_WIDTH: usize = 9;
 const ID_WIDTH: usize = 30;
 
 /// `restore --list`: every item still in the store, by session.
-pub fn render_list(report: &RestoreReport, home: &Path) -> String {
-    if report.sessions.iter().all(|session| session.items.is_empty()) {
+pub fn render_list(report: &RestoreReport, errors: &[Warning], home: &Path) -> String {
+    if report.sessions.iter().all(|session| session.items.is_empty()) && errors.is_empty() {
         return "Quarantine is empty.".to_owned();
     }
     let mut text = format!("{:<ID_WIDTH$}{:>SIZE_WIDTH$}  Original path", "Item", "Size");
+    for error in errors {
+        let _ignored = write!(text, "\n{}: {}", error.code, error.message);
+    }
     for session in &report.sessions {
         for item in &session.items {
             let _ignored = write!(
@@ -56,7 +59,7 @@ pub fn render_restore(report: &RestoreReport, errors: &[Warning], home: &Path) -
             render_item(&mut text, item, home);
         }
     }
-    for error in errors.iter().filter(|error| error.path.is_none()) {
+    for error in errors {
         let _ignored = write!(text, "\n   {}: {}", error.code, error.message);
     }
     text
@@ -122,7 +125,7 @@ mod tests {
 
     #[test]
     fn the_list_names_each_item_with_its_id_and_the_next_command() {
-        let text = render_list(&report("planned", None), Path::new("/Users/dana"));
+        let text = render_list(&report("planned", None), &[], Path::new("/Users/dana"));
 
         assert!(text.contains("cln_20260917103608_a1b2/0001     4.1 KB  ~/Library/Caches/x"), "{text}");
         assert!(text.ends_with("broza restore --session <cln_…>"), "{text}");

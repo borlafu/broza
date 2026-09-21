@@ -77,6 +77,13 @@ pub fn put_back(
     if fs.exists(&destination) {
         return Ok(PutBack::from(refused(entry, ItemStatus::Skipped, ItemErrorCode::Collision)));
     }
+    // A stored file removed out of band (or never landed before an interrupted
+    // move wrote the manifest) is this entry's failure, not the run's: the
+    // caller could not have named a path that is not there, and §3.5 promises
+    // an interrupted restore "can simply be run again".
+    if !fs.exists(&stored) {
+        return Ok(PutBack::from(refused(entry, ItemStatus::Failed, ItemErrorCode::NotFound)));
+    }
     if let Recheck::Refused(code) = recheck(sources, &stored, fs)? {
         return Ok(PutBack::from(refused(entry, ItemStatus::Failed, code)));
     }

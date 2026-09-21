@@ -105,7 +105,6 @@ pub fn dispatch(
             host: inputs.host,
             generated_at,
             warnings: inputs.warnings,
-            policy: inputs.policy,
             format: inputs.format,
             folders: folders.clone(),
             tty: inputs.runtime.is_interactive(),

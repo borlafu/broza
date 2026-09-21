@@ -15,7 +15,7 @@ use crate::commands::Outcome;
 use crate::commands::clean::{CleanContext, Executed, INFORM_ONLY_SKIPPED_CODE, render, run};
 use crate::commands::clean_expiry::{EXPIRY_DECLINED_CODE, EXPIRY_PENDING_CODE, EXPIRY_UNREADABLE_CODE};
 use crate::commands::test_world::{CACHE_FILE, STORE, folders, host, now, world};
-use crate::output::{ColorPolicy, OutputFormat};
+use crate::output::OutputFormat;
 use broza::model::{CleanPlan, ItemErrorCode, ItemStatus};
 use broza::ports::Ports;
 
@@ -46,7 +46,6 @@ fn context<'a>(
         host: host(),
         generated_at: now(),
         warnings: Vec::new(),
-        policy: ColorPolicy::Never,
         format,
         folders: folders(),
         tty,

@@ -7,7 +7,7 @@ use broza::model::{CleanPlan, Envelope, Host, SessionId, Warning};
 use jiff::Timestamp;
 
 use crate::output::human::clean as human_clean;
-use crate::output::{ColorPolicy, Renderer, envelope_to_json};
+use crate::output::{Renderer, envelope_to_json};
 
 /// Command name in the JSON envelope.
 const COMMAND: &str = "clean";
@@ -31,8 +31,6 @@ pub struct CleanOutput {
     pub generated_at: Timestamp,
     /// Home directory, so paths print as `~/…`.
     pub home: PathBuf,
-    /// Whether the human rendering may use colour.
-    pub policy: ColorPolicy,
 }
 
 impl CleanOutput {

@@ -206,6 +206,8 @@ mod tests {
             (format!("{jb}/IntelliJIdea2025.1/LocalHistory/changes.storageData"), 50_000_u64),
             (format!("{jb}/IntelliJIdea2025.1/caches/names.dat"), 20_000),
             (format!("{jb}/IntelliJIdea2025.1/index/stubs.dat"), 10_000),
+            (format!("{jb}/PyCharm2022.3/fileHistory/x.dat"), 3000),
+            (format!("{jb}/PyCharm2022.3/caches/y.dat"), 3000),
             (format!("{jb}/CLion2025.1/caches/x.dat"), 1000),
         ] {
             fs.add_file(&path, &[]);
@@ -223,7 +225,13 @@ mod tests {
             "an IDE without history stays whole: {listed:?}"
         );
         assert!(
-            listed.iter().all(|p| !p.contains("LocalHistory") && !p.ends_with("/JetBrains")),
+            listed.contains(&format!("{jb}/PyCharm2022.3/caches")),
+            "fileHistory is kept out too: {listed:?}"
+        );
+        assert!(
+            listed.iter().all(|p| !p.contains("LocalHistory")
+                && !p.contains("fileHistory")
+                && !p.ends_with("/JetBrains")),
             "{listed:?}"
         );
     }

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use broza::BrozaError;
 use broza::model::{
-    EntryId, ItemStatus, OperationKind, QuarantineEntry, RestoreReport, RestoreSession, Warning,
+    EntryId, ItemStatus, OperationKind, QuarantineEntry, RestoreReport, RestoreSession, SessionId, Warning,
 };
 use broza::quarantine::store::StoredSession;
 use broza::quarantine::{Wanted, destinations, group_by_session, layout, restore_wanted, store};
@@ -119,7 +119,7 @@ fn list(context: &StoreContext<'_>, root: &Path) -> Result<Outcome, BrozaError> 
         context.format,
         &StoreOutput {
             command: "restore",
-            human: human::render_list(&data, context.home()?),
+            human: human::render_list(&data, &found.errors, context.home()?),
             csv: Some(table),
             data,
             errors: found.errors,
@@ -152,15 +152,23 @@ fn resolve(args: &RestoreArgs, fs: &dyn broza::ports::FileOps, root: &Path) -> R
         let wanted = found.sessions.iter().map(|stored| Wanted::whole(&stored.id)).collect();
         return Ok(Resolved { wanted, errors: found.errors });
     }
-    let wanted = if let Some(session) = &args.session {
+    let named = if let Some(session) = &args.session {
         vec![Wanted::whole(&parse_session_id(session)?)]
     } else {
         wanted_of_ids(&args.ids)?
     };
-    for one in &wanted {
-        check_known(fs, root, one)?;
+    let mut wanted = Vec::with_capacity(named.len());
+    let mut errors = Vec::new();
+    for one in named {
+        match check_known(fs, root, &one) {
+            Ok(()) => wanted.push(one),
+            // Unknown is the user's mistake (exit 4); a session that exists but
+            // cannot be read is the store's, reported and skipped (exit 5).
+            Err(error @ BrozaError::TargetNotFound(_)) => return Err(error),
+            Err(error) => errors.push(store::corrupt(&layout::session_dir(root, &one.session), &error)),
+        }
     }
-    Ok(Resolved { wanted, errors: Vec::new() })
+    Ok(Resolved { wanted, errors })
 }
 
 /// Positional ids as sessions or as items; one kind per invocation.
@@ -169,12 +177,22 @@ fn wanted_of_ids(ids: &[String]) -> Result<Vec<Wanted>, BrozaError> {
     if entries.len() == ids.len() {
         return group_by_session(&entries);
     }
-    if !entries.is_empty() {
+    let sessions: Vec<SessionId> = ids.iter().filter_map(|raw| raw.parse::<SessionId>().ok()).collect();
+    if sessions.len() == ids.len() {
+        return Ok(sessions.iter().map(Wanted::whole).collect());
+    }
+    if entries.len() + sessions.len() == ids.len() {
         return Err(BrozaError::Usage(
             "restore takes either session ids or item ids, not both at once".into(),
         ));
     }
-    ids.iter().map(|raw| parse_session_id(raw).map(|id| Wanted::whole(&id))).collect()
+    let offending = ids
+        .iter()
+        .find(|raw| raw.parse::<EntryId>().is_err() && raw.parse::<SessionId>().is_err())
+        .map_or_else(String::new, Clone::clone);
+    Err(BrozaError::Usage(format!(
+        "`{offending}` is neither a session id (cln_YYYYMMDDHHMMSS_xxxx) nor an item id (cln_…/<seq>)"
+    )))
 }
 
 /// The session must exist, and every item asked for must still be in it.
@@ -200,13 +218,16 @@ fn source_paths(
     let mut paths = Vec::new();
     for one in wanted {
         let found: StoredSession = store::read_one(fs, root, &one.session)?;
+        // A stored path that is gone cannot be approved (the guard `lstat`s it);
+        // `put_back` records that entry as `not_found` and the rest goes back.
         paths.extend(
             found
                 .session()
                 .entries
                 .iter()
                 .filter(|entry| one.covers(entry))
-                .filter_map(|entry| entry.stored_path.clone()),
+                .filter_map(|entry| entry.stored_path.clone())
+                .filter(|stored| fs.exists(stored)),
         );
         paths.push(layout::session_dir(root, &one.session));
     }

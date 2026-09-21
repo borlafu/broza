@@ -19,8 +19,8 @@ const SIZE_WIDTH: usize = 10;
 const ITEMS_WIDTH: usize = 7;
 
 /// `quarantine list`: one line per session, then what is pending.
-pub fn render_list(list: &QuarantineList) -> String {
-    if list.sessions.is_empty() {
+pub fn render_list(list: &QuarantineList, errors: &[Warning]) -> String {
+    if list.sessions.is_empty() && errors.is_empty() {
         return "Quarantine is empty.".to_owned();
     }
     let mut text = format!(
@@ -29,6 +29,9 @@ pub fn render_list(list: &QuarantineList) -> String {
     );
     for session in &list.sessions {
         render_session(&mut text, session);
+    }
+    for error in errors {
+        let _ignored = write!(text, "\n{}: {}", error.code, error.message);
     }
     let _ignored = write!(text, "\n\nPending in quarantine:  {}", format_bytes(list.total_bytes));
     if list.expired_bytes > 0 {
@@ -114,7 +117,7 @@ mod tests {
         }))
         .unwrap();
 
-        let text = render_list(&list);
+        let text = render_list(&list, &[]);
 
         assert!(text.starts_with("Session                    Created              Expires"), "{text}");
         assert!(text.contains("cln_20260917103608_a1b2    2026-09-17 10:36     2026-10-17 10:36     138.2 GB   1284   complete"), "{text}");

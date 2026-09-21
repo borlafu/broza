@@ -12,8 +12,8 @@ use broza::quarantine::{all_sessions, expire, expired_sessions, list_sessions, p
 
 use crate::args::QuarantineCommand;
 use crate::commands::store::{
-    StoreContext, StoreOutput, confirm_purge, confirm_removal, finish, mounts, parse_session_id, root_of,
-    session_dirs_token, session_sizes,
+    StoreContext, StoreOutput, confirm_purge, confirm_removal, finish, mounts, parse_session_id,
+    resolve_sessions, root_of, session_dirs_token,
 };
 use crate::commands::{Outcome, Reclaimed};
 use crate::output::csv;
@@ -48,7 +48,7 @@ fn list(context: &StoreContext<'_>) -> Result<Outcome, BrozaError> {
         context.format,
         &StoreOutput {
             command: "quarantine list",
-            human: human::render_list(&listed.data),
+            human: human::render_list(&listed.data, &listed.errors),
             csv: Some(table),
             data: listed.data,
             errors: listed.errors,
@@ -79,12 +79,17 @@ fn expire_due(context: &StoreContext<'_>, yes: bool) -> Result<Outcome, BrozaErr
     if due.is_empty() {
         return reclaimed(context, nothing(OperationKind::Expire), Vec::new(), Vec::new());
     }
-    let sizes = session_sizes(ports, &root, &due)?;
+    let (sizes, unreadable) = resolve_sessions(ports, &root, &due)?;
+    let ids: Vec<SessionId> = sizes.iter().map(|(id, _)| id.clone()).collect();
+    if ids.is_empty() {
+        return reclaimed(context, nothing(OperationKind::Expire), unreadable, Vec::new());
+    }
     confirm_removal(ports, &sizes, yes, "expire")?;
     let (mounts, mount_warnings) = mounts(ports)?;
-    let token = session_dirs_token(ports, &root, &mounts, &due)?;
-    let reported = expire(&token, &due, &root, ports.fs.as_ref())?;
-    reclaimed(context, reported.data, reported.errors, [mount_warnings, reported.warnings].concat())
+    let token = session_dirs_token(ports, &root, &mounts, &ids)?;
+    let reported = expire(&token, &ids, &root, ports.fs.as_ref())?;
+    let errors = [unreadable, reported.errors].concat();
+    reclaimed(context, reported.data, errors, [mount_warnings, reported.warnings].concat())
 }
 
 /// `quarantine purge <ids> | --all`: remove sessions whatever their age, after `PURGE`.
@@ -99,13 +104,19 @@ fn purge_named(context: &StoreContext<'_>, raw_ids: &[String], all: bool) -> Res
     if ids.is_empty() {
         return reclaimed(context, nothing(OperationKind::Purge), Vec::new(), Vec::new());
     }
-    // Unknown identifiers are refused before the prompt: nothing to type PURGE for.
-    let sizes = session_sizes(ports, &root, &ids)?;
+    // Unknown identifiers are refused before the prompt: nothing to type PURGE
+    // for. A named session the store cannot read is reported and left out.
+    let (sizes, unreadable) = resolve_sessions(ports, &root, &ids)?;
+    let ids: Vec<SessionId> = sizes.iter().map(|(id, _)| id.clone()).collect();
+    if ids.is_empty() {
+        return reclaimed(context, nothing(OperationKind::Purge), unreadable, Vec::new());
+    }
     confirm_purge(ports, &sizes)?;
     let (mounts, mount_warnings) = mounts(ports)?;
     let token = session_dirs_token(ports, &root, &mounts, &ids)?;
     let reported = purge(&token, &ids, &root, ports.fs.as_ref())?;
-    reclaimed(context, reported.data, reported.errors, [mount_warnings, reported.warnings].concat())
+    let errors = [unreadable, reported.errors].concat();
+    reclaimed(context, reported.data, errors, [mount_warnings, reported.warnings].concat())
 }
 
 /// The report of an operation that found nothing to remove.

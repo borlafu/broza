@@ -16,7 +16,7 @@ use crate::commands::clean::{CleanContext, run as clean};
 use crate::commands::quarantine::run as quarantine;
 use crate::commands::restore::run as restore;
 use crate::commands::test_world::{CACHE_CONTENTS, CACHE_FILE, folders, host, now, store_context, world};
-use crate::output::{ColorPolicy, OutputFormat};
+use crate::output::OutputFormat;
 
 /// Quarantine the cache file with `--yes`, returning the session id.
 fn cleaned(ports: &Ports) -> String {
@@ -38,7 +38,6 @@ fn cleaned(ports: &Ports) -> String {
         host: host(),
         generated_at: now(),
         warnings: Vec::new(),
-        policy: ColorPolicy::Never,
         format: OutputFormat::Json,
         folders: folders(),
         tty: false,
@@ -329,4 +328,54 @@ fn restore_all_on_an_empty_store_says_so() {
 
     assert_eq!(outcome.rendered, "Quarantine is empty.");
     assert_eq!(outcome.code, ExitCode::Ok);
+}
+
+#[test]
+fn a_stored_file_missing_on_disk_fails_its_entry_and_the_rest_still_goes_back() {
+    let (ports, handles) = world();
+    let extra = "/System/Volumes/Data/Users/dana/Library/Caches/Other/o.db";
+    handles.fs.add_file(extra, b"other");
+    handles.fs.set_size(extra, 900_000_000);
+    let session = cleaned(&ports);
+    let config = Config::default();
+    let store = crate::commands::test_world::STORE;
+    let stored_other = format!("{store}/{session}/items/0002/Other");
+    let stored_app = format!("{store}/{session}/items/0001/App");
+    let gone = if handles.fs.exists(Path::new(&stored_other)) { stored_other } else { stored_app };
+    handles.fs.remove_tree(Path::new(&gone)).unwrap_or_else(|e| panic!("{e}"));
+
+    let outcome = restore(
+        &RestoreArgs { session: Some(session), ..restore_args(&[]) },
+        &store_context(&ports, &config, OutputFormat::Json),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    let value = json(&outcome);
+    assert_eq!(outcome.code, ExitCode::PartialFailure, "{value}");
+    let items = value["data"]["sessions"][0]["items"].as_array().unwrap_or_else(|| panic!("{value}"));
+    assert!(items.iter().any(|item| item["status"] == "restored"), "{value}");
+    assert!(items.iter().any(|item| item["error"] == "not_found"), "{value}");
+}
+
+#[test]
+fn purging_a_named_session_whose_manifest_is_corrupt_reports_it_and_exits_five() {
+    let (ports, handles) = world();
+    let config = Config::default();
+    let corrupt = format!("{}/cln_20200101000000_bbbb", crate::commands::test_world::STORE);
+    handles.fs.add_file(format!("{corrupt}/manifest.json"), b"{ not json");
+
+    let outcome = quarantine(
+        &QuarantineCommand::Purge {
+            sessions: vec!["cln_20200101000000_bbbb".into()],
+            all: false,
+            yes: false,
+        },
+        &store_context(&ports, &config, OutputFormat::Json),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    let value = json(&outcome);
+    assert_eq!(outcome.code, ExitCode::PartialFailure, "{value}");
+    assert_eq!(value["errors"][0]["code"], "manifest_corrupt", "{value}");
+    assert!(handles.prompter.prompts().is_empty(), "nothing to type PURGE for");
 }

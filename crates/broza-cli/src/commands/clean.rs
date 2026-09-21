@@ -25,7 +25,7 @@ use crate::commands::clean_output::CleanOutput;
 use crate::commands::detection::{self, DetectionRequest};
 use crate::commands::scan::folders::FolderSettings;
 use crate::commands::{Outcome, Reclaimed};
-use crate::output::{ColorPolicy, OutputFormat, Renderer};
+use crate::output::{OutputFormat, Renderer};
 
 /// Everything `run` needs beyond the arguments.
 pub struct CleanContext<'a> {
@@ -41,8 +41,6 @@ pub struct CleanContext<'a> {
     pub generated_at: Timestamp,
     /// Warnings raised before the command ran.
     pub warnings: Vec<Warning>,
-    /// Whether the human rendering may use colour.
-    pub policy: ColorPolicy,
     /// Format the caller asked for.
     pub format: OutputFormat,
     /// Home, cache and progress settings shared with `scan`.
@@ -244,17 +242,22 @@ fn rerun_command(args: &CleanArgs) -> String {
         };
         parts.push(format!("--risk {level}"));
     }
-    parts.extend(args.exclude.iter().map(|glob| format!("--exclude '{glob}'")));
+    parts.extend(args.exclude.iter().map(|glob| format!("--exclude {}", shell_quote(glob))));
     if let Some(size) = &args.max_size {
-        parts.push(format!("--max-size {size}"));
+        parts.push(format!("--max-size {}", shell_quote(size)));
     }
     if let Some(period) = &args.unused_after {
-        parts.push(format!("--unused-after {period}"));
+        parts.push(format!("--unused-after {}", shell_quote(period)));
     }
     if args.purge {
         parts.push("--purge".to_owned());
     }
     parts.join(" ")
+}
+
+/// `value` as one shell word: single-quoted, with embedded quotes escaped.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// The envelope, the exit code, the text.
@@ -279,7 +282,6 @@ pub(crate) fn render(
         host: context.host.clone(),
         generated_at: context.generated_at,
         home: home.to_path_buf(),
-        policy: context.policy,
     };
     let outcome = Outcome::ok(output.render(context.format)?).with_warnings(warnings).with_code(code);
     Ok(match reclaimed {

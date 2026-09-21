@@ -101,7 +101,7 @@ pub fn expire_due(
         .and_then(|token| expire(&token, &ids, root, ports.fs.as_ref()))
     {
         Ok(reported) => reported,
-        Err(error) => return Ok(Expiry { warnings: vec![unreadable(root, &error)], ..Expiry::default() }),
+        Err(error) => return Ok(Expiry { warnings: vec![refused(root, &error)], ..Expiry::default() }),
     };
     let sessions: Vec<ExpiredSession> = reported
         .data
@@ -130,6 +130,17 @@ fn declined(due: &[(SessionId, u64)], root: &Path) -> Warning {
         message: format!(
             "{} expired quarantine session(s) were left in place; `broza quarantine expire` removes them",
             due.len()
+        ),
+        path: Some(root.to_path_buf()),
+    }
+}
+
+/// The store changed under us, or the guard refused it, after the plan was confirmed.
+fn refused(root: &Path, error: &BrozaError) -> Warning {
+    Warning {
+        code: EXPIRY_UNREADABLE_CODE.to_owned(),
+        message: format!(
+            "the expiry step was skipped: the quarantine store changed or was refused before it could run: {error}"
         ),
         path: Some(root.to_path_buf()),
     }

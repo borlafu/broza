@@ -3,12 +3,27 @@
 use std::path::Path;
 
 use crate::BrozaError;
-use crate::model::{Disk, Snapshot, VolumeId};
+use crate::model::{Disk, Snapshot, VolumeId, Warning};
+
+/// What one enumeration found, and what it could not make sense of.
+///
+/// An enumeration either fails outright — no `diskutil`, no permission — or it
+/// returns the machine it could describe. Everything in between (a container
+/// with an unreadable identifier, a capacity that is not a number) becomes a
+/// warning rather than an error, because a partial map of the machine still
+/// protects the volumes it does know about (`AGENTS.md` §6).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EnumerationReport {
+    /// Physical disks, with their containers and volumes.
+    pub disks: Vec<Disk>,
+    /// Everything the enumerator had to skip or correct, for `warnings[]`.
+    pub warnings: Vec<Warning>,
+}
 
 /// Enumerates physical disks with their containers and volumes.
 pub trait DiskEnumerator: Send + Sync {
     /// All disks visible to the system, internal and external.
-    fn enumerate(&self) -> Result<Vec<Disk>, BrozaError>;
+    fn enumerate(&self) -> Result<EnumerationReport, BrozaError>;
 }
 
 /// Reports purgeable space for a mounted volume.

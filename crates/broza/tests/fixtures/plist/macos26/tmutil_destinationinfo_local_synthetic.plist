@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  HAND-WRITTEN, NOT RECORDED.
+
+  The development machine has no Time Machine destination configured, so
+  `tmutil destinationinfo -X` returns an empty dictionary there (see the
+  recorded tmutil_destinationinfo.plist next to this file). This fixture is
+  written by hand from the documented shape of the command: one local
+  destination on an external disk, and one network destination, which is the
+  pair Broza has to tell apart.
+
+  scripts/capture-diskutil-fixtures.sh never writes or deletes this file.
+-->
+<plist version="1.0">
+<dict>
+	<key>Destinations</key>
+	<array>
+		<dict>
+			<key>ID</key>
+			<string>00000101-1111-4222-8333-000000000101</string>
+			<key>Kind</key>
+			<string>Local</string>
+			<key>LastDestination</key>
+			<integer>1</integer>
+			<key>MountPoint</key>
+			<string>/Volumes/Backup4TB</string>
+			<key>Name</key>
+			<string>Backup4TB</string>
+		</dict>
+		<dict>
+			<key>ID</key>
+			<string>00000102-1111-4222-8333-000000000102</string>
+			<key>Kind</key>
+			<string>Network</string>
+			<key>Name</key>
+			<string>Time Capsule</string>
+			<key>URL</key>
+			<string>smb://testuser@test-mac._smb._tcp.local./Backups</string>
+		</dict>
+	</array>
+</dict>
+</plist>

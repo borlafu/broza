@@ -55,7 +55,13 @@ crates/broza/src/
   lib.rs
   model/      envelope.rs disk.rs finding.rs plan.rs quarantine.rs scan.rs ids.rs units.rs
   ports/      process.rs disk_enum.rs fs_ops.rs clock.rs prompter.rs mod.rs (Ports DI bundle)
-  adapters/   diskutil/{mod,plist_apfs,plist_list,plist_info,roles}.rs nsurl_space.rs tmutil.rs
+  adapters/   diskutil/mod.rs (DiskutilEnumerator) budget.rs devices.rs inputs.rs parse.rs
+              diskutil/{plist_list,plist_apfs,plist_info,plist_snapshots}.rs (pure parsers)
+              diskutil/{roles,purpose}.rs (role predicate, plain-language text)
+              diskutil/{assemble,volumes,hfs}.rs (parsed output → JSON contract)
+              diskutil/snapshots.rs (DiskutilSnapshots) diskutil/tests_support.rs (cfg(test))
+              nsurl_space.rs (purgeable, the only objc2 file) tmutil_destinations.rs
+              mount_table.rs io_error.rs process_error.rs
               std_process.rs std_fs.rs system_clock.rs
   scan/       walker.rs aggregate.rs cache/{store,key}.rs mount.rs
   detect/     mod.rs filter.rs exclusions.rs explain.rs detectors/<category>.rs

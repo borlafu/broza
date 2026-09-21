@@ -1,0 +1,339 @@
+---
+source: crates/broza/tests/diskutil_plist.rs
+expression: parsed
+---
+DiskList {
+    all_disks_and_partitions: [
+        ListDevice {
+            device_identifier: "disk0",
+            content: "GUID_partition_scheme",
+            size: 500277792768,
+            os_internal: false,
+            partitions: [
+                ListPartition {
+                    device_identifier: "disk0s1",
+                    content: "Apple_APFS_ISC",
+                    size: 524288000,
+                    volume_name: None,
+                    mount_point: None,
+                },
+                ListPartition {
+                    device_identifier: "disk0s2",
+                    content: "Apple_APFS",
+                    size: 494384795648,
+                    volume_name: None,
+                    mount_point: None,
+                },
+                ListPartition {
+                    device_identifier: "disk0s3",
+                    content: "Apple_APFS_Recovery",
+                    size: 5368664064,
+                    volume_name: None,
+                    mount_point: None,
+                },
+            ],
+            apfs_volumes: [],
+        },
+        ListDevice {
+            device_identifier: "disk1",
+            content: "Apple_APFS_Container",
+            size: 524288000,
+            os_internal: true,
+            partitions: [],
+            apfs_volumes: [
+                ListApfsVolume {
+                    device_identifier: "disk1s1",
+                    volume_name: Some(
+                        "iSCPreboot",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/iSCPreboot",
+                    ),
+                    size: 524288000,
+                    os_internal: true,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk1s2",
+                    volume_name: Some(
+                        "xART",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/xarts",
+                    ),
+                    size: 524288000,
+                    os_internal: true,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk1s3",
+                    volume_name: Some(
+                        "Hardware",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/Hardware",
+                    ),
+                    size: 524288000,
+                    os_internal: true,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk1s4",
+                    volume_name: Some(
+                        "Recovery",
+                    ),
+                    mount_point: None,
+                    size: 524288000,
+                    os_internal: true,
+                    mounted_snapshots: [],
+                },
+            ],
+        },
+        ListDevice {
+            device_identifier: "disk2",
+            content: "Apple_APFS_Container",
+            size: 5368664064,
+            os_internal: true,
+            partitions: [],
+            apfs_volumes: [
+                ListApfsVolume {
+                    device_identifier: "disk2s1",
+                    volume_name: Some(
+                        "Recovery",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/Update/SFR/mnt1",
+                    ),
+                    size: 5368664064,
+                    os_internal: true,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk2s2",
+                    volume_name: Some(
+                        "Update",
+                    ),
+                    mount_point: None,
+                    size: 5368664064,
+                    os_internal: true,
+                    mounted_snapshots: [],
+                },
+            ],
+        },
+        ListDevice {
+            device_identifier: "disk3",
+            content: "Apple_APFS_Container",
+            size: 494384795648,
+            os_internal: false,
+            partitions: [],
+            apfs_volumes: [
+                ListApfsVolume {
+                    device_identifier: "disk3s1",
+                    volume_name: Some(
+                        "Macintosh HD",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/Update/mnt1",
+                    ),
+                    size: 494384795648,
+                    os_internal: false,
+                    mounted_snapshots: [
+                        ListMountedSnapshot {
+                            snapshot_name: Some(
+                                "com.apple.os.update-5B92CE4BA1034457A0921532291F4A4AD939CBE48D3A1381163A9AD3687D5694",
+                            ),
+                            snapshot_bsd: Some(
+                                "disk3s1s1",
+                            ),
+                            sealed: Some(
+                                "Yes",
+                            ),
+                            snapshot_mount_point: Some(
+                                "/",
+                            ),
+                        },
+                    ],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk3s1s1",
+                    volume_name: Some(
+                        "Macintosh HD",
+                    ),
+                    mount_point: Some(
+                        "/",
+                    ),
+                    size: 494384795648,
+                    os_internal: false,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk3s2",
+                    volume_name: Some(
+                        "Preboot",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/Preboot",
+                    ),
+                    size: 494384795648,
+                    os_internal: false,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk3s3",
+                    volume_name: Some(
+                        "Recovery",
+                    ),
+                    mount_point: None,
+                    size: 494384795648,
+                    os_internal: false,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk3s4",
+                    volume_name: Some(
+                        "Update",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/Update",
+                    ),
+                    size: 494384795648,
+                    os_internal: true,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk3s5",
+                    volume_name: Some(
+                        "Data",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/Data",
+                    ),
+                    size: 494384795648,
+                    os_internal: false,
+                    mounted_snapshots: [],
+                },
+                ListApfsVolume {
+                    device_identifier: "disk3s6",
+                    volume_name: Some(
+                        "VM",
+                    ),
+                    mount_point: Some(
+                        "/System/Volumes/VM",
+                    ),
+                    size: 494384795648,
+                    os_internal: false,
+                    mounted_snapshots: [],
+                },
+            ],
+        },
+        ListDevice {
+            device_identifier: "disk4",
+            content: "GUID_partition_scheme",
+            size: 2012860928,
+            os_internal: false,
+            partitions: [
+                ListPartition {
+                    device_identifier: "disk4s1",
+                    content: "Apple_HFS",
+                    size: 1878605824,
+                    volume_name: Some(
+                        "Kiro CLI",
+                    ),
+                    mount_point: Some(
+                        "/Volumes/Kiro CLI",
+                    ),
+                },
+            ],
+            apfs_volumes: [],
+        },
+        ListDevice {
+            device_identifier: "disk5",
+            content: "GUID_partition_scheme",
+            size: 2828009472,
+            os_internal: false,
+            partitions: [
+                ListPartition {
+                    device_identifier: "disk5s1",
+                    content: "EFI",
+                    size: 209715200,
+                    volume_name: Some(
+                        "EFI",
+                    ),
+                    mount_point: None,
+                },
+                ListPartition {
+                    device_identifier: "disk5s2",
+                    content: "Apple_HFS",
+                    size: 2484035584,
+                    volume_name: Some(
+                        "Docker",
+                    ),
+                    mount_point: Some(
+                        "/private/var/folders/dd/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
+                    ),
+                },
+            ],
+            apfs_volumes: [],
+        },
+        ListDevice {
+            device_identifier: "disk6",
+            content: "GUID_partition_scheme",
+            size: 1394423808,
+            os_internal: false,
+            partitions: [
+                ListPartition {
+                    device_identifier: "disk6s1",
+                    content: "Apple_HFS",
+                    size: 1260167168,
+                    volume_name: Some(
+                        "Kiro CLI",
+                    ),
+                    mount_point: Some(
+                        "/Volumes/Kiro CLI 1",
+                    ),
+                },
+            ],
+            apfs_volumes: [],
+        },
+        ListDevice {
+            device_identifier: "disk7",
+            content: "GUID_partition_scheme",
+            size: 1256192512,
+            os_internal: false,
+            partitions: [
+                ListPartition {
+                    device_identifier: "disk7s1",
+                    content: "Apple_HFS",
+                    size: 1121935360,
+                    volume_name: Some(
+                        "Kiro CLI",
+                    ),
+                    mount_point: Some(
+                        "/Volumes/Kiro CLI 2",
+                    ),
+                },
+            ],
+            apfs_volumes: [],
+        },
+        ListDevice {
+            device_identifier: "disk8",
+            content: "GUID_partition_scheme",
+            size: 1257459712,
+            os_internal: false,
+            partitions: [
+                ListPartition {
+                    device_identifier: "disk8s1",
+                    content: "Apple_HFS",
+                    size: 1123201024,
+                    volume_name: Some(
+                        "Kiro CLI",
+                    ),
+                    mount_point: Some(
+                        "/Volumes/Kiro CLI 3",
+                    ),
+                },
+            ],
+            apfs_volumes: [],
+        },
+    ],
+}

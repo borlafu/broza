@@ -1,0 +1,24 @@
+---
+source: crates/broza/tests/diskutil_plist.rs
+expression: parsed
+---
+DeviceInfo {
+    media_name: Some(
+        "Disk Image",
+    ),
+    device_identifier: "disk4",
+    internal: false,
+    solid_state: false,
+    total_size: 2012860928,
+    free_space: 0,
+    writable_volume: false,
+    content: Some(
+        "GUID_partition_scheme",
+    ),
+    volume_name: None,
+    volume_uuid: None,
+    mount_point: None,
+    sealed: None,
+    filesystem_type: None,
+    apfs_container_reference: None,
+}

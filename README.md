@@ -61,6 +61,31 @@ Apply it. Items move to quarantine, and Broza asks for confirmation first:
 broza clean --risk green --apply
 ```
 
+Changed your mind? Everything stays restorable until the session expires (30 days by default):
+
+```bash
+broza quarantine list
+broza restore --session cln_20260921103608_a1b2
+```
+
+Space is actually freed when a session expires or is purged. `broza clean --apply` expires
+past-due sessions on its way; `broza quarantine expire` does it on demand.
+
+Example `clean` dry run:
+
+```
+Dry run: nothing was changed.
+
+Would move to quarantine 5122 item(s), 21.6 GB in all:
+   planned        3.0 GB  ~/Library/Caches/Google
+   planned        2.3 GB  ~/Library/Caches/pnpm
+   planned        1.9 GB  ~/Library/Caches/Homebrew
+   … and 5119 more
+
+Next step:
+  broza clean --risk green --apply    (moves to quarantine; `broza restore` brings items back until they expire)
+```
+
 Example `scan` output:
 
 ```

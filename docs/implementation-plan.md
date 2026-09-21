@@ -257,6 +257,12 @@ Exit criteria: end-to-end `assert_cmd` in a tempdir: dry-run → `--apply -y` �
 restores byte-identical content; cross-volume skip test; donation table test; dry-run reports
 `quarantined_bytes = reclaimed_bytes = 0` and all items `planned`.
 
+Status: the round trip runs in process against the fake machine (`commands/quarantine_tests.rs`),
+not through `assert_cmd`: the recorded fixture's filesystem is in memory and does not survive from
+one process to the next, and an `assert_cmd` run against the real disk would break the rule that
+no test touches `$HOME`. The cross-volume skip is covered in `crates/broza/tests/quarantine_roundtrip.rs`
+and its exit-5 reporting in `commands/clean_tests.rs`; the donation table in `donate.rs`.
+
 ### M4 — Amber detectors
 
 Scope: `trash` (purge action), `snapshots` (`diskutil apfs listSnapshots -plist`,

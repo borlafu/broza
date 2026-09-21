@@ -167,3 +167,126 @@ pub fn narrow_to_snapshot_delete(
         None => Ok(issue::<SnapshotDelete>(plan.clone())),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{approve, approve_quarantine_write, narrow_to_snapshot_delete};
+    use crate::model::{Action, CleanItem, CleanPlan, ItemStatus, SessionId, Volume, VolumeRole};
+    use crate::safety::guard::{Write, WriteRequest, issue};
+    use crate::safety::rejection::GuardRejection;
+    use crate::safety::test_fs::MemFs;
+    use crate::scan::{MountEntry, MountTable};
+    use std::path::{Path, PathBuf};
+
+    const STORE: &str = "/Users/dana/.local/share/broza/quarantine";
+
+    fn session() -> SessionId {
+        "cln_20260921103608_a1b2".parse().unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    fn item(path: &str, action: Action) -> CleanItem {
+        CleanItem {
+            path: PathBuf::from(path),
+            finding_id: "user-cache.app".parse().unwrap_or_else(|error| panic!("{error}")),
+            size_bytes: 1,
+            status: ItemStatus::Planned,
+            action,
+            error: None,
+        }
+    }
+
+    fn plan(items: Vec<CleanItem>) -> CleanPlan {
+        CleanPlan::dry_run(session(), items).unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    fn table(role: VolumeRole) -> MountTable {
+        MountTable::new(vec![MountEntry {
+            mount_point: PathBuf::from("/"),
+            device: 1,
+            volume: Volume {
+                id: "disk3s5".parse().unwrap_or_else(|error| panic!("{error}")),
+                name: "test".to_owned(),
+                role,
+                mount_point: Some(PathBuf::from("/")),
+                used_bytes: 0,
+                writable_by_broza: role.writable_by_broza(),
+                purpose: String::new(),
+            },
+            firmlinks: Vec::new(),
+        }])
+    }
+
+    fn store_fs() -> MemFs {
+        MemFs::new().dir(STORE).file(format!("{STORE}/cln_20260921103608_a1b2/items/1/a"), 5)
+    }
+
+    #[test]
+    fn an_already_applied_plan_without_apply_is_a_bug_in_the_caller() {
+        let applied = plan(Vec::new())
+            .into_applied(Some(PathBuf::from(STORE)))
+            .unwrap_or_else(|error| panic!("{error}"));
+        let rejection =
+            approve(applied, &WriteRequest::new("/Users/dana"), &table(VolumeRole::Data), &MemFs::new())
+                .err()
+                .unwrap_or_else(|| panic!("an applied plan without --apply must be refused"));
+        assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
+    }
+
+    #[test]
+    fn an_item_whose_finding_id_has_no_known_category_is_refused() {
+        let unknown = CleanItem {
+            finding_id: "made-up.detector".parse().unwrap_or_else(|error| panic!("{error}")),
+            ..item("/Users/dana/Library/Caches/a", Action::Quarantine)
+        };
+        let fs = MemFs::new().file("/Users/dana/Library/Caches/a", 1);
+        let request = WriteRequest { apply: true, tty: true, ..WriteRequest::new("/Users/dana") };
+        let rejection = approve(plan(vec![unknown]), &request, &table(VolumeRole::Data), &fs)
+            .err()
+            .unwrap_or_else(|| panic!("an unknown category must be refused"));
+        assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
+    }
+
+    #[test]
+    fn a_quarantine_store_on_a_protected_volume_is_refused() {
+        let rejection =
+            approve_quarantine_write(&[], Path::new(STORE), &table(VolumeRole::System), &store_fs())
+                .err()
+                .unwrap_or_else(|| panic!("a protected volume must be refused"));
+        assert_eq!(
+            rejection,
+            GuardRejection::ProtectedVolume { path: STORE.into(), role: VolumeRole::System }
+        );
+    }
+
+    #[test]
+    fn a_store_path_that_is_not_already_canonical_is_refused() {
+        let sneaky = PathBuf::from(format!("{STORE}/cln_20260921103608_a1b2/../../../Documents"));
+        let refused =
+            approve_quarantine_write(&[sneaky], Path::new(STORE), &table(VolumeRole::Data), &store_fs());
+        assert!(refused.is_err(), "a path climbing out of the store must be refused");
+    }
+
+    #[test]
+    fn an_unmounted_store_is_refused() {
+        let rejection = approve_quarantine_write(&[], Path::new(STORE), &MountTable::default(), &store_fs())
+            .err()
+            .unwrap_or_else(|| panic!("an unknown volume must be refused"));
+        assert_eq!(rejection, GuardRejection::UnknownVolume(STORE.into()));
+    }
+
+    #[test]
+    fn only_a_plan_made_of_snapshot_deletions_can_be_narrowed() {
+        let snapshots = issue::<Write>(plan(vec![item("/Users/dana/snap", Action::TmutilDelete)]));
+        let narrowed = narrow_to_snapshot_delete(&snapshots).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(narrowed.plan().items().len(), 1);
+
+        let mixed = issue::<Write>(plan(vec![
+            item("/Users/dana/snap", Action::TmutilDelete),
+            item("/Users/dana/Library/Caches/a", Action::Quarantine),
+        ]));
+        let rejection = narrow_to_snapshot_delete(&mixed)
+            .err()
+            .unwrap_or_else(|| panic!("a mixed plan is not a snapshot deletion"));
+        assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
+    }
+}

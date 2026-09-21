@@ -238,18 +238,13 @@ impl PendingApproval {
                 prompter.confirm(&self.request)
             }
             ConfirmationMode::TypedLiteral(word) => prompter.confirm_literal(&self.request, word),
-            stopping => return Err(stop(stopping)),
+            ConfirmationMode::Rejected(reason) => return Err(PolicyError::Rejected(reason).into()),
+            ConfirmationMode::RequiredButNoTty => {
+                return Err(PolicyError::ConfirmationRequired.into());
+            }
         };
         self.seal(answer)
     }
-}
-
-/// Maps a confirmation mode that stops the operation to its rejection.
-fn stop(mode: ConfirmationMode) -> GuardRejection {
-    PolicyError::try_from(mode).map_or_else(
-        |mode| GuardRejection::Inconsistent(format!("{mode:?} does not stop the plan")),
-        Into::into,
-    )
 }
 
 #[cfg(test)]
@@ -257,8 +252,9 @@ mod tests {
     use super::{Approved, PendingApproval, QuarantineWrite, Write, WriteRequest, issue, seal};
     use crate::model::{CleanPlan, Risk, SessionId};
     use crate::ports::{Answer, ConfirmationRequest};
-    use crate::safety::policy::ConfirmationMode;
+    use crate::safety::policy::{ConfirmationMode, RejectReason};
     use crate::safety::rejection::{GuardRejection, PolicyError};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn session() -> SessionId {
         "cln_20260921103608_a1b2".parse().unwrap_or_else(|error| panic!("{error}"))
@@ -297,19 +293,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_stopping_mode_can_never_be_confirmed() {
-        struct NeverAsked;
-        impl crate::ports::Prompter for NeverAsked {
-            fn confirm(&self, _request: &ConfirmationRequest) -> Answer {
-                panic!("the guard must not prompt for a stopping mode")
-            }
-            fn confirm_literal(&self, _request: &ConfirmationRequest, _expected: &str) -> Answer {
-                panic!("the guard must not prompt for a stopping mode")
-            }
+    /// A prompter that says yes and counts how often it was consulted.
+    struct CountingPrompter(AtomicUsize);
+
+    impl crate::ports::Prompter for CountingPrompter {
+        fn confirm(&self, _request: &ConfirmationRequest) -> Answer {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Answer::Yes
         }
-        let rejected = pending(ConfirmationMode::RequiredButNoTty).confirm(&NeverAsked);
-        assert_eq!(rejected.err(), Some(GuardRejection::Policy(PolicyError::ConfirmationRequired)));
+
+        fn confirm_literal(&self, _request: &ConfirmationRequest, _expected: &str) -> Answer {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Answer::Yes
+        }
+    }
+
+    #[test]
+    fn a_stopping_mode_is_refused_without_asking_anybody() {
+        let stopping = [
+            (ConfirmationMode::RequiredButNoTty, PolicyError::ConfirmationRequired),
+            (
+                ConfirmationMode::Rejected(RejectReason::RedNotActionable),
+                PolicyError::Rejected(RejectReason::RedNotActionable),
+            ),
+        ];
+        for (mode, expected) in stopping {
+            let prompter = CountingPrompter(AtomicUsize::new(0));
+            let rejected = pending(mode).confirm(&prompter);
+            assert_eq!(rejected.err(), Some(GuardRejection::Policy(expected)), "{mode:?}");
+            assert_eq!(prompter.0.load(Ordering::Relaxed), 0, "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_pending_approval_shows_what_it_is_waiting_for() {
+        let waiting = pending(ConfirmationMode::DetailedExplicit);
+        assert_eq!(waiting.mode(), ConfirmationMode::DetailedExplicit);
+        assert!(waiting.plan().is_dry_run());
+        let prompter = CountingPrompter(AtomicUsize::new(0));
+        let approved = waiting.confirm(&prompter).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(approved.plan().items().len(), 0);
+        assert_eq!(prompter.0.load(Ordering::Relaxed), 1);
     }
 
     #[test]

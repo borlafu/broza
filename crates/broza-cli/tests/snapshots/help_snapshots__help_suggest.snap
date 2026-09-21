@@ -1,0 +1,61 @@
+---
+source: crates/broza-cli/tests/help_snapshots.rs
+expression: help_for(args)
+---
+Detect cleanable categories and estimate reclaimable space
+
+Usage: broza suggest [OPTIONS]
+
+Options:
+      --category <ID>
+          Restrict to specific categories. Repeatable or comma-separated
+
+      --risk <LEVEL>
+          Filter by risk level
+
+          Possible values:
+          - green: Only green findings
+          - amber: Only amber findings
+          - red:   Only red findings
+          - all:   No filtering
+          
+          [default: all]
+
+      --min-size <SIZE>
+          Omit findings smaller than this size [default: the `min-size` key, 50MB]
+
+      --unused-after <DURATION>
+          "Unused app" threshold, for example 6m, 1y, 2y [default: the `unused-after` key, 1y]
+
+      --explain
+          Include the reasoning behind each detection
+
+      --json
+          JSON output on stdout. Disables color, progress and interactivity
+
+      --csv
+          Flat CSV output on stdout. Only on tabular commands
+
+  -o, --output <FILE>
+          Write output to a file instead of stdout
+
+      --no-color
+          Disable ANSI color. Automatic without a TTY or with `NO_COLOR` set
+
+  -q, --quiet
+          Errors only. Silences progress and non-critical warnings
+
+  -v, --verbose...
+          More diagnostic detail on stderr. Repeatable
+
+      --config <FILE>
+          Alternative configuration file [default: ~/.config/broza/config.toml]
+
+      --profile <NAME>
+          Configuration profile to apply
+
+      --no-cache
+          Ignore the scan cache and force a full analysis
+
+  -h, --help
+          Print help (see a summary with '-h')

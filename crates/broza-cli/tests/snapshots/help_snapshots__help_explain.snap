@@ -1,0 +1,23 @@
+---
+source: crates/broza-cli/tests/help_snapshots.rs
+expression: help_for(args)
+---
+Explain what a volume, path or cleanup category is
+
+Usage: broza explain [OPTIONS] <PATH|VOLUME|CATEGORY>
+
+Arguments:
+  <PATH|VOLUME|CATEGORY>  Category id, volume (device id, name or mount point) or filesystem path
+
+Options:
+      --short           One-line summary only
+      --json            JSON output on stdout. Disables color, progress and interactivity
+      --csv             Flat CSV output on stdout. Only on tabular commands
+  -o, --output <FILE>   Write output to a file instead of stdout
+      --no-color        Disable ANSI color. Automatic without a TTY or with `NO_COLOR` set
+  -q, --quiet           Errors only. Silences progress and non-critical warnings
+  -v, --verbose...      More diagnostic detail on stderr. Repeatable
+      --config <FILE>   Alternative configuration file [default: ~/.config/broza/config.toml]
+      --profile <NAME>  Configuration profile to apply
+      --no-cache        Ignore the scan cache and force a full analysis
+  -h, --help            Print help

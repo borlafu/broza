@@ -1,0 +1,25 @@
+---
+source: crates/broza-cli/tests/help_snapshots.rs
+expression: help_for(args)
+---
+Permanently delete sessions regardless of TTL. Requires typing PURGE
+
+Usage: broza quarantine purge [OPTIONS] [SESSION_ID]...
+
+Arguments:
+  [SESSION_ID]...  Sessions to delete
+
+Options:
+      --all             Delete every session
+  -y, --yes             Accepted only to be rejected: purging never takes an implicit "yes"
+                        (`docs/cli-spec.md` §2 and AGENTS.md §2 invariant 2). Exits 2
+      --json            JSON output on stdout. Disables color, progress and interactivity
+      --csv             Flat CSV output on stdout. Only on tabular commands
+  -o, --output <FILE>   Write output to a file instead of stdout
+      --no-color        Disable ANSI color. Automatic without a TTY or with `NO_COLOR` set
+  -q, --quiet           Errors only. Silences progress and non-critical warnings
+  -v, --verbose...      More diagnostic detail on stderr. Repeatable
+      --config <FILE>   Alternative configuration file [default: ~/.config/broza/config.toml]
+      --profile <NAME>  Configuration profile to apply
+      --no-cache        Ignore the scan cache and force a full analysis
+  -h, --help            Print help

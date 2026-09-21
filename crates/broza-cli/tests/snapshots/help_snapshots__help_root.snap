@@ -1,0 +1,30 @@
+---
+source: crates/broza-cli/tests/help_snapshots.rs
+expression: help_for(args)
+---
+Safe, explainable disk analysis and cleanup for macOS
+
+Usage: broza [OPTIONS] [COMMAND]
+
+Commands:
+  scan        Analyse storage and show disks, containers, volumes and real usage
+  explain     Explain what a volume, path or cleanup category is
+  suggest     Detect cleanable categories and estimate reclaimable space
+  clean       Execute the cleanup. Dry run by default
+  restore     Recover items from quarantine
+  config      Read and write configuration keys
+  quarantine  Manage the quarantine store
+  about       Version, license, schema version and support link
+
+Options:
+      --json            JSON output on stdout. Disables color, progress and interactivity
+      --csv             Flat CSV output on stdout. Only on tabular commands
+  -o, --output <FILE>   Write output to a file instead of stdout
+      --no-color        Disable ANSI color. Automatic without a TTY or with `NO_COLOR` set
+  -q, --quiet           Errors only. Silences progress and non-critical warnings
+  -v, --verbose...      More diagnostic detail on stderr. Repeatable
+      --config <FILE>   Alternative configuration file [default: ~/.config/broza/config.toml]
+      --profile <NAME>  Configuration profile to apply
+      --no-cache        Ignore the scan cache and force a full analysis
+  -h, --help            Print help
+  -V, --version         Print version

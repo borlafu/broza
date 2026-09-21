@@ -1,0 +1,67 @@
+---
+source: crates/broza-cli/tests/help_snapshots.rs
+expression: help_for(args)
+---
+Analyse storage and show disks, containers, volumes and real usage
+
+Usage: broza scan [OPTIONS] [PATH]...
+
+Arguments:
+  [PATH]...
+          Paths to analyse. Defaults to every mounted volume
+
+Options:
+      --depth <N>
+          Depth of the folder tree shown
+          
+          [default: 2]
+
+      --top <N>
+          Number of largest items to list
+          
+          [default: 20]
+
+      --min-size <SIZE>
+          Ignore items below this size, for example 500MB, 2GB, 1GiB [default: 100MB].
+          
+          Unlike the other size flags this one does not read `min-size` from the configuration;
+          `scan` and `suggest` filter different things.
+
+      --volume <ID>
+          Restrict the scan to one volume (device id, name or mount point)
+
+      --no-external
+          Exclude mounted external disks
+
+      --tree
+          Force the hierarchical tree view
+
+      --json
+          JSON output on stdout. Disables color, progress and interactivity
+
+      --csv
+          Flat CSV output on stdout. Only on tabular commands
+
+  -o, --output <FILE>
+          Write output to a file instead of stdout
+
+      --no-color
+          Disable ANSI color. Automatic without a TTY or with `NO_COLOR` set
+
+  -q, --quiet
+          Errors only. Silences progress and non-critical warnings
+
+  -v, --verbose...
+          More diagnostic detail on stderr. Repeatable
+
+      --config <FILE>
+          Alternative configuration file [default: ~/.config/broza/config.toml]
+
+      --profile <NAME>
+          Configuration profile to apply
+
+      --no-cache
+          Ignore the scan cache and force a full analysis
+
+  -h, --help
+          Print help (see a summary with '-h')

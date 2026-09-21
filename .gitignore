@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 *.pending-snap
+*.profraw
 .DS_Store
 /dist
 /.claude/

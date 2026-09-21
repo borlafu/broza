@@ -117,6 +117,17 @@ impl DurationSpec {
     }
 }
 
+impl Default for DurationSpec {
+    /// The neutral duration, `0h`.
+    ///
+    /// Exists so callers that know their amount cannot overflow — configuration
+    /// defaults, for instance — can write `DurationSpec::new(..).unwrap_or_default()`
+    /// instead of carrying an unreachable error path.
+    fn default() -> Self {
+        Self { amount: 0, unit: DurationUnit::Hours }
+    }
+}
+
 impl fmt::Display for DurationSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.amount, self.unit.suffix())
@@ -166,6 +177,14 @@ mod tests {
     use super::{DurationSpec, DurationUnit};
     use std::str::FromStr;
     use std::time::Duration;
+
+    #[test]
+    fn the_default_duration_is_zero_hours() {
+        let default = DurationSpec::default();
+        assert_eq!(default.total_seconds(), 0);
+        assert_eq!(default.to_string(), "0h");
+        assert_eq!(DurationSpec::from_str("0h").unwrap_or_default(), default);
+    }
 
     #[test]
     fn duration_spec_parses_every_unit() {

@@ -1,12 +1,14 @@
 //! Tests for [`super::mover`]: what a move leaves in the store and in the plan.
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use super::mover::{MoveOutcome, MoveRequest, quarantine_items};
 use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry, SessionState};
 use crate::ports::FileOps;
 use crate::quarantine::codes::{changed_since_check, max_size_exceeded};
-use crate::quarantine::fixtures::{NOW, ROOT, approved_write, at, session_dir, store_fs};
+use crate::quarantine::fixtures::{
+    NOW, ROOT, approved_without_store, approved_write, at, session_dir, store_fs,
+};
 use crate::quarantine::manifest;
 use crate::testing::{FakeFileOps, FixedClock};
 
@@ -22,7 +24,7 @@ const EXTERNAL: &str = "/Volumes/External/.Trashes/501/old.dmg";
 const TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 fn request(max_size: Option<u64>) -> MoveRequest {
-    MoveRequest { root: PathBuf::from(ROOT), ttl: TTL, max_size }
+    MoveRequest { ttl: TTL, max_size }
 }
 
 fn moved(fs: &FakeFileOps, paths: &[(&str, u64)], max_size: Option<u64>) -> MoveOutcome {
@@ -126,16 +128,31 @@ fn an_item_that_vanished_since_the_check_fails_with_not_found() {
 }
 
 #[test]
-fn a_directory_is_measured_again_before_it_is_moved() {
+fn a_directory_is_measured_again_when_a_cap_makes_the_difference_matter() {
+    let fs = store_fs()
+        .with_sized_file(format!("{DERIVED}/a"), 1_000)
+        .with_sized_file(format!("{DERIVED}/deep/b"), 500);
+
+    let outcome = moved(&fs, &[(DERIVED, 100)], Some(1_000_000));
+
+    assert_eq!(entry_of(&outcome, DERIVED).size_bytes, 2 * 4096, "the scan's figure was stale");
+    assert_eq!(outcome.plan.quarantined_bytes(), 2 * 4096);
+    assert_eq!(outcome.plan.planned_bytes(), 100, "the plan still reports what was planned");
+}
+
+#[test]
+fn a_directory_is_not_walked_when_no_cap_depends_on_its_size() {
     let fs = store_fs()
         .with_sized_file(format!("{DERIVED}/a"), 1_000)
         .with_sized_file(format!("{DERIVED}/deep/b"), 500);
 
     let outcome = moved(&fs, &[(DERIVED, 100)], None);
 
-    assert_eq!(entry_of(&outcome, DERIVED).size_bytes, 1_500, "the scan's figure was stale");
-    assert_eq!(outcome.plan.quarantined_bytes(), 1_500);
-    assert_eq!(outcome.plan.planned_bytes(), 100, "the plan still reports what was planned");
+    assert_eq!(
+        entry_of(&outcome, DERIVED).size_bytes,
+        100,
+        "without a cap the scan's figure is good enough and the walk is skipped"
+    );
 }
 
 #[test]
@@ -177,13 +194,22 @@ fn a_source_broza_may_not_read_fails_the_item_and_not_the_run() {
 }
 
 #[test]
-fn a_store_root_that_cannot_be_read_stops_the_whole_move() {
+fn a_run_with_no_validated_store_moves_nothing() {
     let fs = store_fs().with_sized_file(CACHE, 10);
-    let token = approved_write(&fs, &[(CACHE, 10)]);
-    let missing = MoveRequest { root: PathBuf::from("/Users/dana/ghost"), ttl: TTL, max_size: None };
+    let token = approved_without_store(&fs, &[(CACHE, 10)]);
 
-    let error = quarantine_items(&token, &missing, &fs, &FixedClock::at(at(NOW)));
+    let error = quarantine_items(&token, &request(None), &fs, &FixedClock::at(at(NOW)));
 
-    assert!(error.is_err(), "a store Broza cannot stat is not a per-item failure");
+    assert!(error.is_err(), "there is nowhere the guard said Broza may write");
     assert!(fs.exists(Path::new(CACHE)));
+}
+
+#[test]
+fn the_store_comes_from_the_token_and_not_from_the_caller() {
+    let fs = store_fs().with_sized_file(CACHE, 10);
+
+    let outcome = moved(&fs, &[(CACHE, 10)], None);
+
+    let inside = outcome.plan.quarantine_path().cloned().unwrap_or_default();
+    assert!(inside.starts_with(ROOT), "{}", inside.display());
 }

@@ -1,23 +1,26 @@
-//! The two item error codes the store needs and `docs/cli-spec.md` §4.1 does not
-//! list yet.
+//! The status and error tokens the store writes that [`ItemStatus`] and
+//! [`ItemErrorCode`] do not have variants for.
 //!
-//! [`ItemErrorCode`] is an *open* enum precisely so a token this version does not
-//! know survives a read-modify-write cycle (`docs/cli-spec.md` §4.1). Both codes
-//! below ride that mechanism: consumers must ignore an unknown value, so emitting
-//! them is forward-compatible, and adding them to the table in §4.1 is a purely
-//! additive spec change that belongs in the milestone that touches the spec.
+//! Both are *open* enums precisely so a token one version does not know survives
+//! a read-modify-write cycle (`docs/cli-spec.md` §4.1), and all three tokens
+//! below ride that mechanism. The model keeps its variants in step with the
+//! specification; this module is where the store names the values it needs
+//! without reaching into `model/`.
 //!
-//! Neither reuses an existing token, because both describe something a reader has
-//! to act on differently: `not_found` means "it was gone", while
-//! [`CHANGED_SINCE_CHECK`] means "something else is there now", and
-//! [`MAX_SIZE_EXCEEDED`] is a policy stop, not an I/O failure.
+//! None of them reuses an existing token, because each means something a reader
+//! has to act on differently: `not_found` means "it was gone", while
+//! [`CHANGED_SINCE_CHECK`] means "something else is there now";
+//! [`MAX_SIZE_EXCEEDED`] is a policy stop, not an I/O failure; and [`MOVING`]
+//! marks the window in which an item may be in either place.
 
-use crate::model::ItemErrorCode;
+use crate::model::{ItemErrorCode, ItemStatus};
 
 /// Token of [`changed_since_check`].
 pub const CHANGED_SINCE_CHECK: &str = "changed_since_check";
 /// Token of [`max_size_exceeded`].
 pub const MAX_SIZE_EXCEEDED: &str = "max_size_exceeded";
+/// Token of [`moving`].
+pub const MOVING: &str = "moving";
 
 /// The `(device, inode)` of the path is not the pair the guard approved.
 ///
@@ -36,18 +39,38 @@ pub fn max_size_exceeded() -> ItemErrorCode {
     ItemErrorCode::from_token(MAX_SIZE_EXCEEDED)
 }
 
+/// The item is between its original path and the store.
+///
+/// Written to the manifest *before* the rename and replaced by `quarantined`
+/// after it, so a run that dies in between leaves evidence that something may
+/// have moved. Only ever appears inside a `manifest.json`; reading a session
+/// settles it against the filesystem
+/// ([`mod@crate::quarantine::reconcile`]), so no command ever reports it.
+pub fn moving() -> ItemStatus {
+    ItemStatus::from_token(MOVING)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CHANGED_SINCE_CHECK, MAX_SIZE_EXCEEDED, changed_since_check, max_size_exceeded};
+    use super::{
+        CHANGED_SINCE_CHECK, MAX_SIZE_EXCEEDED, MOVING, changed_since_check, max_size_exceeded, moving,
+    };
 
     #[test]
-    fn both_codes_serialise_as_their_token() {
+    fn both_error_codes_serialise_as_their_token() {
         for (code, token) in
             [(changed_since_check(), CHANGED_SINCE_CHECK), (max_size_exceeded(), MAX_SIZE_EXCEEDED)]
         {
             assert_eq!(code.to_string(), token);
             assert_eq!(serde_json::to_string(&code).unwrap_or_default(), format!("\"{token}\""));
-            assert!(!code.is_known(), "the specification does not list this token yet");
         }
+    }
+
+    #[test]
+    fn the_moving_status_serialises_as_its_token_and_is_its_own_value() {
+        assert_eq!(moving().to_string(), MOVING);
+        assert_eq!(serde_json::to_string(&moving()).unwrap_or_default(), "\"moving\"");
+        assert_ne!(moving(), crate::model::ItemStatus::Quarantined);
+        assert!(!moving().is_unsuccessful(), "an item in flight has not failed");
     }
 }

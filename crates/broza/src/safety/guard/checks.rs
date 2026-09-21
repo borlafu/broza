@@ -44,7 +44,7 @@ pub fn approve(
     fs: &dyn FileOps,
 ) -> Result<Verdict, GuardRejection> {
     reject_duplicate_findings(findings)?;
-    check_quarantine_root(req, mounts, fs)?;
+    let quarantine_root = check_quarantine_root(req, mounts, fs)?;
     let plan = &outcome.plan;
     if !req.apply {
         return dry_run(plan, req);
@@ -60,7 +60,8 @@ pub fn approve(
     if plan.items().is_empty() {
         return nothing(plan, req);
     }
-    let payload = rebuild(plan, &check_items(plan, findings, req, mounts, fs)?)?;
+    let payload =
+        rebuild(plan, &check_items(plan, findings, req, mounts, fs)?)?.with_quarantine_root(quarantine_root);
     check_no_inform_only(&payload.plan)?;
     if payload.items.is_empty() {
         return nothing(&payload.plan, req);

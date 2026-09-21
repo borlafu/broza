@@ -72,8 +72,9 @@ pub mod roots;
 pub use exclusions::Exclusions;
 pub use exit_code::ExitCode;
 pub use guard::{
-    Approved, ApprovedItem, ApprovedPlan, PendingApproval, QuarantineWrite, SnapshotDelete, Verdict, Write,
-    WriteKind, WriteRequest, approve, approve_quarantine_write, narrow_to_snapshot_delete,
+    Approved, ApprovedItem, ApprovedPlan, PendingApproval, QuarantineWrite, RestoreRequest, RestoreWrite,
+    SnapshotDelete, Verdict, Write, WriteKind, WriteRequest, approve, approve_quarantine_write,
+    approve_restore_targets, narrow_to_snapshot_delete,
 };
 pub use path::{CanonicalPath, canonicalize_no_follow};
 pub use policy::{ConfirmationMode, PURGE_LITERAL, PolicyInput, RejectReason, confirmation_policy};

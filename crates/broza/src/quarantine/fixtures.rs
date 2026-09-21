@@ -16,7 +16,8 @@ use crate::ports::Answer;
 use crate::quarantine::layout;
 use crate::quarantine::mover::{MoveRequest, quarantine_items};
 use crate::safety::guard::{
-    Approved, QuarantineWrite, Verdict, Write, WriteRequest, approve, approve_quarantine_write,
+    Approved, QuarantineWrite, RestoreRequest, RestoreWrite, Verdict, Write, WriteRequest, approve,
+    approve_quarantine_write, approve_restore_targets,
 };
 use crate::testing::{FakeFileOps, FakePrompter, FixedClock, mac_mount_table};
 
@@ -119,15 +120,24 @@ pub fn caches(paths: &[(&str, u64)]) -> Vec<Finding> {
 /// tests of the store then exercise the same evidence the executor will get,
 /// `(device, inode)` included.
 pub fn approved_write(fs: &FakeFileOps, paths: &[(&str, u64)]) -> Approved<Write> {
+    approved_write_for(fs, paths, Some(PathBuf::from(ROOT)))
+}
+
+/// A token whose run never had a quarantine store validated for it.
+pub fn approved_without_store(fs: &FakeFileOps, paths: &[(&str, u64)]) -> Approved<Write> {
+    approved_write_for(fs, paths, None)
+}
+
+/// The shared body of the two: plan, check, confirm.
+fn approved_write_for(
+    fs: &FakeFileOps,
+    paths: &[(&str, u64)],
+    quarantine_root: Option<PathBuf>,
+) -> Approved<Write> {
     let findings = caches(paths);
     let outcome = plan_dry_run(&findings, &Selection::everything(), session_id(), None)
         .unwrap_or_else(|error| panic!("{error}"));
-    let request = WriteRequest {
-        apply: true,
-        tty: true,
-        quarantine_root: Some(PathBuf::from(ROOT)),
-        ..WriteRequest::new(HOME)
-    };
+    let request = WriteRequest { apply: true, tty: true, quarantine_root, ..WriteRequest::new(HOME) };
     match approve(&outcome, &findings, &request, &mac_mount_table(), fs) {
         Ok(Verdict::NeedsConfirmation(pending)) => {
             pending.confirm(&FakePrompter::scripted(&[Answer::Yes])).unwrap_or_else(|error| panic!("{error}"))
@@ -142,7 +152,7 @@ pub const TTL: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60
 /// Quarantine `paths` for real, through the guard and the mover.
 pub fn quarantined(fs: &FakeFileOps, paths: &[(&str, u64)]) -> QuarantineSession {
     let token = approved_write(fs, paths);
-    let request = MoveRequest { root: PathBuf::from(ROOT), ttl: TTL, max_size: None };
+    let request = MoveRequest { ttl: TTL, max_size: None };
     quarantine_items(&token, &request, fs, &FixedClock::at(at(NOW)))
         .unwrap_or_else(|error| panic!("{error}"))
         .session
@@ -164,5 +174,18 @@ pub fn writable_paths(session: &QuarantineSession) -> Vec<PathBuf> {
 /// A token for writing to `paths` inside the store.
 pub fn quarantine_write(fs: &FakeFileOps, paths: &[PathBuf]) -> Approved<QuarantineWrite> {
     approve_quarantine_write(paths, Path::new(ROOT), &mac_mount_table(), fs)
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// A token for the places a restore of `session` will write to.
+pub fn restore_targets(
+    fs: &FakeFileOps,
+    session: &QuarantineSession,
+    to: Option<&Path>,
+) -> Approved<RestoreWrite> {
+    let wanted = crate::quarantine::restore::session_destinations(fs, Path::new(ROOT), &session.id, to)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let request = RestoreRequest { to: to.map(Path::to_path_buf), ..RestoreRequest::new(HOME) };
+    approve_restore_targets(&wanted, &request, &mac_mount_table(), fs)
         .unwrap_or_else(|error| panic!("{error}"))
 }

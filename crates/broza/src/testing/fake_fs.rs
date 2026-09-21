@@ -20,8 +20,8 @@ use crate::BrozaError;
 use crate::adapters::io_error::not_found;
 use crate::ports::{EntryMetadata, FileOps};
 use crate::testing::fake_posix::{
-    EISDIR, ENOTDIR, EXDEV, check_allowed, check_parent, check_replaceable, errno_error, expect_buildable,
-    from_tree_error, resolve, resolve_parent,
+    EEXIST, EISDIR, ENOTDIR, EXDEV, check_allowed, check_parent, check_replaceable, errno_error,
+    expect_buildable, from_tree_error, resolve, resolve_parent,
 };
 use crate::testing::fake_tree::{NodeKind, Tree};
 use crate::testing::sync::lock;
@@ -172,6 +172,30 @@ impl FileOps for FakeFileOps {
                 Err(errno_error(format!("read {}", path.display()), EISDIR))
             }
         }
+    }
+
+    fn create_dir_exclusive(&self, path: &Path) -> Result<(), BrozaError> {
+        let mut tree = lock(&self.tree);
+        check_allowed(&tree, path)?;
+        let resolved = resolve_parent(&tree, path)?;
+        check_parent(&tree, &resolved)?;
+        if tree.exists(&resolved) {
+            return Err(errno_error(format!("create directory {}", path.display()), EEXIST));
+        }
+        tree.create_dir_all(&resolved).map_err(|error| from_tree_error(path, &error))
+    }
+
+    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<(), BrozaError> {
+        {
+            let tree = lock(&self.tree);
+            check_allowed(&tree, to)?;
+            let destination = resolve_parent(&tree, to)?;
+            if tree.exists(&destination) {
+                let context = format!("rename {} to {} without replacing it", from.display(), to.display());
+                return Err(errno_error(context, EEXIST));
+            }
+        }
+        self.rename(from, to)
     }
 }
 

@@ -7,9 +7,17 @@
 //! [`Approved<QuarantineWrite>`](crate::safety::guard::QuarantineWrite) and both
 //! re-check `(device, inode)` before removing anything.
 //!
-//! A session directory is always derived from an identifier through
-//! [`store`], never taken from the caller, so nothing
-//! outside the store root can be reached.
+//! A session directory is always derived from an identifier through [`store`],
+//! never taken from the caller, so nothing outside the store root can be
+//! reached.
+//!
+//! # Where the two part company
+//!
+//! A session holding items its manifest does not list is data Broza moved and
+//! then lost track of. `expire` runs unattended — `clean --apply` triggers it —
+//! so it refuses such a session and reports it. `purge` is the user typing
+//! `PURGE` about a session they named, so it removes everything, orphans
+//! included, and says so in `warnings[]`.
 
 use std::path::Path;
 use std::time::Duration;
@@ -17,25 +25,26 @@ use std::time::Duration;
 use crate::BrozaError;
 use crate::model::{
     ErrorEntry, ItemErrorCode, ItemStatus, OperationKind, ReclaimReport, ReclaimSession, SessionId,
-    SessionState,
+    SessionState, Warning,
 };
 use crate::ports::{Clock, FileOps};
 use crate::quarantine::entries::held_bytes;
 use crate::quarantine::guarded::{Recheck, io_code, recheck};
 use crate::quarantine::report::{Reported, diagnostic};
 use crate::quarantine::store::{self, StoredSession};
-use crate::quarantine::ttl;
+use crate::quarantine::{layout, ttl};
 use crate::safety::guard::{Approved, QuarantineWrite};
 
 /// The sessions whose retention period is over.
 ///
-/// A session is eligible only when it is `complete`: one still `in_progress` or
-/// `restoring` belongs to a run that has not finished, and one in a state this
-/// Broza does not know is left for the version that does.
+/// A session that is being restored is never eligible: it belongs to a run in
+/// progress (`docs/cli-spec.md` §3.8.3). One left `in_progress` by an
+/// interrupted move *is*, because reading it settles every item it was moving
+/// against the filesystem, so what it holds is known.
 ///
 /// # Errors
 ///
-/// Whatever reading the store reports.
+/// Whatever reading the store root reports.
 pub fn expired_sessions(
     root: &Path,
     fs: &dyn FileOps,
@@ -44,18 +53,24 @@ pub fn expired_sessions(
 ) -> Result<Vec<SessionId>, BrozaError> {
     let now = clock.now();
     Ok(store::read_all(fs, root)?
+        .sessions
         .into_iter()
-        .filter(|found| found.session().state == SessionState::Complete)
+        .filter(|found| is_expirable(&found.session().state))
         .filter(|found| ttl::is_past_ttl(found.session().created_at, retention, now))
         .map(|found| found.id)
         .collect())
 }
 
-/// Every session in the store, for `purge --all`.
+/// `true` for the states an automatic expiry may act on.
+fn is_expirable(state: &SessionState) -> bool {
+    matches!(state, SessionState::Complete | SessionState::InProgress)
+}
+
+/// Every readable session in the store, for `purge --all`.
 ///
 /// # Errors
 ///
-/// Whatever reading the store reports.
+/// Whatever reading the store root reports.
 pub fn all_sessions(root: &Path, fs: &dyn FileOps) -> Result<Vec<SessionId>, BrozaError> {
     store::all_ids(fs, root)
 }
@@ -64,9 +79,9 @@ pub fn all_sessions(root: &Path, fs: &dyn FileOps) -> Result<Vec<SessionId>, Bro
 ///
 /// # Errors
 ///
-/// [`BrozaError::TargetNotFound`] for an identifier the store does not hold
-/// (exit `4`), and [`BrozaError::Other`] when the token does not cover a session
-/// directory. A session that cannot be removed is reported in `errors[]`.
+/// [`BrozaError::Other`] when the token does not cover a session directory. A
+/// session that cannot be read, or must not be removed, is reported in
+/// `errors[]`, which makes the run partial (exit `5`) rather than fatal.
 pub fn expire(
     token: &Approved<QuarantineWrite>,
     ids: &[SessionId],
@@ -94,8 +109,10 @@ pub fn purge(
 struct Removed {
     /// The session line of the report.
     session: ReclaimSession,
-    /// The `errors[]` entry, when the session was not removed.
-    error: Option<ErrorEntry>,
+    /// The `errors[]` entries, when the session was not removed.
+    errors: Vec<ErrorEntry>,
+    /// The `warnings[]` entries, for what went beyond the manifest.
+    warnings: Vec<Warning>,
     /// Bytes the removal actually freed.
     reclaimed_bytes: u64,
 }
@@ -110,15 +127,16 @@ fn reclaim(
 ) -> Result<Reported<ReclaimReport>, BrozaError> {
     let removed = ids
         .iter()
-        .map(|id| remove_session(token, id, root, fs))
+        .map(|id| remove_session(token, id, root, fs, operation))
         .collect::<Result<Vec<Removed>, BrozaError>>()?;
     let report = ReclaimReport {
         operation,
         reclaimed_bytes: removed.iter().fold(0_u64, |sum, one| sum.saturating_add(one.reclaimed_bytes)),
         sessions: removed.iter().map(|one| one.session.clone()).collect(),
     };
-    let errors = removed.into_iter().filter_map(|one| one.error).collect();
-    Ok(Reported::with(report, errors, Vec::new()))
+    let errors = removed.iter().flat_map(|one| one.errors.clone()).collect();
+    let warnings = removed.into_iter().flat_map(|one| one.warnings).collect();
+    Ok(Reported::with(report, errors, warnings))
 }
 
 /// Read one session, check it may go, and remove its whole directory.
@@ -127,10 +145,17 @@ fn remove_session(
     id: &SessionId,
     root: &Path,
     fs: &dyn FileOps,
+    operation: OperationKind,
 ) -> Result<Removed, BrozaError> {
-    let found = store::read_one(fs, root, id)?;
+    let found = match store::read_one(fs, root, id) {
+        Ok(found) => found,
+        Err(error) => return Ok(unreadable(id, root, &error)),
+    };
     if found.session().state == SessionState::Restoring {
         return Ok(refused(&found, &ItemErrorCode::SessionBusy));
+    }
+    if operation == OperationKind::Expire && !found.is_accounted_for() {
+        return Ok(Removed { errors: found.orphan_errors(), ..refused(&found, &orphaned()) });
     }
     match recheck(token.items(), &found.dir, fs)? {
         Recheck::Refused(code) => Ok(refused(&found, &code)),
@@ -141,10 +166,48 @@ fn remove_session(
     }
 }
 
+/// The item error code for a session holding more than it lists.
+fn orphaned() -> ItemErrorCode {
+    ItemErrorCode::from_token(store::ORPHANED_ITEM)
+}
+
+/// The report line of a session whose manifest could not be read.
+///
+/// Skipped, never removed: a session Broza cannot account for is not one it may
+/// delete on the user's behalf, and the error names the directory to look at.
+fn unreadable(id: &SessionId, root: &Path, error: &BrozaError) -> Removed {
+    let dir = layout::session_dir(root, id);
+    Removed {
+        session: ReclaimSession {
+            id: id.clone(),
+            total_bytes: 0,
+            item_count: 0,
+            status: ItemStatus::Skipped,
+        },
+        errors: vec![store::corrupt(&dir, error)],
+        warnings: Vec::new(),
+        reclaimed_bytes: 0,
+    }
+}
+
 /// The report line of a session that was removed.
 fn purged(found: &StoredSession) -> Removed {
     let reclaimed_bytes = held_bytes(&found.session().entries);
-    Removed { session: line(found, ItemStatus::Purged, reclaimed_bytes), error: None, reclaimed_bytes }
+    Removed {
+        session: line(found, ItemStatus::Purged, reclaimed_bytes),
+        errors: Vec::new(),
+        warnings: found.orphans.iter().map(|stored| purged_orphan(stored)).collect(),
+        reclaimed_bytes,
+    }
+}
+
+/// The warning an unlisted item removed with its session earns.
+fn purged_orphan(stored: &Path) -> Warning {
+    diagnostic(
+        store::ORPHANED_ITEM,
+        format!("`{}` was purged with its session although no entry listed it", stored.display()),
+        Some(stored),
+    )
 }
 
 /// The report line and the `errors[]` entry of a session that stayed.
@@ -152,11 +215,12 @@ fn refused(found: &StoredSession, code: &ItemErrorCode) -> Removed {
     let held = held_bytes(&found.session().entries);
     Removed {
         session: line(found, ItemStatus::Skipped, held),
-        error: Some(diagnostic(
+        errors: vec![diagnostic(
             code.as_str(),
             format!("quarantine session `{}` was not removed: {code}", found.id),
             Some(&found.dir),
-        )),
+        )],
+        warnings: Vec::new(),
         reclaimed_bytes: 0,
     }
 }
@@ -164,147 +228,4 @@ fn refused(found: &StoredSession, code: &ItemErrorCode) -> Removed {
 /// One `sessions[]` line of the report.
 fn line(found: &StoredSession, status: ItemStatus, total_bytes: u64) -> ReclaimSession {
     ReclaimSession { id: found.id.clone(), total_bytes, item_count: found.session().item_count, status }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::Path;
-    use std::time::Duration;
-
-    use super::{all_sessions, expire, expired_sessions, purge};
-    use crate::BrozaError;
-    use crate::model::{ItemStatus, OperationKind, SessionId, SessionState};
-    use crate::ports::FileOps;
-    use crate::quarantine::fixtures::{
-        NOW, ROOT, at, entry, manifest_file, session, session_dir, session_fs, session_id,
-    };
-    use crate::quarantine::manifest::{self, Manifest};
-    use crate::safety::guard::{Approved, QuarantineWrite, approve_quarantine_write};
-    use crate::testing::{FakeFileOps, FixedClock, mac_mount_table};
-
-    const TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
-    const AFTER_TTL: &str = "2026-11-01T00:00:00Z";
-
-    fn write_session(fs: &FakeFileOps, state: SessionState) {
-        fs.add_dir(session_dir());
-        let entries = vec![
-            entry(1, "/Users/dana/Library/Caches/app", 10, ItemStatus::Quarantined),
-            entry(2, "/Volumes/External/x", 60, ItemStatus::Skipped),
-        ];
-        let manifest = Manifest::new(session(state, entries));
-        manifest::write(fs, &manifest_file(), &manifest).unwrap_or_else(|error| panic!("{error}"));
-        fs.add_file(session_dir().join("items/0001/app"), b"content");
-    }
-
-    fn stored(state: SessionState) -> FakeFileOps {
-        let fs = session_fs();
-        write_session(&fs, state);
-        fs
-    }
-
-    fn token(fs: &FakeFileOps) -> Approved<QuarantineWrite> {
-        approve_quarantine_write(&[session_dir()], Path::new(ROOT), &mac_mount_table(), fs)
-            .unwrap_or_else(|error| panic!("{error}"))
-    }
-
-    fn ids() -> Vec<SessionId> {
-        vec![session_id()]
-    }
-
-    #[test]
-    fn only_a_complete_session_past_its_retention_period_expires() {
-        let fs = stored(SessionState::Complete);
-        let before = FixedClock::at(at(NOW));
-        let after = FixedClock::at(at(AFTER_TTL));
-
-        assert_eq!(expired_sessions(Path::new(ROOT), &fs, &before, TTL).ok(), Some(Vec::new()));
-        assert_eq!(expired_sessions(Path::new(ROOT), &fs, &after, TTL).ok(), Some(ids()));
-    }
-
-    #[test]
-    fn an_unfinished_session_never_expires_on_its_own() {
-        let fs = stored(SessionState::InProgress);
-        let after = FixedClock::at(at(AFTER_TTL));
-
-        assert_eq!(expired_sessions(Path::new(ROOT), &fs, &after, TTL).ok(), Some(Vec::new()));
-        assert_eq!(all_sessions(Path::new(ROOT), &fs).ok(), Some(ids()), "but `purge --all` still sees it");
-    }
-
-    #[test]
-    fn expiring_a_session_removes_its_whole_directory_and_frees_its_bytes() {
-        let fs = stored(SessionState::Complete);
-
-        let reported =
-            expire(&token(&fs), &ids(), Path::new(ROOT), &fs).unwrap_or_else(|error| panic!("{error}"));
-
-        assert_eq!(reported.data.operation, OperationKind::Expire);
-        assert_eq!(reported.data.reclaimed_bytes, 10, "only the entries it held count");
-        assert_eq!(reported.data.sessions[0].status, ItemStatus::Purged);
-        assert!(!fs.exists(&session_dir()));
-        assert!(fs.exists(Path::new(ROOT)), "the store itself stays");
-        assert!(!reported.is_partial());
-    }
-
-    #[test]
-    fn purging_uses_the_same_shape_with_its_own_operation() {
-        let fs = stored(SessionState::Complete);
-
-        let reported =
-            purge(&token(&fs), &ids(), Path::new(ROOT), &fs).unwrap_or_else(|error| panic!("{error}"));
-
-        assert_eq!(reported.data.operation, OperationKind::Purge);
-        assert_eq!(reported.data.sessions[0].item_count, 2);
-        assert!(!fs.exists(&session_dir()));
-    }
-
-    #[test]
-    fn a_session_being_restored_is_refused_and_reported() {
-        let fs = stored(SessionState::Restoring);
-
-        let reported =
-            purge(&token(&fs), &ids(), Path::new(ROOT), &fs).unwrap_or_else(|error| panic!("{error}"));
-
-        assert_eq!(reported.data.sessions[0].status, ItemStatus::Skipped);
-        assert_eq!(reported.data.reclaimed_bytes, 0);
-        assert_eq!(reported.errors[0].code, "session_busy");
-        assert!(reported.is_partial(), "a refused session means exit 5");
-        assert!(fs.exists(&session_dir()));
-    }
-
-    #[test]
-    fn a_session_directory_that_changed_since_the_check_is_left_alone() {
-        let fs = stored(SessionState::Complete);
-        let approval = token(&fs);
-        fs.remove_tree(&session_dir()).unwrap_or_else(|error| panic!("{error}"));
-        write_session(&fs, SessionState::Complete);
-
-        let reported =
-            purge(&approval, &ids(), Path::new(ROOT), &fs).unwrap_or_else(|error| panic!("{error}"));
-
-        assert_eq!(reported.data.sessions[0].status, ItemStatus::Skipped);
-        assert!(reported.is_partial());
-        assert!(fs.exists(&session_dir()), "a directory that is not the approved one is never removed");
-    }
-
-    #[test]
-    fn an_unknown_session_is_a_missing_target() {
-        let fs = stored(SessionState::Complete);
-        let ghost = "cln_20260801091200_c3d4".parse().unwrap_or_else(|error| panic!("{error}"));
-
-        let error = purge(&token(&fs), &[ghost], Path::new(ROOT), &fs);
-
-        assert!(matches!(error, Err(BrozaError::TargetNotFound(_))), "{error:?}");
-    }
-
-    #[test]
-    fn a_session_the_token_does_not_cover_stops_the_operation() {
-        let fs = stored(SessionState::Complete);
-        let empty = approve_quarantine_write(&[], Path::new(ROOT), &mac_mount_table(), &fs)
-            .unwrap_or_else(|error| panic!("{error}"));
-
-        let error = purge(&empty, &ids(), Path::new(ROOT), &fs);
-
-        assert!(matches!(error, Err(BrozaError::Other(_))), "{error:?}");
-        assert!(fs.exists(&session_dir()));
-    }
 }

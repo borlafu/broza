@@ -25,12 +25,16 @@ pub struct Write;
 /// A write inside the quarantine store (restore, expire, purge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuarantineWrite;
+/// A write *out of* the quarantine store: where a restore puts an item back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreWrite;
 /// Deletion of APFS local snapshots through `tmutil`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotDelete;
 
 impl seal::Sealed for Write {}
 impl seal::Sealed for QuarantineWrite {}
+impl seal::Sealed for RestoreWrite {}
 impl seal::Sealed for SnapshotDelete {}
 
 /// One path the guard checked, with the identity it had at that moment.
@@ -113,12 +117,18 @@ impl ApprovedItem {
 pub struct ApprovedPlan {
     pub(super) plan: CleanPlan,
     pub(super) items: Vec<ApprovedItem>,
+    pub(super) quarantine_root: Option<PathBuf>,
 }
 
 impl ApprovedPlan {
     /// Pairs a checked plan with the evidence for each of its writable paths.
     pub(super) fn new(plan: CleanPlan, items: Vec<ApprovedItem>) -> Self {
-        Self { plan, items }
+        Self { plan, items, quarantine_root: None }
+    }
+
+    /// Records the quarantine store the guard validated for this run.
+    pub(super) fn with_quarantine_root(self, quarantine_root: Option<PathBuf>) -> Self {
+        Self { quarantine_root, ..self }
     }
 }
 
@@ -130,6 +140,11 @@ impl WriteKind for Write {
 impl WriteKind for QuarantineWrite {
     type Payload = Vec<ApprovedItem>;
     const DESCRIPTION: &'static str = "quarantine store write";
+}
+
+impl WriteKind for RestoreWrite {
+    type Payload = Vec<PathBuf>;
+    const DESCRIPTION: &'static str = "restore destination";
 }
 
 impl WriteKind for SnapshotDelete {
@@ -171,6 +186,27 @@ impl<K: WriteKind<Payload = ApprovedPlan>> Approved<K> {
     /// Consumes the token and yields the plan.
     pub fn into_plan(self) -> CleanPlan {
         self.payload.plan
+    }
+
+    /// The quarantine store the guard validated for this run, if there is one.
+    ///
+    /// The mover takes the root from here rather than from its caller: the
+    /// store is a write target like any other, and the only one that was
+    /// actually checked (`docs/cli-spec.md` §3.4, check 0b) is this one.
+    pub fn quarantine_root(&self) -> Option<&Path> {
+        self.payload.quarantine_root.as_deref()
+    }
+}
+
+impl Approved<RestoreWrite> {
+    /// The destinations a restore may write to.
+    pub fn targets(&self) -> &[PathBuf] {
+        &self.payload
+    }
+
+    /// `true` when `path` is one of them.
+    pub fn covers(&self, path: &Path) -> bool {
+        self.payload.iter().any(|target| target == path)
     }
 }
 

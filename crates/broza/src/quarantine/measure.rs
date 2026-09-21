@@ -13,30 +13,43 @@ use std::path::{Path, PathBuf};
 use crate::BrozaError;
 use crate::ports::FileOps;
 
-/// Apparent bytes held below `root`, `root` included when it is not a directory.
+/// Bytes held below `root`, `root` included when it is not a directory.
+///
+/// The figure is `allocated_bytes` — what the volume actually gives back — not
+/// the apparent size: a 10 GB sparse file frees the blocks it occupies, and a
+/// cap measured in apparent bytes would be wrong in both directions.
 ///
 /// Symbolic links are never followed: a link contributes the size of the link
 /// itself, exactly like the `rename` that is about to move it. Directories
-/// contribute nothing of their own, so the figure is the apparent size of the
-/// content, comparable with the scan's aggregate. A file reachable through
-/// several hard links inside the tree is counted once per link, which can only
-/// over-estimate and therefore never lets a move slip past the cap.
+/// contribute nothing of their own. A file reachable through several hard links
+/// inside the tree is counted once per link, which can only over-estimate and
+/// therefore never lets a move slip past the cap.
+///
+/// `progress` is called with the running total after every entry, so a caller
+/// walking a large tree can report what it is doing.
 ///
 /// # Errors
 ///
 /// The first error [`FileOps::metadata`] or [`FileOps::read_dir`] reports. A
 /// directory Broza may not read makes the whole measurement fail rather than
 /// return a total that is quietly too small.
-pub fn measure_dir_bytes(fs: &dyn FileOps, root: &Path) -> Result<u64, BrozaError> {
+pub fn measure_dir_bytes(
+    fs: &dyn FileOps,
+    root: &Path,
+    progress: Option<&dyn Fn(u64)>,
+) -> Result<u64, BrozaError> {
     let mut pending: Vec<PathBuf> = vec![root.to_path_buf()];
     let mut total = 0_u64;
     while let Some(path) = pending.pop() {
         let entry = fs.metadata(&path)?;
-        if !entry.is_dir {
-            total = total.saturating_add(entry.size_bytes);
+        if entry.is_dir {
+            pending.extend(fs.read_dir(&path)?);
             continue;
         }
-        pending.extend(fs.read_dir(&path)?);
+        total = total.saturating_add(entry.allocated_bytes);
+        if let Some(report) = progress {
+            report(total);
+        }
     }
     Ok(total)
 }
@@ -57,58 +70,73 @@ mod tests {
     use crate::BrozaError;
     use crate::testing::FakeFileOps;
 
+    /// Allocation unit of the in-memory filesystem, as APFS reports one.
+    const UNIT: u64 = 4096;
+
     fn tree() -> FakeFileOps {
         FakeFileOps::new()
             .with_root("/Users", 2)
-            .with_sized_file("/Users/dana/cache/a", 10)
-            .with_sized_file("/Users/dana/cache/deep/b", 30)
-            .with_sized_file("/Users/dana/cache/deep/deeper/c", 2)
-            .with_sized_file("/Users/dana/elsewhere/d", 1000)
+            .with_sized_file("/Users/dana/cache/a", UNIT)
+            .with_sized_file("/Users/dana/cache/deep/b", 3 * UNIT)
+            .with_sized_file("/Users/dana/cache/deep/deeper/c", 1)
+            .with_sized_file("/Users/dana/elsewhere/d", 100 * UNIT)
     }
 
     #[test]
-    fn a_directory_is_worth_the_sum_of_the_files_below_it() {
-        let total = measure_dir_bytes(&tree(), Path::new("/Users/dana/cache"));
+    fn a_directory_is_worth_the_blocks_the_files_below_it_occupy() {
+        let total = measure_dir_bytes(&tree(), Path::new("/Users/dana/cache"), None);
 
-        assert_eq!(total.ok(), Some(42));
+        assert_eq!(total.ok(), Some(5 * UNIT), "a one-byte file still costs a whole unit");
     }
 
     #[test]
-    fn a_file_is_worth_its_own_size() {
-        let total = measure_dir_bytes(&tree(), Path::new("/Users/dana/cache/a"));
+    fn a_file_is_worth_what_it_occupies() {
+        let total = measure_dir_bytes(&tree(), Path::new("/Users/dana/cache/a"), None);
 
-        assert_eq!(total.ok(), Some(10));
+        assert_eq!(total.ok(), Some(UNIT));
+    }
+
+    #[test]
+    fn the_progress_callback_sees_the_running_total() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let report = |total: u64| seen.borrow_mut().push(total);
+
+        let total = measure_dir_bytes(&tree(), Path::new("/Users/dana/cache"), Some(&report));
+
+        assert_eq!(total.ok(), Some(5 * UNIT));
+        assert_eq!(seen.borrow().len(), 3, "one call per file");
+        assert_eq!(seen.borrow().last().copied(), Some(5 * UNIT));
     }
 
     #[test]
     fn an_empty_directory_is_worth_nothing() {
         let fs = FakeFileOps::new().with_root("/Users", 2).with_dir("/Users/dana/empty");
 
-        assert_eq!(measure_dir_bytes(&fs, Path::new("/Users/dana/empty")).ok(), Some(0));
+        assert_eq!(measure_dir_bytes(&fs, Path::new("/Users/dana/empty"), None).ok(), Some(0));
     }
 
     #[test]
-    fn a_symlink_counts_as_itself_and_is_never_followed() {
+    fn a_symlink_occupies_nothing_and_is_never_followed() {
         let fs = tree();
         fs.add_symlink("/Users/dana/cache/link", "/Users/dana/elsewhere");
 
-        let total = measure_dir_bytes(&fs, Path::new("/Users/dana/cache")).ok();
+        let total = measure_dir_bytes(&fs, Path::new("/Users/dana/cache"), None).ok();
 
-        assert!(total.is_some_and(|bytes| bytes < 1000), "the link target must not be counted: {total:?}");
+        assert_eq!(total, Some(5 * UNIT), "the link is worth nothing and its target is not counted");
     }
 
     #[test]
     fn a_directory_broza_may_not_read_fails_the_measurement() {
         let fs = tree().with_denied("/Users/dana/cache/deep");
 
-        let error = measure_dir_bytes(&fs, Path::new("/Users/dana/cache"));
+        let error = measure_dir_bytes(&fs, Path::new("/Users/dana/cache"), None);
 
         assert!(matches!(error, Err(BrozaError::PermissionDenied { .. })), "{error:?}");
     }
 
     #[test]
     fn a_missing_directory_is_a_missing_target() {
-        let error = measure_dir_bytes(&tree(), Path::new("/Users/dana/ghost"));
+        let error = measure_dir_bytes(&tree(), Path::new("/Users/dana/ghost"), None);
 
         assert!(matches!(error, Err(BrozaError::TargetNotFound(_))), "{error:?}");
     }

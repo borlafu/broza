@@ -360,7 +360,10 @@ Supports `--json`. Does not support `--csv` (exit `2`).
 3. The volume role is not `system`, `preboot`, `recovery` or `vm`.
 4. The path is under an allowed root: `$HOME`, `/Users/Shared`, `/private/var/folders/<uid>`, `/Library/Caches`, `.Trashes` on data or user volumes, `/Applications` (only for `unused-apps`).
 5. The path does not match any exclusion.
-6. Total planned bytes do not exceed `--max-size`. File sizes are re-measured by the safety kernel before confirmation; directory sizes come from the scan and are re-measured by the executor immediately before removal, which aborts the item if the cap would be exceeded.
+6. Total planned bytes do not exceed `--max-size`. The cap is applied **twice**, on two different figures, and the two are not interchangeable:
+   - *Before execution*, against the scanned sizes: a plan whose total already exceeds the cap is refused outright and the command exits `2`. File sizes have been re-measured by the safety kernel at this point; directory sizes are the scan's aggregate.
+   - *During execution*, against the measured size of each directory: the executor re-measures a directory immediately before moving it (allocated bytes, not apparent bytes), and an item whose real size would take the running total past the cap is left in place and marked `skipped` with `error: "max_size_exceeded"`. The rest of the plan proceeds.
+   A directory is only re-measured when `--max-size` is given: without a cap the scanned figure is the one reported, and walking the tree again would cost time that changes no decision.
 7. No item in the plan is `inform_only`.
 
 > **Safety invariant:** no combination of flags allows Broza to write to a volume with role `System`, `Preboot`, `Recovery` or `VM`. There is no override flag, and there will not be one. Any request to add such a flag MUST be rejected.
@@ -388,7 +391,7 @@ Quarantine lives in `~/.local/share/broza/quarantine/` (configurable via `quaran
 
 **Restore semantics:**
 
-- Restoration is **atomic per session**: items are restored in reverse sequence order; a session is either fully restored or left intact with `state: restoring` and reported as `failed`, and can be retried.
+- Restoration is **per session**: items are restored in reverse sequence order. Each item that goes back leaves the manifest immediately, so a restore is never all-or-nothing on disk; an item that cannot go back is reported (`skipped` or `failed`) and **stays in quarantine**, and the session keeps `state: restoring` so the whole command can simply be run again. A session is removed only once its `items/` directory is empty — never because its manifest lists nothing, which is the corruption case and is reported as `session_has_untracked_items` instead.
 - **Collision rule:** if the original path already exists, the entry is `skipped` with `error: "collision"` unless `--to` is given, in which case the item is placed under `--to` preserving its basename. Broza never overwrites an existing path.
 - Restored items are removed from the session manifest; an empty session is deleted.
 - Exit `5` if some entries were skipped or failed, `0` if all succeeded.
@@ -542,7 +545,7 @@ Every `--json` output shares this structure:
 | `type` (container filesystem) | `apfs` · `hfs_plus` · any other token, passed through unchanged |
 | `risk` | `green` · `amber` · `red` |
 | `action` | `quarantine` · `purge` · `tmutil_delete` · `inform_only` |
-| `status` (clean / restore item) | `planned` · `quarantined` · `purged` · `restored` · `skipped` · `failed` |
+| `status` (clean / restore item) | `planned` · `quarantined` · `purged` · `restored` · `skipped` · `failed` · `moving` (manifest only: written before the rename and replaced after it, so an interrupted move is detectable; reading a session settles it and no command ever reports it) |
 | `state` (quarantine session) | `in_progress` · `complete` · `restoring` · `expired` |
 | `category` | `user-cache` · `build-cache` · `ios-simulators` · `trash` · `snapshots` · `old-backups` · `unused-apps` · `cloud-synced` · `duplicates` · `large-old-files` |
 | `error` (item-level code) | `cross_volume` · `permission_denied` · `collision` · `not_found` · `protected_volume` · `session_busy` · `io_error` · `changed_since_check` (the item's `(device, inode)` changed between the safety check and the write; nothing was touched) · `max_size_exceeded` (the re-measured size would exceed `--max-size`; item left in place) |
@@ -761,6 +764,8 @@ does, and an implementation MUST reject one that does not:
 ```
 
 `state: "expired"` is derived at read time (`expires_at < now`) from a session whose stored state is `complete`; it is never written to the manifest. A manifest that stores it is rejected as corrupt.
+
+`expires_at` is likewise **derived**: every reader recomputes it as `created_at` plus the current `quarantine-ttl`, so shortening the setting applies to sessions that are already in the store. The value in `manifest.json` is a cache, refreshed whenever a writer that knows the TTL rewrites the file; a reader never trusts it over the computed one.
 
 The session object is also the shape of `manifest.json`, with one addition: in the manifest each
 session carries `entries`, an array of the objects described in §4.6 (`id`, `original_path`,
@@ -1004,3 +1009,12 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §4.2 and §7 (M2 scanner, unreleased, so no bump): APFS clone accounting stated as best-effort and deferred to post-1.0 (PRD RF-02), cloud placeholders (`SF_DATALESS`) documented as 0 bytes and never listed; new optional `volumes[].uuid`, which the scan cache is filed under, with a `cache_keyed_by_bsd_id` warning when it is missing; cloud-provider roots excluded from the walk by default; §7 states that a subtree is only reused from the cache when nothing in it reaches `--min-size`, which `--min-size 0` therefore disables.
 - §7 (M2, unreleased): the cold-scan budget is restated as a throughput — at least 100 000 entries per second, which is the ten seconds the table always named, for a one-million-entry volume ([ADR 0006](adr/0006-scan-performance-budget.md)). The warm and first-result budgets are unchanged.
 - §3.1 (M2, unreleased): the usage bar never rounds a container that is in use down to an empty bar, nor one with room left up to a full one; a 99.8% full container keeps its last free cell.
+- §4.1 (M3, unreleased): item status `moving` added, for the manifest only.
+- §3.4 (M3, unreleased): `--max-size` spelled out as two checks — exit `2` before execution on the
+  scanned total, `max_size_exceeded` per item after re-measurement — and directories are only
+  re-measured when a cap is given.
+- §3.5 (M3, unreleased): "atomic per session" replaced. A restore moves each item out of the
+  manifest as it succeeds, leaves what failed in quarantine with `state: restoring`, and deletes
+  the session only when its directory is empty.
+- §4.5 (M3, unreleased): `expires_at` documented as derived from `created_at` plus the current
+  `quarantine-ttl`; the stored value is a cache.

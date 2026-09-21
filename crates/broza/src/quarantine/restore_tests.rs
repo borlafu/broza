@@ -1,9 +1,8 @@
 //! Tests for [`super::restore`]: putting a session, or part of one, back.
 use std::path::{Path, PathBuf};
 
-use super::restore::{
-    SESSION_LEFT_BEHIND, Wanted, group_by_session, restore_entries, restore_order, restore_session,
-};
+use super::restore::{SESSION_LEFT_BEHIND, restore_entries, restore_session};
+use super::selection::{Wanted, group_by_session, restore_order};
 use crate::BrozaError;
 use crate::model::{
     EntryId, ItemErrorCode, ItemStatus, OperationKind, QuarantineSession, RestoreReport, SessionId,
@@ -11,7 +10,8 @@ use crate::model::{
 };
 use crate::ports::FileOps;
 use crate::quarantine::fixtures::{
-    ROOT, entry, quarantine_write, quarantined, session_dir, session_id, store_fs, writable_paths,
+    ROOT, entry, quarantine_write, quarantined, restore_targets, session_dir, session_id, store_fs,
+    writable_paths,
 };
 use crate::quarantine::report::Reported;
 use crate::quarantine::store;
@@ -27,8 +27,10 @@ fn two_items() -> (FakeFileOps, QuarantineSession) {
 }
 
 fn restored(fs: &FakeFileOps, session: &QuarantineSession, to: Option<&Path>) -> Reported<RestoreReport> {
-    let token = quarantine_write(fs, &writable_paths(session));
-    restore_session(&token, &session_id(), Path::new(ROOT), fs, to).unwrap_or_else(|error| panic!("{error}"))
+    let sources = quarantine_write(fs, &writable_paths(session));
+    let targets = restore_targets(fs, session, to);
+    restore_session(&sources, &targets, &session_id(), Path::new(ROOT), fs, to)
+        .unwrap_or_else(|error| panic!("{error}"))
 }
 
 fn entry_id(sequence: u32) -> EntryId {
@@ -75,7 +77,7 @@ fn an_occupied_original_path_is_skipped_and_its_session_survives() {
     assert_eq!(reported.errors[0].code, ItemErrorCode::Collision.to_string());
     assert!(reported.is_partial(), "a skipped entry means exit 5");
     let left = store::read_one(&fs, Path::new(ROOT), &session_id()).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(left.session().state, SessionState::Complete);
+    assert_eq!(left.session().state, SessionState::Restoring, "a partial restore can be retried");
     assert_eq!(left.session().total_bytes, 10, "only the skipped item is still held");
 }
 
@@ -95,9 +97,10 @@ fn restoring_to_another_directory_never_touches_the_original_paths() {
 #[test]
 fn restoring_one_entry_leaves_the_rest_of_the_session_alone() {
     let (fs, session) = two_items();
-    let token = quarantine_write(&fs, &writable_paths(&session));
+    let sources = quarantine_write(&fs, &writable_paths(&session));
+    let targets = restore_targets(&fs, &session, None);
 
-    let reported = restore_entries(&token, &[entry_id(1)], Path::new(ROOT), &fs, None)
+    let reported = restore_entries(&sources, &targets, &[entry_id(1)], Path::new(ROOT), &fs, None)
         .unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(reported.data.sessions[0].items.len(), 1);
@@ -114,9 +117,10 @@ fn a_session_whose_directory_was_not_approved_is_emptied_and_reported() {
     let (fs, session) = two_items();
     let stored_only: Vec<PathBuf> =
         session.entries.iter().filter_map(|entry| entry.stored_path.clone()).collect();
-    let token = quarantine_write(&fs, &stored_only);
+    let sources = quarantine_write(&fs, &stored_only);
+    let targets = restore_targets(&fs, &session, None);
 
-    let reported = restore_session(&token, &session_id(), Path::new(ROOT), &fs, None)
+    let reported = restore_session(&sources, &targets, &session_id(), Path::new(ROOT), &fs, None)
         .unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(reported.data.sessions[0].status, ItemStatus::Restored);
@@ -128,10 +132,11 @@ fn a_session_whose_directory_was_not_approved_is_emptied_and_reported() {
 #[test]
 fn an_unknown_session_is_a_missing_target() {
     let (fs, session) = two_items();
-    let token = quarantine_write(&fs, &writable_paths(&session));
+    let sources = quarantine_write(&fs, &writable_paths(&session));
+    let targets = restore_targets(&fs, &session, None);
     let ghost: SessionId = "cln_20260801091200_c3d4".parse().unwrap_or_else(|e| panic!("{e}"));
 
-    let error = restore_session(&token, &ghost, Path::new(ROOT), &fs, None);
+    let error = restore_session(&sources, &targets, &ghost, Path::new(ROOT), &fs, None);
 
     assert!(matches!(error, Err(BrozaError::TargetNotFound(_))), "{error:?}");
 }
@@ -143,7 +148,7 @@ fn entries_go_back_in_reverse_sequence_order() {
         entry(2, "/Users/dana/a/child", 1, ItemStatus::Quarantined),
         entry(3, "/Users/dana/b", 1, ItemStatus::Skipped),
     ];
-    let wanted = Wanted { session: session_id(), entries: None };
+    let wanted = Wanted::whole(&session_id());
 
     let order = restore_order(entries, &wanted);
 

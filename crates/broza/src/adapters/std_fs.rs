@@ -1,12 +1,16 @@
 //! Real filesystem adapter built on `std::fs` and `std::os::unix::fs::MetadataExt`.
 //!
-//! No `libc` and no `unsafe`: everything Broza needs from `stat` is already exposed by
-//! [`MetadataExt`]. Symlinks are never followed — `metadata` is an `lstat` and
-//! `remove_tree` on a link removes the link, not what it points at.
+//! Everything Broza needs from `stat` is already exposed by [`MetadataExt`], so
+//! the only `libc` call here is `renamex_np`: `std` has no wrapper for the
+//! `RENAME_EXCL` flag that makes a rename refuse to replace its destination.
+//! Symlinks are never followed — `metadata` is an `lstat` and `remove_tree` on a
+//! link removes the link, not what it points at.
 
+use std::ffi::CString;
 use std::fs::{self, Permissions};
 use std::io::Write;
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -117,6 +121,36 @@ impl FileOps for StdFileOps {
     fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError> {
         fs::read(path).map_err(|source| from_io(format!("read {}", path.display()), path, source))
     }
+
+    fn create_dir_exclusive(&self, path: &Path) -> Result<(), BrozaError> {
+        fs::create_dir(path)
+            .map_err(|source| from_io(format!("create directory {}", path.display()), path, source))
+    }
+
+    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<(), BrozaError> {
+        let context = format!("rename {} to {} without replacing it", from.display(), to.display());
+        let source = c_path(from, &context)?;
+        let destination = c_path(to, &context)?;
+        // SAFETY: both pointers come from `CString`s that live until the end of
+        // this statement, and `renamex_np` only reads them. `RENAME_EXCL` is the
+        // documented flag that makes the call fail with `EEXIST` instead of
+        // replacing an existing destination.
+        #[allow(unsafe_code)]
+        let code = unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+        if code == 0 {
+            return Ok(());
+        }
+        let failure = std::io::Error::last_os_error();
+        Err(from_io(context, blame_rename(from, to, &failure), failure))
+    }
+}
+
+/// The path as a NUL-terminated C string, for the one call that needs `libc`.
+fn c_path(path: &Path, context: &str) -> Result<CString, BrozaError> {
+    CString::new(path.as_os_str().as_bytes()).map_err(|_| BrozaError::Io {
+        context: context.to_owned(),
+        source: std::io::Error::from(std::io::ErrorKind::InvalidInput),
+    })
 }
 
 /// Permission bits a path the caller already owns keeps through a rewrite.
@@ -288,6 +322,19 @@ mod tests {
         StdFileOps.write_atomic(&path, b"still secret").unwrap_or_else(|e| panic!("{e}"));
 
         assert_eq!(mode_of(&path), 0o600);
+    }
+
+    #[test]
+    fn a_path_with_an_interior_nul_is_refused_before_it_reaches_the_kernel() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = tempdir();
+        let poisoned = Path::new(OsStr::from_bytes(b"/tmp/a\0b")).to_path_buf();
+
+        let error = StdFileOps.rename_exclusive(&dir.path().join("a"), &poisoned).err();
+
+        assert!(matches!(error, Some(BrozaError::Io { .. })), "{error:?}");
     }
 
     #[test]

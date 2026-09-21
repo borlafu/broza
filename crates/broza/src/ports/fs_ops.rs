@@ -123,4 +123,52 @@ pub trait FileOps: Send + Sync {
     fn write_atomic(&self, path: &Path, contents: &[u8]) -> Result<(), BrozaError>;
     /// Read a whole file.
     fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError>;
+    /// Create one directory, failing when something is already at `path`.
+    ///
+    /// `mkdir(2)`: the parent must exist, and an existing `path` is refused with
+    /// `EEXIST`, which [`already_exists`] recognises. Claiming a name this way is
+    /// how the quarantine mover makes a session identifier unique — two runs that
+    /// derive the same name in the same second cannot both succeed.
+    fn create_dir_exclusive(&self, path: &Path) -> Result<(), BrozaError>;
+    /// Rename, refusing to replace anything already at `to`.
+    ///
+    /// `renamex_np(2)` with `RENAME_EXCL`. Plain [`FileOps::rename`] silently
+    /// replaces the destination, and for a tool that moves user data that is the
+    /// difference between quarantining a file and destroying one, so every
+    /// rename inside `quarantine/` uses this instead.
+    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<(), BrozaError>;
+}
+
+/// `true` when `error` reports that the destination was already taken.
+///
+/// [`FileOps::create_dir_exclusive`] and [`FileOps::rename_exclusive`] are the
+/// two calls that can produce it, and both callers need to tell "the name is
+/// taken" apart from "the filesystem failed".
+pub fn already_exists(error: &BrozaError) -> bool {
+    match error {
+        BrozaError::Io { source, .. } => source.kind() == std::io::ErrorKind::AlreadyExists,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::already_exists;
+    use crate::BrozaError;
+
+    #[test]
+    fn only_an_occupied_destination_is_an_already_exists() {
+        let taken = BrozaError::Io {
+            context: "create".to_owned(),
+            source: std::io::Error::from(std::io::ErrorKind::AlreadyExists),
+        };
+        let other = BrozaError::Io {
+            context: "create".to_owned(),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        };
+
+        assert!(already_exists(&taken));
+        assert!(!already_exists(&other));
+        assert!(!already_exists(&BrozaError::TargetNotFound("/x".to_owned())));
+    }
 }

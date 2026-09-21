@@ -13,11 +13,15 @@ use crate::BrozaError;
 use crate::model::{QuarantineList, QuarantineSession, SessionState, Warning};
 use crate::ports::{Clock, FileOps};
 use crate::quarantine::entries::held_bytes;
+use crate::quarantine::measure::measure_dir_bytes;
 use crate::quarantine::report::{Reported, diagnostic};
+use crate::quarantine::store::StoredSession;
 use crate::quarantine::{store, ttl};
 
 /// Warning code for a session a `clean --apply` never finished.
 pub const SESSION_INCOMPLETE: &str = "session_incomplete";
+/// Warning code for a session holding more than its manifest accounts for.
+pub const UNTRACKED_BYTES: &str = "untracked_bytes";
 
 /// Every session in the store, newest first.
 ///
@@ -25,10 +29,12 @@ pub const SESSION_INCOMPLETE: &str = "session_incomplete";
 /// `quarantine-ttl`, and `state` becomes `expired` when that instant has passed
 /// — the derived state of `docs/cli-spec.md` §4.5, which no manifest stores.
 ///
+/// A session whose manifest cannot be read is skipped and reported in
+/// `errors[]`, so one bad session never hides the rest of the store.
+///
 /// # Errors
 ///
-/// Whatever reading the store reports; see
-/// [`store::read_all`].
+/// Only what reading the store root itself reports; see [`store::read_all`].
 pub fn list_sessions(
     root: &Path,
     fs: &dyn FileOps,
@@ -36,33 +42,81 @@ pub fn list_sessions(
     retention: Duration,
 ) -> Result<Reported<QuarantineList>, BrozaError> {
     let now = clock.now();
-    let stored = store::read_all(fs, root)?;
-    let sessions: Vec<QuarantineSession> =
-        stored.iter().map(|found| summarise(found.session(), retention, now)).collect();
-    let warnings = stored
+    let found = store::read_all(fs, root)?;
+    let sessions = found
+        .sessions
         .iter()
-        .filter(|found| found.session().state == SessionState::InProgress)
-        .map(|found| incomplete(found.id.as_str(), &found.dir))
-        .collect();
+        .map(|stored| summarise(stored, retention, now, fs))
+        .collect::<Result<Vec<QuarantineSession>, BrozaError>>()?;
+    let warnings = found.sessions.iter().flat_map(session_warnings).collect();
     let list = QuarantineList {
         quarantine_path: root.to_path_buf(),
         total_bytes: sum_bytes(&sessions, |_| true),
         expired_bytes: sum_bytes(&sessions, |session| session.state == SessionState::Expired),
         sessions,
     };
-    Ok(Reported::with(list, Vec::new(), warnings))
+    Ok(Reported::with(list, found.errors, warnings))
 }
 
 /// One session as the listing reports it: no entries, derived state and expiry.
-fn summarise(session: &QuarantineSession, retention: Duration, now: Timestamp) -> QuarantineSession {
+///
+/// `total_bytes` is what the manifest accounts for **plus** what the session
+/// holds that it does not: an orphan occupies the disk whether or not anything
+/// lists it, and a total that ignored it would be a lie about reclaimable space
+/// (`AGENTS.md` §2.7).
+fn summarise(
+    stored: &StoredSession,
+    retention: Duration,
+    now: Timestamp,
+    fs: &dyn FileOps,
+) -> Result<QuarantineSession, BrozaError> {
+    let session = stored.session();
     let expires_at = ttl::expires_at(session.created_at, retention);
-    QuarantineSession {
+    Ok(QuarantineSession {
         expires_at,
-        total_bytes: held_bytes(&session.entries),
+        total_bytes: held_bytes(&session.entries).saturating_add(orphan_bytes(stored, fs)?),
         state: displayed_state(&session.state, expires_at, now),
         entries: Vec::new(),
         ..session.clone()
+    })
+}
+
+/// Bytes the session holds that no entry accounts for.
+///
+/// Only the orphans are measured. Walking every stored item on every `list`
+/// would re-measure trees the manifest already describes, which is the one
+/// thing a read-only command must not cost.
+fn orphan_bytes(stored: &StoredSession, fs: &dyn FileOps) -> Result<u64, BrozaError> {
+    stored
+        .orphans
+        .iter()
+        .try_fold(0_u64, |sum, path| Ok(sum.saturating_add(measure_dir_bytes(fs, path, None)?)))
+}
+
+/// The warnings one session earns.
+fn session_warnings(stored: &StoredSession) -> Vec<Warning> {
+    let mut warnings = Vec::new();
+    if stored.session().state == SessionState::InProgress {
+        warnings.push(incomplete(stored.id.as_str(), &stored.dir));
     }
+    if !stored.is_accounted_for() {
+        warnings.push(untracked(stored));
+    }
+    warnings
+}
+
+/// The warning a session holding unaccounted items earns.
+fn untracked(stored: &StoredSession) -> Warning {
+    diagnostic(
+        UNTRACKED_BYTES,
+        format!(
+            "session `{}` holds {} item(s) its manifest does not list; they are counted in its size \
+             and no automatic step will remove them.",
+            stored.id,
+            stored.orphans.len()
+        ),
+        Some(&stored.dir),
+    )
 }
 
 /// `expired` replaces `complete` once the retention period is over.

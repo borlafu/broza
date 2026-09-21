@@ -20,12 +20,14 @@ pub fn sequence_of(position: usize) -> Result<u32, BrozaError> {
     )
 }
 
-/// The sequence number an entry's identifier carries, `0` when it has none.
+/// The sequence number an entry's identifier carries.
 ///
-/// Used to restore in reverse order: a child directory must go back before the
-/// parent that was moved after it.
-pub fn sequence_in(entry: &QuarantineEntry) -> u32 {
-    entry.id.sequence_part().parse().unwrap_or_default()
+/// `None` when the identifier does not end in a number a `u32` can hold, which
+/// a validated [`EntryId`](crate::model::EntryId) never does — a manifest that
+/// produced one is corrupt, and the caller decides what that means rather than
+/// silently getting `0` and restoring in the wrong order.
+pub fn sequence_in(entry: &QuarantineEntry) -> Option<u32> {
+    entry.id.sequence_part().parse().ok()
 }
 
 /// One entry per plan item named by `indices`, before anything has been moved.
@@ -129,7 +131,7 @@ mod tests {
 
     #[test]
     fn an_entry_reports_the_sequence_of_its_identifier() {
-        assert_eq!(sequence_in(&entry(7, "/Users/dana/a", 1, ItemStatus::Quarantined)), 7);
+        assert_eq!(sequence_in(&entry(7, "/Users/dana/a", 1, ItemStatus::Quarantined)), Some(7));
     }
 
     #[test]

@@ -1,9 +1,14 @@
 //! One item's journey into the store, and what it became.
 //!
 //! This is where the time-of-check/time-of-use contract of
-//! [`crate::ports::FileOps`] is honoured: the path is `lstat`ed again
-//! and its `(device, inode)` compared with the pair the guard recorded, before
-//! anything is renamed (`AGENTS.md` §4).
+//! [`crate::ports::FileOps`] is honoured: the path is `lstat`ed again and its
+//! `(device, inode)` compared with the pair the guard recorded, before anything
+//! is renamed (`AGENTS.md` §4).
+//!
+//! The work is in two halves on purpose. [`precheck`] decides everything that
+//! can be decided without touching the filesystem, so an item that is never
+//! going to move is refused before the manifest claims it is in flight;
+//! [`move_into`] does the one irreversible step.
 
 use std::path::{Path, PathBuf};
 
@@ -43,61 +48,83 @@ pub struct Destination<'a> {
     pub root_device: u64,
     /// `--max-size` cap in bytes.
     pub max_size: Option<u64>,
+    /// What the plan says the item is worth, for when no cap forces a re-measure.
+    pub planned_bytes: u64,
 }
 
-/// Re-check the item, measure it, and move it into the store.
+impl Destination<'_> {
+    /// Where the item will be stored.
+    pub fn stored_path(&self, source: &Path) -> PathBuf {
+        layout::stored_path(self.session_dir, self.sequence, layout::basename(source))
+    }
+}
+
+/// Everything that can be decided before anything is touched.
 ///
-/// Never returns an error: a failure of one item is the item's outcome, and the
-/// run continues with the next one (`docs/cli-spec.md` §3.4).
-pub fn attempt_move(
+/// # Errors
+///
+/// The [`Attempt::Refused`] to record when the item may not move: its identity
+/// changed, it is on another device, it cannot be measured, or moving it would
+/// pass `--max-size`.
+pub fn precheck(
     item: &ApprovedItem,
     destination: &Destination<'_>,
     moved_bytes: u64,
     fs: &dyn FileOps,
-) -> Attempt {
+) -> Result<u64, Attempt> {
     let source = item.path();
-    let current = match fs.metadata(source) {
-        Ok(current) => current,
-        Err(error) => return failed_io(&error),
-    };
+    let current = fs.metadata(source).map_err(|error| failed_io(&error))?;
     if current.device != item.device() || current.inode != item.inode() {
-        return Attempt::Refused { status: ItemStatus::Failed, error: changed_since_check() };
+        return Err(Attempt::Refused { status: ItemStatus::Failed, error: changed_since_check() });
     }
     if current.device != destination.root_device {
-        return Attempt::Refused { status: ItemStatus::Skipped, error: ItemErrorCode::CrossVolume };
+        return Err(Attempt::Refused { status: ItemStatus::Skipped, error: ItemErrorCode::CrossVolume });
     }
-    let size_bytes = match measured_size(item, fs) {
-        Ok(size_bytes) => size_bytes,
-        Err(error) => return failed_io(&error),
-    };
+    let size_bytes = measured_size(item, destination, fs).map_err(|error| failed_io(&error))?;
     if exceeds_cap(moved_bytes, size_bytes, destination.max_size) {
-        return Attempt::Refused { status: ItemStatus::Skipped, error: max_size_exceeded() };
+        return Err(Attempt::Refused { status: ItemStatus::Skipped, error: max_size_exceeded() });
     }
-    move_into(item, destination, size_bytes, fs)
+    Ok(size_bytes)
 }
 
 /// Create the item directory and rename the item into it.
-fn move_into(
+///
+/// The rename refuses to replace anything already at the destination: a stored
+/// path that is somehow taken means another run is using this session, and
+/// overwriting it would destroy a quarantined item.
+pub fn move_into(
     item: &ApprovedItem,
     destination: &Destination<'_>,
     size_bytes: u64,
     fs: &dyn FileOps,
 ) -> Attempt {
     let source = item.path();
-    let stored = layout::stored_path(destination.session_dir, destination.sequence, layout::basename(source));
+    let stored = destination.stored_path(source);
     let item_dir = layout::item_dir(destination.session_dir, destination.sequence);
-    match fs.create_dir_all(&item_dir).and_then(|()| fs.rename(source, &stored)) {
+    match fs.create_dir_all(&item_dir).and_then(|()| fs.rename_exclusive(source, &stored)) {
         Ok(()) => Attempt::Moved { stored, size_bytes },
         Err(error) => failed_io(&error),
     }
 }
 
-/// A directory is measured now; a file keeps the size the guard verified.
-fn measured_size(item: &ApprovedItem, fs: &dyn FileOps) -> Result<u64, BrozaError> {
+/// What the item is worth, measured only when the answer has to be exact.
+///
+/// A file keeps the size the guard verified. A directory's planned size is the
+/// scan's aggregate and may be stale, but re-walking a large tree costs real
+/// time, so it is only re-measured when `--max-size` makes the difference
+/// matter (`docs/cli-spec.md` §3.4, check 6).
+fn measured_size(
+    item: &ApprovedItem,
+    destination: &Destination<'_>,
+    fs: &dyn FileOps,
+) -> Result<u64, BrozaError> {
     if item.size_verified() {
         return Ok(item.size_bytes());
     }
-    measure_dir_bytes(fs, item.path())
+    if destination.max_size.is_none() {
+        return Ok(destination.planned_bytes);
+    }
+    measure_dir_bytes(fs, item.path(), None)
 }
 
 /// An I/O failure of one item, mapped to an item error code of §4.1.
@@ -127,6 +154,9 @@ pub fn moved_of(attempt: &Attempt) -> u64 {
 }
 
 /// The entry an attempt produces from the one the manifest already holds.
+///
+/// A refused item keeps neither the stored path nor the size the pre-check
+/// guessed: it never left home.
 pub fn updated_entry(entry: &QuarantineEntry, attempt: &Attempt) -> QuarantineEntry {
     let (status, error) = outcome_of(attempt);
     match attempt {
@@ -137,15 +167,29 @@ pub fn updated_entry(entry: &QuarantineEntry, attempt: &Attempt) -> QuarantineEn
             error,
             ..entry.clone()
         },
-        Attempt::Refused { .. } => QuarantineEntry { status, error, ..entry.clone() },
+        Attempt::Refused { .. } => QuarantineEntry { stored_path: None, status, error, ..entry.clone() },
+    }
+}
+
+/// The entry to write *before* the rename: the item may be in either place.
+pub fn in_flight(entry: &QuarantineEntry, stored: &Path, size_bytes: u64) -> QuarantineEntry {
+    QuarantineEntry {
+        stored_path: Some(stored.to_path_buf()),
+        size_bytes,
+        status: crate::quarantine::codes::moving(),
+        error: None,
+        ..entry.clone()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Attempt, failed_io, moved_of, outcome_of, updated_entry};
+    use std::path::Path;
+
+    use super::{Attempt, failed_io, in_flight, moved_of, outcome_of, updated_entry};
     use crate::BrozaError;
     use crate::model::{ItemErrorCode, ItemStatus};
+    use crate::quarantine::codes::moving;
     use crate::quarantine::fixtures::entry;
 
     fn refused(error: &BrozaError) -> ItemErrorCode {
@@ -181,15 +225,25 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_item_keeps_its_planned_size_and_has_no_stored_path() {
+    fn a_refused_item_has_no_stored_path_even_after_one_was_reserved() {
         let attempt = Attempt::Refused { status: ItemStatus::Skipped, error: ItemErrorCode::CrossVolume };
-        let before = entry(1, "/Users/dana/a", 10, ItemStatus::Planned);
+        let reserved = in_flight(&entry(1, "/Users/dana/a", 10, ItemStatus::Planned), Path::new("/s/a"), 10);
 
-        let after = updated_entry(&before, &attempt);
+        let after = updated_entry(&reserved, &attempt);
 
         assert_eq!(outcome_of(&attempt), (ItemStatus::Skipped, Some(ItemErrorCode::CrossVolume)));
-        assert_eq!(after.size_bytes, 10);
-        assert!(after.stored_path.is_none());
+        assert!(after.stored_path.is_none(), "nothing of it is in the store");
         assert_eq!(moved_of(&attempt), 0);
+    }
+
+    #[test]
+    fn an_item_in_flight_names_the_place_it_is_going() {
+        let before = entry(1, "/Users/dana/a", 10, ItemStatus::Planned);
+
+        let during = in_flight(&before, Path::new("/store/0001/a"), 42);
+
+        assert_eq!(during.status, moving());
+        assert_eq!(during.stored_path, Some("/store/0001/a".into()));
+        assert_eq!(during.size_bytes, 42);
     }
 }

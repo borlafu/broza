@@ -3,34 +3,45 @@
 //! The order is the one ADR 0004 fixes, chosen so that a crash at any point
 //! leaves a store a later run can still read:
 //!
-//! 1. create the session directory and write a manifest in state `in_progress`;
+//! 1. claim the session directory *exclusively*, so two runs that derive the
+//!    same identifier cannot share one session, and write a manifest in state
+//!    `in_progress`;
 //! 2. for each item, in plan order: re-`lstat` and compare `(device, inode)`
-//!    with the token, compare the device with the store's, measure a directory,
-//!    `rename` ([`attempt`](crate::quarantine::attempt));
-//! 3. rewrite the manifest after every item (temp file + rename);
+//!    with the token, compare the device with the store's, measure a directory
+//!    ([`precheck`]);
+//! 3. write the entry as `moving`, with the path it is going to, **before** the
+//!    rename, and rewrite it as `quarantined` after — so an interrupted move
+//!    leaves a trail either way and [`mod@crate::quarantine::reconcile`]
+//!    can settle it;
 //! 4. write the manifest one last time in state `complete`.
 //!
 //! Nothing is ever removed here. A failed item stays exactly where it was and is
 //! recorded as `failed` or `skipped`, and the run continues
 //! (`docs/cli-spec.md` §3.4).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::BrozaError;
-use crate::model::{CleanPlan, ItemStatus, QuarantineSession, SessionState};
-use crate::ports::{Clock, FileOps};
-use crate::quarantine::attempt::{Destination, attempt_move, moved_of, outcome_of, updated_entry};
+use crate::model::{CleanPlan, CleanPlanRepr, ItemStatus, QuarantineSession, SessionId, SessionState};
+use crate::ports::{Clock, FileOps, already_exists};
+use crate::quarantine::attempt::{
+    Attempt, Destination, in_flight, move_into, moved_of, outcome_of, precheck, updated_entry,
+};
 use crate::quarantine::entries::{planned_entries, sequence_of, with_entry};
 use crate::quarantine::manifest::{self, Manifest};
 use crate::quarantine::{layout, ttl};
 use crate::safety::guard::{Approved, ApprovedItem, Write};
 
-/// Where a move puts its items, and under which limits.
+/// How many session identifiers the mover tries before giving up.
+const MAX_SESSION_ATTEMPTS: u32 = 16;
+
+/// Under which limits a move happens.
+///
+/// The store root is **not** here: it comes from the token, which carries the
+/// one spelling of it the guard actually validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoveRequest {
-    /// Root of the quarantine store; the session directory is created inside it.
-    pub root: PathBuf,
     /// Retention period, from which `expires_at` is derived.
     pub ttl: Duration,
     /// `--max-size` cap in bytes, applied to the measured running total.
@@ -48,15 +59,16 @@ pub struct MoveOutcome {
 
 /// Move every approved item into a new session of the store.
 ///
-/// `quarantined_bytes` counts what was actually moved, measured rather than
-/// planned; `reclaimed_bytes` is left as the plan had it, because a quarantined
-/// item still occupies the disk (`AGENTS.md` §2.7).
+/// `quarantined_bytes` counts what was actually moved; `reclaimed_bytes` is left
+/// as the plan had it, because a quarantined item still occupies the disk
+/// (`AGENTS.md` §2.7).
 ///
 /// # Errors
 ///
-/// Only for failures of the store itself: the root cannot be read, the session
-/// directory cannot be created, the manifest cannot be written, or the token and
-/// the plan it carries do not describe the same work. The failure of a single
+/// [`BrozaError::Other`] when the token carries no quarantine root (the guard
+/// never validated one, so there is nowhere approved to write) or when the token
+/// and the plan do not describe the same work, plus whatever claiming the
+/// session directory or writing the manifest reports. The failure of a single
 /// *item* is recorded in the manifest and in the plan, and the move goes on.
 pub fn quarantine_items(
     token: &Approved<Write>,
@@ -64,9 +76,12 @@ pub fn quarantine_items(
     fs: &dyn FileOps,
     clock: &dyn Clock,
 ) -> Result<MoveOutcome, BrozaError> {
-    let plan = token.plan().clone();
-    let context = Context::new(request, &plan, token.items(), fs)?;
-    fs.create_dir_all(&context.dir)?;
+    let root = token.quarantine_root().ok_or_else(|| {
+        desynchronised("the approval carries no quarantine store, so there is nowhere to move to")
+    })?;
+    fs.create_dir_all(root)?;
+    let (plan, dir) = claim_session(root, token.plan(), fs)?;
+    let context = Context::new(&plan, dir, token.items(), request, fs)?;
     let session = new_session(&plan, &context, clock, request.ttl)?;
     let progress = Progress { manifest: Manifest::new(session), plan, moved_bytes: 0 };
     manifest::write(fs, &context.manifest, &progress.manifest)?;
@@ -75,6 +90,49 @@ pub fn quarantine_items(
             move_one(progress, position, item, &context, fs)
         })?;
     finish(moved, &context, fs)
+}
+
+/// Take a session directory nobody else has, and the plan that names it.
+///
+/// `create_dir_exclusive` is the whole mechanism: the first run to create the
+/// directory owns the identifier, and a second run — same second, same clock,
+/// same derived name — is told the name is taken and moves to the next one
+/// rather than writing its items into the other run's session.
+fn claim_session(
+    root: &Path,
+    plan: &CleanPlan,
+    fs: &dyn FileOps,
+) -> Result<(CleanPlan, PathBuf), BrozaError> {
+    let mut id = plan.session_id().clone();
+    for _ in 0..MAX_SESSION_ATTEMPTS {
+        let dir = layout::session_dir(root, &id);
+        match fs.create_dir_exclusive(&dir) {
+            Ok(()) => return Ok((with_session_id(plan, id)?, dir)),
+            Err(error) if already_exists(&error) => id = layout::next_session_id(&id)?,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(desynchronised(&format!(
+        "no free session identifier near `{}` after {MAX_SESSION_ATTEMPTS} tries",
+        plan.session_id()
+    )))
+}
+
+/// The same plan under another session identifier.
+fn with_session_id(plan: &CleanPlan, session_id: SessionId) -> Result<CleanPlan, BrozaError> {
+    if *plan.session_id() == session_id {
+        return Ok(plan.clone());
+    }
+    CleanPlan::new(CleanPlanRepr {
+        dry_run: plan.is_dry_run(),
+        session_id,
+        planned_bytes: plan.planned_bytes(),
+        quarantined_bytes: plan.quarantined_bytes(),
+        reclaimed_bytes: plan.reclaimed_bytes(),
+        quarantine_path: plan.quarantine_path().cloned(),
+        expired_sessions: plan.expired_sessions().to_vec(),
+        items: plan.items().to_vec(),
+    })
 }
 
 /// Everything the loop needs that does not change between items.
@@ -93,18 +151,29 @@ struct Context {
 
 impl Context {
     fn new(
-        request: &MoveRequest,
         plan: &CleanPlan,
+        dir: PathBuf,
         approved: &[ApprovedItem],
+        request: &MoveRequest,
         fs: &dyn FileOps,
     ) -> Result<Self, BrozaError> {
-        let dir = layout::session_dir(&request.root, plan.session_id());
         Ok(Self {
             manifest: layout::manifest_path(&dir),
+            root_device: fs.metadata(&dir)?.device,
             dir,
-            root_device: fs.metadata(&request.root)?.device,
             max_size: request.max_size,
             plan_indices: plan_indices(plan, approved)?,
+        })
+    }
+
+    /// Where the item at `position` is going.
+    fn destination(&self, position: usize, planned_bytes: u64) -> Result<Destination<'_>, BrozaError> {
+        Ok(Destination {
+            session_dir: &self.dir,
+            sequence: sequence_of(position)?,
+            root_device: self.root_device,
+            max_size: self.max_size,
+            planned_bytes,
         })
     }
 }
@@ -119,7 +188,7 @@ struct Progress {
     moved_bytes: u64,
 }
 
-/// One item: attempt the move, record it, and persist the manifest.
+/// One item: check it, announce the move, do it, and record what happened.
 fn move_one(
     progress: Progress,
     position: usize,
@@ -127,32 +196,66 @@ fn move_one(
     context: &Context,
     fs: &dyn FileOps,
 ) -> Result<Progress, BrozaError> {
-    let destination = Destination {
-        session_dir: &context.dir,
-        sequence: sequence_of(position)?,
-        root_device: context.root_device,
-        max_size: context.max_size,
+    let entry = entry_at(&progress.manifest, position)?;
+    let destination = context.destination(position, entry.size_bytes)?;
+    let size_bytes = match precheck(item, &destination, progress.moved_bytes, fs) {
+        Ok(size_bytes) => size_bytes,
+        Err(refused) => return record(progress, position, &refused, context, fs),
     };
-    let attempt = attempt_move(item, &destination, progress.moved_bytes, fs);
+    let stored = destination.stored_path(item.path());
+    let announced = announce(progress, position, &in_flight(&entry, &stored, size_bytes), context, fs)?;
+    let attempt = move_into(item, &destination, size_bytes, fs);
+    record(announced, position, &attempt, context, fs)
+}
+
+/// Persist the entry that says the item may already be in either place.
+fn announce(
+    progress: Progress,
+    position: usize,
+    flying: &crate::model::QuarantineEntry,
+    context: &Context,
+    fs: &dyn FileOps,
+) -> Result<Progress, BrozaError> {
     let Progress { manifest, plan, moved_bytes } = progress;
-    let Manifest { manifest_version, session } = manifest;
-    let entry = session
-        .entries
-        .get(position)
-        .ok_or_else(|| desynchronised(&format!("the manifest has no entry {position}")))?;
-    let session = with_entry(&session, position, &updated_entry(entry, &attempt));
+    let session = with_entry(&manifest.session, position, flying);
+    let manifest = manifest.with_session(session);
+    manifest::write(fs, &context.manifest, &manifest)?;
+    Ok(Progress { manifest, plan, moved_bytes })
+}
+
+/// Fold the outcome into the manifest, the plan and the running total.
+fn record(
+    progress: Progress,
+    position: usize,
+    attempt: &Attempt,
+    context: &Context,
+    fs: &dyn FileOps,
+) -> Result<Progress, BrozaError> {
+    let Progress { manifest, plan, moved_bytes } = progress;
+    let entry = entry_at(&manifest, position)?;
+    let session = with_entry(&manifest.session, position, &updated_entry(&entry, attempt));
     let index = *context
         .plan_indices
         .get(position)
         .ok_or_else(|| desynchronised(&format!("no plan item for approved item {position}")))?;
-    let (status, error) = outcome_of(&attempt);
+    let (status, error) = outcome_of(attempt);
     let progress = Progress {
-        manifest: Manifest { manifest_version, session },
+        manifest: manifest.with_session(session),
         plan: plan.with_item_status(index, status, error)?,
-        moved_bytes: moved_bytes.saturating_add(moved_of(&attempt)),
+        moved_bytes: moved_bytes.saturating_add(moved_of(attempt)),
     };
     manifest::write(fs, &context.manifest, &progress.manifest)?;
     Ok(progress)
+}
+
+/// The entry the manifest holds for the item at `position`.
+fn entry_at(manifest: &Manifest, position: usize) -> Result<crate::model::QuarantineEntry, BrozaError> {
+    manifest
+        .session
+        .entries
+        .get(position)
+        .cloned()
+        .ok_or_else(|| desynchronised(&format!("the manifest has no entry {position}")))
 }
 
 /// Close the session: mark it `complete` and fill in the plan's counters.
@@ -164,7 +267,7 @@ fn finish(progress: Progress, context: &Context, fs: &dyn FileOps) -> Result<Mov
         session: QuarantineSession { state: SessionState::Complete, ..session },
     };
     manifest::write(fs, &context.manifest, &manifest)?;
-    let holds_items = manifest.session.entries.iter().any(|entry| entry.status == ItemStatus::Quarantined);
+    let holds_items = manifest.session.entries.iter().any(|entry| entry.stored_path.is_some());
     let reclaimed_bytes = plan.reclaimed_bytes();
     let plan = plan
         .into_applied(holds_items.then(|| context.dir.clone()))?

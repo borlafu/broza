@@ -35,6 +35,8 @@ const SESSION_STAMP_PATTERN: &str = "%Y%m%d%H%M%S";
 const SESSION_PREFIX: &str = "cln";
 /// Number of distinct suffixes derived from the sub-second part of the clock.
 const SUFFIX_SPACE: u32 = 0x1_0000;
+/// Length of the suffix of a session identifier, as `model::ids` defines it.
+const SESSION_SUFFIX_LEN: usize = 4;
 
 /// Root of the quarantine store for the configured quarantine directory.
 ///
@@ -125,6 +127,44 @@ pub fn generate_session_id(clock: &dyn Clock) -> Result<SessionId, BrozaError> {
     format!("{SESSION_PREFIX}_{stamp}_{suffix:04x}").parse()
 }
 
+/// The identifier after `id`: same instant, next suffix.
+///
+/// Two runs in the same second with a coarse clock derive the same name. The
+/// mover claims its session directory exclusively and walks to the next
+/// identifier when the name is taken, so the loser of that race gets its own
+/// session instead of writing into someone else's.
+///
+/// # Errors
+///
+/// [`BrozaError::Usage`] when the result is not a valid [`SessionId`], which can
+/// only happen if `id` was built outside the grammar.
+pub fn next_session_id(id: &SessionId) -> Result<SessionId, BrozaError> {
+    let current = u32::from_str_radix(id.suffix_part(), SUFFIX_RADIX).unwrap_or(0);
+    let next = current.wrapping_add(1) % suffix_space();
+    format!("{SESSION_PREFIX}_{}_{}", id.timestamp_part(), suffix_text(next)).parse()
+}
+
+/// Base of the session suffix alphabet: `0`–`9` then `a`–`z`.
+const SUFFIX_RADIX: u32 = 36;
+
+/// How many suffixes the four-character alphabet holds.
+fn suffix_space() -> u32 {
+    SUFFIX_RADIX.pow(u32::try_from(SESSION_SUFFIX_LEN).unwrap_or(4))
+}
+
+/// `value` as exactly four base-36 characters, most significant first.
+fn suffix_text(value: u32) -> String {
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut left = value;
+    let mut text = vec![b'0'; SESSION_SUFFIX_LEN];
+    for slot in text.iter_mut().rev() {
+        let digit = usize::try_from(left % SUFFIX_RADIX).unwrap_or(0);
+        *slot = digits.get(digit).copied().unwrap_or(b'0');
+        left /= SUFFIX_RADIX;
+    }
+    String::from_utf8(text).unwrap_or_else(|_| "0000".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -133,8 +173,8 @@ mod tests {
     use jiff::Timestamp;
 
     use super::{
-        basename, entry_id, generate_session_id, item_dir, manifest_path, sequence_label, session_dir,
-        store_root, stored_path,
+        basename, entry_id, generate_session_id, item_dir, manifest_path, next_session_id, sequence_label,
+        session_dir, store_root, stored_path,
     };
     use crate::BrozaError;
     use crate::model::SessionId;
@@ -225,6 +265,33 @@ mod tests {
         assert_eq!(one.suffix_part(), "0001");
         assert_eq!(two.suffix_part(), "0001", "the suffix wraps inside its 16-bit space");
         assert_ne!(one.suffix_part(), "0002");
+    }
+
+    #[test]
+    fn the_next_identifier_keeps_the_instant_and_moves_the_suffix_on() {
+        let next = next_session_id(&session()).unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(next.timestamp_part(), session().timestamp_part());
+        assert_eq!(next.suffix_part(), "a1b3", "`a1b2` in base 36, plus one");
+        assert_ne!(next, session());
+    }
+
+    #[test]
+    fn the_suffix_wraps_instead_of_overflowing() {
+        let last: SessionId = "cln_20260921103608_zzzz".parse().unwrap_or_else(|e| panic!("{e}"));
+
+        let next = next_session_id(&last).unwrap_or_else(|error| panic!("{error}"));
+
+        assert_eq!(next.suffix_part(), "0000");
+    }
+
+    #[test]
+    fn every_step_of_the_suffix_stays_a_valid_identifier() {
+        let mut id: SessionId = "cln_20260921103608_zzzy".parse().unwrap_or_else(|e| panic!("{e}"));
+        for _ in 0..4 {
+            id = next_session_id(&id).unwrap_or_else(|error| panic!("{error}"));
+            assert!(id.as_str().parse::<SessionId>().is_ok(), "{id}");
+        }
     }
 
     #[test]

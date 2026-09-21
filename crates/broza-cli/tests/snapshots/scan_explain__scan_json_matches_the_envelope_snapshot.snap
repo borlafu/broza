@@ -321,6 +321,24 @@ expression: "json_of(&[\"scan\", \"--json\"])"
         "path": "/System/Volumes/Data/Users/dana/Documents/thesis.pdf",
         "size_bytes": 61700001792,
         "volume_id": "disk3s5"
+      },
+      {
+        "kind": "file",
+        "path": "/System/Volumes/Data/Users/dana/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
+        "size_bytes": 38600003584,
+        "volume_id": "disk3s5"
+      },
+      {
+        "kind": "file",
+        "path": "/System/Volumes/Data/Users/dana/code/old-site/node_modules/left-pad/index.js",
+        "size_bytes": 27200000000,
+        "volume_id": "disk3s5"
+      },
+      {
+        "kind": "file",
+        "path": "/System/Volumes/Data/Users/dana/Library/Logs/App/app.log",
+        "size_bytes": 1200001024,
+        "volume_id": "disk3s5"
       }
     ]
   },
@@ -331,5 +349,11 @@ expression: "json_of(&[\"scan\", \"--json\"])"
     "macos_version": "26.1"
   },
   "schema_version": "1.1",
-  "warnings": []
+  "warnings": [
+    {
+      "code": "size_exceeds_volume",
+      "message": "Data measures 425200009216 bytes but macOS reports 409422745600 in use on the volume. Each APFS clone is counted separately, so the sizes listed are upper bounds until clone accounting lands; the volume figure also includes snapshots and metadata a walk never sees.",
+      "path": "/System/Volumes/Data"
+    }
+  ]
 }

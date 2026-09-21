@@ -9,12 +9,14 @@ use broza::BrozaError;
 use broza::config::{Config, EnvSnapshot};
 use broza::model::{Host, Warning};
 use broza::ports::Ports;
+use std::path::PathBuf;
 
 use crate::cli::{Cli, Command};
 use crate::commands::config::ConfigContext;
 use crate::commands::explain::ExplainContext;
 use crate::commands::scan::ScanContext;
 use crate::commands::scan::folders::FolderSettings;
+use crate::commands::suggest::SuggestContext;
 use crate::commands::{self, Outcome};
 use crate::env::RuntimeEnv;
 use crate::output::{ColorPolicy, OutputFormat, Renderer};
@@ -52,6 +54,7 @@ pub fn dispatch(
     inputs: Inputs<'_>,
 ) -> Result<Outcome, BrozaError> {
     let generated_at = jiff::Timestamp::now();
+    let folders = folder_settings(cli, &inputs);
     match command {
         Command::About => {
             let rendered = commands::about::About::new(inputs.host, generated_at, inputs.warnings.clone())
@@ -79,22 +82,19 @@ pub fn dispatch(
             warnings: inputs.warnings,
             policy: inputs.policy,
             format: inputs.format,
-            folders: FolderSettings {
-                home: inputs.runtime.home.clone(),
-                cache_ttl: inputs.effective.cache_ttl.to_duration(),
-                no_cache: cli.global.no_cache,
-                show_progress: inputs.runtime.stderr_is_tty
-                    && !inputs.runtime.ci
-                    && !cli.global.quiet
-                    && inputs.format == OutputFormat::Human,
-                verbose: cli.global.verbose > 0,
-                own_stores: inputs
-                    .runtime
-                    .home
-                    .as_deref()
-                    .map(|home| vec![home.join(".cache/broza"), inputs.effective.quarantine_dir(home)])
-                    .unwrap_or_default(),
-            },
+            folders: folders.clone(),
+        }),
+        Command::Suggest(args) => commands::suggest::run(&SuggestContext {
+            ports: &inputs.ports,
+            args,
+            host: inputs.host,
+            generated_at,
+            warnings: inputs.warnings,
+            policy: inputs.policy,
+            format: inputs.format,
+            folders: folders.clone(),
+            config_min_size: inputs.effective.min_size,
+            config_unused_after: inputs.effective.unused_after,
         }),
         Command::Explain(args) => commands::explain::run(&ExplainContext {
             ports: &inputs.ports,
@@ -107,6 +107,32 @@ pub fn dispatch(
             format: inputs.format,
         }),
         other => Err(commands::not_implemented(other.name())),
+    }
+}
+
+/// The home a folder walk starts from: the real one, or the recording's under
+/// the debug-only fixture seam, where the real one does not exist.
+fn walked_home(runtime: &RuntimeEnv) -> Option<PathBuf> {
+    crate::wiring::fixture_home(runtime).or_else(|| runtime.home.clone())
+}
+
+/// Home, cache and progress settings shared by every command that walks folders.
+fn folder_settings(cli: &Cli, inputs: &Inputs<'_>) -> FolderSettings {
+    FolderSettings {
+        home: walked_home(inputs.runtime),
+        cache_ttl: inputs.effective.cache_ttl.to_duration(),
+        no_cache: cli.global.no_cache,
+        show_progress: inputs.runtime.stderr_is_tty
+            && !inputs.runtime.ci
+            && !cli.global.quiet
+            && inputs.format == OutputFormat::Human,
+        verbose: cli.global.verbose > 0,
+        own_stores: inputs
+            .runtime
+            .home
+            .as_deref()
+            .map(|home| vec![home.join(".cache/broza"), inputs.effective.quarantine_dir(home)])
+            .unwrap_or_default(),
     }
 }
 
@@ -195,12 +221,9 @@ mod tests {
 
     #[test]
     fn the_commands_of_the_next_milestone_are_routed_to_a_clear_refusal() {
-        for argv in [
-            vec!["broza", "suggest"],
-            vec!["broza", "clean"],
-            vec!["broza", "restore", "--all"],
-            vec!["broza", "quarantine", "list"],
-        ] {
+        for argv in
+            [vec!["broza", "clean"], vec!["broza", "restore", "--all"], vec!["broza", "quarantine", "list"]]
+        {
             let error = route(&argv).expect_err("must fail");
             assert_eq!(ExitCode::from(&error), ExitCode::GenericError, "{argv:?}");
             assert!(error.to_string().contains("not implemented"), "{error}");

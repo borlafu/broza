@@ -213,6 +213,18 @@ Progress:
       `size_exceeds_volume` until then.
 - [ ] Homebrew tap publishing 0.1.
 
+M3 progress:
+
+- [x] `Detector` trait, `DetectContext` over the shared home walk, `Registry` (failures →
+      `detector_failed` warnings), risk/size filters (`detect/`).
+- [x] `user-cache` (`library-caches`, `logs`, `incomplete-downloads`) and `build-cache`
+      (`xcode-deriveddata`, `xcode-archives`, `orphan-node-modules`, `pycache`, `gradle-caches`,
+      `cargo-target`, `docker-raw` inform-only) detectors.
+- [x] `broza suggest`: human (risk groups, text labels), `--json`, `--csv`, `--category`, `--risk`,
+      `--min-size`, `--unused-after`, `--explain`; one home walk through `scan`'s cache.
+- [ ] `clean --apply` executor: planner → guard → confirmation → quarantine mover → report.
+- [ ] `restore`, `quarantine list | expire | purge` commands; donation gate (RF-17).
+
 ### M3 — Green detectors and quarantine (release 0.2)
 
 Scope: `Detector` trait, `Registry`, filters, exclusions; detectors `user-cache` and `build-cache`

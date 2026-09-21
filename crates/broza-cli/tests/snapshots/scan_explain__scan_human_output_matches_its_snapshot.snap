@@ -79,7 +79,12 @@ Physical disk  disk8  —  Disk Image  (1.3 GB)  (external)
    Volumes in this container:
    └ Kiro CLI          Unknown  1.1 GB
 
+Sizes below are upper bounds: this volume holds APFS clones, which are counted separately (see the warning on stderr).
+
 Largest consumers on Data:
-  212.4 GB  /System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o
-   84.1 GB  /System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db
-   61.7 GB  /System/Volumes/Data/Users/dana/Documents/thesis.pdf
+  212.4 GB  ~/Library/Developer/Xcode/DerivedData/App/Build/app.o
+   84.1 GB  ~/Library/Caches/com.example.app/cache.db
+   61.7 GB  ~/Documents/thesis.pdf
+   38.6 GB  ~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw
+   27.2 GB  ~/code/old-site/node_modules/left-pad/index.js
+    1.2 GB  ~/Library/Logs/App/app.log

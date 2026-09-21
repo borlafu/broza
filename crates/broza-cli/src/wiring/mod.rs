@@ -13,6 +13,21 @@
 #[cfg(all(debug_assertions, feature = "fake-diskutil"))]
 mod fixture;
 
+/// The home a folder walk uses under the fixture seam, or `None` without it.
+///
+/// The seam swaps the filesystem for a recording in which the real `$HOME` does
+/// not exist; the recording's own home stands in for it.
+pub fn fixture_home(runtime: &crate::env::RuntimeEnv) -> Option<std::path::PathBuf> {
+    #[cfg(all(debug_assertions, feature = "fake-diskutil"))]
+    {
+        if runtime.fake_diskutil_fixtures.is_some() {
+            return Some(std::path::PathBuf::from(fixture::FIXTURE_HOME));
+        }
+    }
+    let _ = runtime;
+    None
+}
+
 use std::sync::Arc;
 
 use broza::BrozaError;

@@ -172,7 +172,7 @@ fn scan_lists_the_largest_consumers_of_the_data_volume() {
     let text = stdout_of(&["scan", "--volume", "Data"]);
 
     assert!(text.contains("Largest consumers on Data:"), "{text}");
-    assert!(text.contains("212.4 GB  /System/Volumes/Data/Users/dana/Library/Developer"), "{text}");
+    assert!(text.contains("212.4 GB  ~/Library/Developer"), "the recording's home prints as ~: {text}");
 }
 
 #[test]
@@ -200,8 +200,50 @@ fn scan_tree_draws_the_folder_tree_to_the_requested_depth() {
 fn scan_of_a_path_walks_only_that_path() {
     let text = stdout_of(&["scan", "/System/Volumes/Data/Users/dana/Documents", "--min-size", "1GB"]);
 
-    assert!(text.contains("61.7 GB  /System/Volumes/Data/Users/dana/Documents/thesis.pdf"), "{text}");
+    assert!(text.contains("61.7 GB  ~/Documents/thesis.pdf"), "{text}");
     assert!(!text.contains("DerivedData"), "{text}");
+}
+
+#[test]
+fn suggest_lists_the_green_categories_of_the_recorded_home() {
+    let text = stdout_of(&["suggest"]);
+
+    assert!(text.starts_with("Potentially reclaimable space:"), "{text}");
+    assert!(text.contains("SAFE (green)"), "{text}");
+    assert!(text.contains("build-cache"), "{text}");
+    assert!(text.contains("Xcode DerivedData"), "{text}");
+    assert!(text.contains("user-cache"), "{text}");
+    assert!(text.contains("Docker Desktop disk image"), "{text}");
+    assert!(text.contains("→ Broza does not delete this. See: broza explain build-cache"), "{text}");
+}
+
+#[test]
+fn suggest_json_matches_its_snapshot() {
+    let envelope = json_of(&["suggest", "--json"]);
+
+    insta::assert_json_snapshot!(envelope, {
+        ".generated_at" => "[timestamp]",
+        ".broza_version" => "[version]",
+        ".data.findings[].paths[].last_used" => "[time]",
+    });
+}
+
+#[test]
+fn suggest_csv_has_one_row_per_finding_in_contract_tokens() {
+    let text = stdout_of(&["suggest", "--csv", "--category", "build-cache"]);
+
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "id,category,title,risk,action,actionable,reclaimable_bytes,item_count");
+    assert!(lines.iter().skip(1).all(|l| l.starts_with("build-cache.")), "{text}");
+    assert!(lines.iter().any(|l| l.contains(",inform_only,false,")), "{text}");
+}
+
+#[test]
+fn suggest_refuses_an_unknown_category_with_exit_two() {
+    let (code, stderr) = failure_of(&["suggest", "--category", "nope"]);
+
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(stderr.contains("unknown category"), "{stderr}");
 }
 
 #[test]

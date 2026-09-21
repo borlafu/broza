@@ -101,7 +101,11 @@ impl ScanRequest {
 }
 
 /// What scanning one volume produced.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Equality compares what is *reported* — root, largest items, tree, warnings —
+/// and deliberately not `nodes`: a warm scan reports exactly what a cold one
+/// does while its nodes carry `from_cache` marks the cold ones do not.
+#[derive(Debug, Clone)]
 pub struct VolumeScan {
     /// Volume the numbers belong to.
     pub volume_id: VolumeId,
@@ -113,6 +117,18 @@ pub struct VolumeScan {
     pub tree: TreeView,
     /// What could not be read. Warnings never change the exit code.
     pub warnings: Vec<Diagnostic>,
+    /// Every directory the walk measured, for detectors that read the tree.
+    pub nodes: Vec<DirNode>,
+}
+
+impl PartialEq for VolumeScan {
+    fn eq(&self, other: &Self) -> bool {
+        self.volume_id == other.volume_id
+            && self.root == other.root
+            && self.largest == other.largest
+            && self.tree == other.tree
+            && self.warnings == other.warnings
+    }
 }
 
 #[cfg(test)]

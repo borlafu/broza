@@ -14,6 +14,7 @@ pub mod config;
 pub mod explain;
 pub mod mount;
 pub mod scan;
+pub mod suggest;
 pub mod target;
 
 use broza::model::Warning;

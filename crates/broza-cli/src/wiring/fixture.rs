@@ -63,11 +63,22 @@ const FIRMLINKS: &[u8] = b"/Applications\tApplications\n\
 /// A handful of sized files on the Data volume, so a replayed `scan` has
 /// consumers to list. Sizes are round on purpose: they are a fixture, not a
 /// recording, and the snapshot should read as one.
-const RECORDED_FILES: [(&str, u64); 3] = [
+const RECORDED_FILES: [(&str, u64); 6] = [
     ("/System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o", 212_400_000_000),
     ("/System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db", 84_100_000_000),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", 61_700_000_000),
+    ("/System/Volumes/Data/Users/dana/code/old-site/node_modules/left-pad/index.js", 27_200_000_000),
+    ("/System/Volumes/Data/Users/dana/Library/Logs/App/app.log", 1_200_000_000),
+    (
+        "/System/Volumes/Data/Users/dana/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
+        38_600_000_000,
+    ),
 ];
+/// The home directory of the recorded machine, in the spelling its files use.
+///
+/// The seam swaps the filesystem for the recording, so the real `$HOME` of the
+/// test process does not exist there; commands that walk the home walk this one.
+pub const FIXTURE_HOME: &str = "/System/Volumes/Data/Users/dana";
 /// Directories a test may ask `explain` about; the firmlinks send them to Data.
 const FIRMLINKED_DIRS: [&str; 5] = ["/Applications", "/Library", "/Users", "/opt", "/private"];
 

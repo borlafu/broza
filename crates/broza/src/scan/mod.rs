@@ -231,6 +231,7 @@ fn assemble(entry: &MountEntry, root_path: &Path, walked: &WalkResult, request: 
         root,
         warnings,
         volume_id,
+        nodes: walked.nodes.clone(),
     }
 }
 

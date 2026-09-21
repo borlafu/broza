@@ -7,6 +7,7 @@
 
 pub mod explain;
 pub mod scan;
+pub mod suggest;
 
 use broza::model::{Action, Risk, VolumeRole};
 

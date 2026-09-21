@@ -86,7 +86,7 @@ fn quarantine_purge_with_yes_exits_two() {
 fn unimplemented_commands_exit_one_with_a_message_on_stderr() {
     let home = temp_home();
     broza(home.path())
-        .arg("suggest")
+        .arg("clean")
         .assert()
         .code(1)
         .stderr(contains("not implemented"))

@@ -93,6 +93,25 @@ pub fn walk(
     Ok(results_of(scans?, &selected, request.top))
 }
 
+/// The request `suggest` walks the home with: every directory measured, nothing
+/// listed, the same cache and exclusions as `scan`.
+///
+/// # Errors
+///
+/// Never today; kept fallible so a future setting that can be wrong reports it.
+pub fn request_for_home(settings: &FolderSettings) -> Result<ScanRequest, BrozaError> {
+    let args = ScanArgs {
+        paths: Vec::new(),
+        depth: 0,
+        top: 0,
+        min_size: Some("0".to_owned()),
+        volume: None,
+        no_external: false,
+        tree: false,
+    };
+    request_for(&args, settings)
+}
+
 /// The core request the flags and the settings add up to.
 fn request_for(args: &ScanArgs, settings: &FolderSettings) -> Result<ScanRequest, BrozaError> {
     let min_size: ByteSize = args.min_size.as_deref().unwrap_or(SCAN_DEFAULT_MIN_SIZE).parse()?;
@@ -268,6 +287,7 @@ mod tests {
             largest: items,
             tree: tree.clone(),
             warnings: Vec::new(),
+            nodes: Vec::new(),
         };
         let scans = vec![scan(vec![item("/a", 5), item("/b", 4)]), scan(vec![item("/c", 3), item("/d", 2)])];
 

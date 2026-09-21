@@ -16,6 +16,7 @@ pub mod fake_prompter;
 pub mod fake_runner;
 mod fake_tree;
 pub mod fixed_clock;
+pub mod fixture_runner;
 pub mod mac_fixture;
 mod sync;
 
@@ -26,6 +27,7 @@ pub use fake_fs::FakeFileOps;
 pub use fake_prompter::{FakePrompter, RecordedPrompt};
 pub use fake_runner::{FakeRunner, RecordedCall};
 pub use fixed_clock::FixedClock;
+pub use fixture_runner::fixture_runner;
 pub use mac_fixture::{mac_mount_table, mac_volumes};
 
 use crate::ports::{

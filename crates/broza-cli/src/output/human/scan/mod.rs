@@ -134,6 +134,7 @@ mod tests {
         Volume {
             id: id(raw_id),
             name: name.to_owned(),
+            uuid: None,
             role,
             mount_point: Some(PathBuf::from("/")),
             used_bytes,

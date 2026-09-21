@@ -172,6 +172,7 @@ mod tests {
             id: "disk3s5".parse().unwrap_or_else(|e| panic!("{e}")),
             name: "Macintosh HD - Data".to_owned(),
             role,
+            uuid: None,
             mount_point: Some(PathBuf::from("/System/Volumes/Data")),
             used_bytes: 798_210_000_000,
             writable_by_broza: role.writable_by_broza(),

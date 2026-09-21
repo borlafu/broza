@@ -328,6 +328,7 @@ Supports `--json`. Does not support `--csv` (exit `2`).
 | `--apply` including amber risk | Detailed summary (every path) + explicit confirmation (`y/N`). |
 | `--apply` including red / `inform_only` | **Rejected**, exit `2`. `cloud-synced` cannot be removed by Broza. |
 | `--purge` | Double confirmation. The literal word `PURGE` must be typed. Ignores `--yes`; combining them exits `2`. |
+| Plan contains a natively irreversible action (`trash` → `purge`, `snapshots` → `tmutil_delete`) without `--purge` | Detailed summary flagged **irreversible** + explicit confirmation (`y/N`). `--yes` is honoured: these categories are amber and were selected explicitly. |
 | `--yes` (no `--purge`) | Skips the y/N prompt. Also covers the automatic expiry step below. |
 | No TTY and no `--yes` | Exits `7` (`CONFIRMATION_REQUIRED`). Does not act. |
 | `CI` set | Treated as no TTY. |
@@ -906,3 +907,4 @@ Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<vol
 - §9: this changelog.
 - §4 (while 1.1 is unreleased, so no bump): documented what the model of `crates/broza/src/model/` already implements — optional `volumes[].mount_point` (unmounted `Preboot` / `Recovery`), optional `snapshots[].uuid`, optional `clean.quarantine_path`, the `entries` array of `manifest.json` and the item fields `stored_path` / `restored_to`; `type` added to the stable-enum table with pass-through of unknown tokens; unknown-value handling made explicit per enum (verbatim pass-through for the persisted ones, collapse to `unknown` for `role`); `instructions` required for every `inform_only` finding; normative consistency rules for `clean`, and its example renumbered so `planned_bytes` is the sum of the items shown.
 - §2 (M1 safety kernel, unreleased): explicit exit-code rows for safety-kernel refusals (`2`), vanished items (`skipped` + `not_found`), OS permission errors on single items (`failed` + `permission_denied`), and dry runs whose selection is entirely `inform_only` (`0` with a warning).
+- §3.4 (M1, unreleased): confirmation row for natively irreversible actions (`trash`, `snapshots`) without `--purge`.

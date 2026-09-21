@@ -13,6 +13,7 @@ pub mod detect;
 pub mod error;
 pub mod model;
 pub mod ports;
+pub mod quarantine;
 pub mod safety;
 pub mod scan;
 #[cfg(any(test, feature = "test-support"))]

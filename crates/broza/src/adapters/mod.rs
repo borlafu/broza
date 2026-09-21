@@ -4,6 +4,7 @@
 //! `unsafe` (`AGENTS.md` §4). Everything here implements a trait from
 //! [`crate::ports`], so the rest of the core stays pure and testable.
 
+pub(crate) mod bulk_dir;
 pub mod diskutil;
 pub(crate) mod io_error;
 pub mod mount_table;

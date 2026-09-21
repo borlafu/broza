@@ -50,6 +50,50 @@ fn a_hard_link_shares_the_inode_and_raises_the_link_count() {
 }
 
 #[test]
+fn a_listing_with_metadata_says_the_same_as_stating_every_child() {
+    for subject in subjects() {
+        let listing = subject
+            .fs
+            .read_dir_with_metadata(&subject.path("dir"))
+            .unwrap_or_else(|e| panic!("{}: {e}", subject.name));
+
+        assert!(!listing.is_empty(), "{}", subject.name);
+        for (path, meta) in listing {
+            let bulk = meta.unwrap_or_else(|e| panic!("{}: {} {e}", subject.name, path.display()));
+            let stated = subject
+                .fs
+                .metadata(&path)
+                .unwrap_or_else(|e| panic!("{}: {} {e}", subject.name, path.display()));
+            assert_eq!(bulk, stated, "{}: {}", subject.name, path.display());
+        }
+    }
+}
+
+#[test]
+fn a_listing_holds_exactly_the_children_read_dir_reports() {
+    for subject in subjects() {
+        let entries = subject
+            .fs
+            .read_dir_with_metadata(&subject.path("."))
+            .unwrap_or_else(|e| panic!("{}: {e}", subject.name));
+        let mut listed: Vec<_> = entries.into_iter().map(|(path, _)| path).collect();
+        let mut expected = subject.children(".");
+        listed.sort();
+        expected.sort();
+
+        assert_eq!(listed, expected, "{}", subject.name);
+    }
+}
+
+#[test]
+fn nothing_in_a_scratch_tree_is_a_cloud_placeholder() {
+    for subject in subjects() {
+        assert!(!subject.metadata(FILE).is_dataless, "{}", subject.name);
+        assert!(!subject.metadata("dir").is_dataless, "{}", subject.name);
+    }
+}
+
+#[test]
 fn metadata_of_a_directory_reports_a_directory() {
     for subject in subjects() {
         let meta = subject.metadata("dir");

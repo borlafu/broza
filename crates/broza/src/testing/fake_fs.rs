@@ -101,6 +101,38 @@ impl FakeFileOps {
         self
     }
 
+    /// Add a cloud placeholder of `size_bytes`, as iCloud Drive leaves behind.
+    ///
+    /// Its apparent size is what it would take once downloaded; none of it is
+    /// on this disk, and reading it would block on the provider.
+    pub fn add_dataless_file(&self, path: impl AsRef<Path>, size_bytes: u64) {
+        let path = path.as_ref().to_path_buf();
+        self.add_file(&path, &[]);
+        self.set_size(&path, size_bytes);
+        lock(&self.tree).set_dataless(&path);
+    }
+
+    /// Builder form of [`FakeFileOps::add_dataless_file`].
+    #[must_use]
+    pub fn with_dataless_file(self, path: impl AsRef<Path>, size_bytes: u64) -> Self {
+        self.add_dataless_file(path, size_bytes);
+        self
+    }
+
+    /// Mark an existing directory as a cloud placeholder.
+    pub fn add_dataless_dir(&self, path: impl AsRef<Path>) {
+        let path = path.as_ref().to_path_buf();
+        self.add_dir(&path);
+        lock(&self.tree).set_dataless(&path);
+    }
+
+    /// Builder form of [`FakeFileOps::add_dataless_dir`].
+    #[must_use]
+    pub fn with_dataless_dir(self, path: impl AsRef<Path>) -> Self {
+        self.add_dataless_dir(path);
+        self
+    }
+
     /// Add a directory and every missing parent.
     pub fn add_dir(&self, path: impl AsRef<Path>) {
         let path = path.as_ref();
@@ -206,6 +238,7 @@ impl FileOps for FakeFileOps {
             link_count: tree.link_count(&resolved),
             is_dir: matches!(node.kind, NodeKind::Dir),
             is_symlink: matches!(node.kind, NodeKind::Symlink(_)),
+            is_dataless: node.is_dataless,
             modified: node.modified,
             accessed: node.accessed,
         })

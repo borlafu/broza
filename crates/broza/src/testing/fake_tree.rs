@@ -42,6 +42,8 @@ pub(crate) struct Node {
     pub modified: Option<Timestamp>,
     /// Last access time.
     pub accessed: Option<Timestamp>,
+    /// `true` for a cloud placeholder whose contents are not on this disk.
+    pub is_dataless: bool,
 }
 
 impl Node {
@@ -153,7 +155,8 @@ impl Tree {
             |node| node.inode,
         );
         let now = default_time();
-        let node = Node { kind, inode, size_override: None, modified: now, accessed: now };
+        let node =
+            Node { kind, inode, size_override: None, modified: now, accessed: now, is_dataless: false };
         self.nodes.insert(path.to_path_buf(), node);
     }
 
@@ -188,6 +191,13 @@ impl Tree {
         if let Some(node) = self.nodes.get_mut(path) {
             node.modified = Some(modified);
             node.accessed = Some(accessed);
+        }
+    }
+
+    /// Mark an existing entry as a cloud placeholder.
+    pub fn set_dataless(&mut self, path: &Path) {
+        if let Some(node) = self.nodes.get_mut(path) {
+            node.is_dataless = true;
         }
     }
 

@@ -1,0 +1,37 @@
+---
+source: crates/broza/tests/json_contract.rs
+expression: value
+---
+{
+  "data": {
+    "dry_run": false,
+    "expired_sessions": [
+      {
+        "freed_bytes": 12400000000,
+        "id": "cln_20260801091200_c3d4"
+      }
+    ],
+    "items": [
+      {
+        "action": "quarantine",
+        "finding_id": "build-cache.xcode-deriveddata",
+        "path": "/Users/x/Library/Developer/Xcode/DerivedData",
+        "size_bytes": 94200000000,
+        "status": "quarantined"
+      },
+      {
+        "action": "quarantine",
+        "error": "cross_volume",
+        "finding_id": "build-cache.orphan-node-modules",
+        "path": "/Volumes/External/Projects/old/node_modules",
+        "size_bytes": 16800000000,
+        "status": "skipped"
+      }
+    ],
+    "planned_bytes": 138200000000,
+    "quarantine_path": "/Users/x/.local/share/broza/quarantine/cln_20260921103608_a1b2",
+    "quarantined_bytes": 121400000000,
+    "reclaimed_bytes": 12400000000,
+    "session_id": "cln_20260921103608_a1b2"
+  }
+}

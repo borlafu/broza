@@ -1,0 +1,17 @@
+---
+source: crates/broza/tests/json_contract.rs
+expression: value
+---
+{
+  "broza_version": "0.1.0",
+  "command": "suggest",
+  "data": {},
+  "errors": [],
+  "generated_at": "2026-09-21T10:36:08Z",
+  "host": {
+    "arch": "arm64",
+    "macos_version": "26.1"
+  },
+  "schema_version": "1.1",
+  "warnings": []
+}

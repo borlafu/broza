@@ -128,6 +128,19 @@ mod tests {
     }
 
     #[test]
+    fn with_warning_appends_without_touching_the_exit_code() {
+        let original = Envelope::new("scan", host(), "2026-09-21T10:36:08Z", 0_u8);
+        let with_warning = original.clone().with_warning(Warning {
+            code: "spotlight_unavailable".into(),
+            message: "no last-used dates".into(),
+            path: None,
+        });
+        assert!(original.warnings.is_empty());
+        assert_eq!(with_warning.warnings.len(), 1);
+        assert!(!with_warning.is_partial_failure());
+    }
+
+    #[test]
     fn deserializes_ignoring_unknown_fields() {
         let raw = r#"{"schema_version":"1.1","broza_version":"0.1.0","generated_at":"2026-09-21T10:36:08Z",
             "command":"about","host":{"macos_version":"26.1","arch":"arm64"},"data":{},"future_field":1}"#;

@@ -1,0 +1,25 @@
+---
+source: crates/broza/tests/json_contract.rs
+expression: value
+---
+{
+  "data": {
+    "operation": "restore",
+    "restored_bytes": 94200000000,
+    "sessions": [
+      {
+        "id": "cln_20260917103608_a1b2",
+        "items": [
+          {
+            "id": "cln_20260917103608_a1b2/0001",
+            "original_path": "/Users/x/Library/Developer/Xcode/DerivedData",
+            "restored_to": "/Users/x/Library/Developer/Xcode/DerivedData",
+            "size_bytes": 94200000000,
+            "status": "restored"
+          }
+        ],
+        "status": "restored"
+      }
+    ]
+  }
+}

@@ -245,5 +245,9 @@ mod tests {
         assert_eq!(ByteSize::from(7_u64).bytes(), 7);
         assert!(serde_json::from_str::<ByteSize>("-5").is_err());
         assert!(serde_json::from_str::<ByteSize>("\"nope\"").is_err());
+
+        let wrong_type = serde_json::from_str::<ByteSize>("true");
+        let message = wrong_type.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(message.contains("a size string"), "{message}");
     }
 }

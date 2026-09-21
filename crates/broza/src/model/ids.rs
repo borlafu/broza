@@ -298,4 +298,11 @@ mod tests {
         assert_eq!(id.clone().into_inner(), "user-cache.logs");
         assert_eq!(id.as_ref(), "user-cache.logs");
     }
+
+    #[test]
+    fn identifiers_can_be_converted_from_string_slices() {
+        let id = VolumeId::try_from("disk3s5").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(id.as_str(), "disk3s5");
+        assert!(VolumeId::try_from("nvme0").is_err());
+    }
 }

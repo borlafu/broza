@@ -1,0 +1,58 @@
+{
+  "data": {
+    "total_reclaimable_bytes": 246800000000,
+    "by_risk": {
+      "green": 138200000000,
+      "amber": 96100000000,
+      "red": 12500000000
+    },
+    "findings": [{
+      "id": "build-cache.xcode-deriveddata",
+      "category": "build-cache",
+      "title": "Xcode DerivedData",
+      "description": "Xcode build artefacts. They are regenerated automatically.",
+      "risk": "green",
+      "reclaimable_bytes": 94200000000,
+      "item_count": 1284,
+      "actionable": true,
+      "action": "quarantine",
+      "reasoning": "Not opened in 94 days. Xcode regenerates this directory on the next build.",
+      "paths": [{
+        "path": "/Users/x/Library/Developer/Xcode/DerivedData",
+        "size_bytes": 94200000000,
+        "last_used": "2026-06-15T09:12:00Z"
+      }]
+    }, {
+      "id": "snapshots.timemachine-local",
+      "category": "snapshots",
+      "title": "Time Machine local snapshots",
+      "description": "APFS copy-on-write snapshots kept locally by Time Machine.",
+      "risk": "amber",
+      "reclaimable_bytes": 0,
+      "item_count": 4,
+      "actionable": true,
+      "action": "tmutil_delete",
+      "reasoning": "size not reported by macOS",
+      "snapshots": [{
+        "name": "com.apple.TimeMachine.2026-09-20-101530.local",
+        "purgeable": true
+      }]
+    }, {
+      "id": "cloud-synced.icloud",
+      "category": "cloud-synced",
+      "title": "Already backed up in iCloud Drive",
+      "risk": "red",
+      "reclaimable_bytes": 12500000000,
+      "actionable": false,
+      "action": "inform_only",
+      "instructions": {
+        "provider": "iCloud Drive",
+        "summary": "Use Apple's official feature to release local copies.",
+        "steps": [
+          "System Settings → [your name] → iCloud → iCloud Drive",
+          "Turn on \"Optimize Mac Storage\""
+        ]
+      }
+    }]
+  }
+}

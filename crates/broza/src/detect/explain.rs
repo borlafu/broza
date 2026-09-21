@@ -4,10 +4,10 @@
 //! Three kinds of target share one payload. A **volume** is explained by its
 //! APFS role, whose paragraphs live with the rest of the role wording in
 //! [`crate::adapters::diskutil::purpose`]. A **category** is explained by the
-//! prose in [`super::category_text`], and carries the risk and action of the
-//! table in `docs/cli-spec.md` §3.3. A **path** is explained by the volume it
-//! lives on, with the path itself recorded so a caller can see which volume
-//! answered.
+//! prose kept beside this module in `detect/category_text.rs`, and carries the
+//! risk and the action of the table in `docs/cli-spec.md` §3.3. A **path** is
+//! explained by the volume it lives on, with the path itself recorded so a
+//! caller can see which volume answered.
 //!
 //! Everything here is a pure function of its input: no filesystem, no
 //! processes. Resolving a target to a volume is the caller's job.

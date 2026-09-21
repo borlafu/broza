@@ -1,0 +1,34 @@
+---
+source: crates/broza-cli/tests/scan_explain.rs
+expression: "json_of(&[\"explain\", \"/Users\", \"--json\"])"
+---
+{
+  "broza_version": "[version]",
+  "command": "explain",
+  "data": {
+    "explanation": {
+      "is_it_safe": "Yes, with judgement. It is not a system volume. Broza never modifies the System, Preboot, Recovery or VM volumes.",
+      "what_it_is": "The mutable data volume of macOS. It holds /Users, the applications you install, your user libraries and caches. It is joined to the system volume through \"firmlinks\", which is why Finder shows a single disk.",
+      "what_it_is_for": "This is where practically everything that belongs to you lives. Around 99% of what Broza can help you clean is here."
+    },
+    "kind": "path",
+    "path": "/Users",
+    "volume": {
+      "id": "disk3s5",
+      "mount_point": "/System/Volumes/Data",
+      "name": "Data",
+      "purpose": "The writable volume that holds your home folder, your applications and your settings.",
+      "role": "data",
+      "used_bytes": 409422745600,
+      "writable_by_broza": true
+    }
+  },
+  "errors": [],
+  "generated_at": "[rfc3339]",
+  "host": {
+    "arch": "arm64",
+    "macos_version": "26.1"
+  },
+  "schema_version": "1.1",
+  "warnings": []
+}

@@ -78,18 +78,26 @@ fn resolve(context: &ExplainContext<'_>) -> Result<(ExplainReport, Vec<Warning>)
     if let Some(volume) = volume_named(&enumeration.disks, target) {
         return Ok((ExplainReport::for_volume(volume), warnings));
     }
+    let path = normalize(Path::new(target), context.cwd);
+    if !context.ports.fs.exists(&path) {
+        return Err(BrozaError::TargetNotFound(unresolved(target)));
+    }
     let mount = broza::adapters::system_mount_table(&enumeration.disks)?;
     let warnings = [warnings, mount.warnings].concat();
-    let path = normalize(Path::new(target), context.cwd);
     let entry =
         mount.table.volume_for(&path).ok_or_else(|| BrozaError::TargetNotFound(unresolved(target)))?;
     Ok((ExplainReport::for_path(&path, entry.volume.clone()), warnings))
 }
 
 /// Why nothing matched, in the order the specification resolves targets.
+///
+/// A path is only explained when it exists: every string normalises to *some*
+/// path under `/`, so without that check a typo would be answered with a
+/// confident explanation of the volume the working directory happens to be on
+/// instead of the exit `4` the specification asks for.
 fn unresolved(target: &str) -> String {
     format!(
-        "`{target}` is not a category id, a volume, or a path on a volume Broza can see; \
+        "`{target}` is not a category id, a volume, or an existing path on a volume Broza can see; \
          try `broza scan` to list the volumes"
     )
 }
@@ -325,6 +333,7 @@ mod tests {
         let message = unresolved("nope");
         assert!(message.contains("category"), "{message}");
         assert!(message.contains("volume"), "{message}");
+        assert!(message.contains("existing path"), "{message}");
         assert!(message.contains("broza scan"), "{message}");
     }
 

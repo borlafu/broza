@@ -41,7 +41,7 @@ pub fn ports(runtime: &RuntimeEnv) -> Result<Ports, BrozaError> {
 /// See [`ports`].
 pub fn ports_with_prompter(runtime: &RuntimeEnv, prompter: Arc<dyn Prompter>) -> Result<Ports, BrozaError> {
     let process = process_runner(runtime)?;
-    let (disks, space, snapshots) = system_disk_ports(Arc::clone(&process));
+    let (disks, space, snapshots) = disk_ports(runtime, Arc::clone(&process));
     Ok(Ports {
         process,
         disks,
@@ -51,6 +51,47 @@ pub fn ports_with_prompter(runtime: &RuntimeEnv, prompter: Arc<dyn Prompter>) ->
         clock: Arc::new(SystemClock),
         prompter,
     })
+}
+
+/// The three storage ports: the real ones, or the recorded machine's.
+///
+/// Purgeable space does not come from a command, so replacing the runner is
+/// not enough to make a recorded machine reproducible: Foundation would still
+/// answer with *this* Mac's figures. Under the fixture seam the space provider
+/// is pinned too, which is what lets a snapshot of `scan` be a snapshot.
+type DiskPorts = (
+    Arc<dyn broza::ports::DiskEnumerator>,
+    Arc<dyn broza::ports::SpaceProvider>,
+    Arc<dyn broza::ports::SnapshotProvider>,
+);
+
+#[cfg(all(debug_assertions, feature = "fake-diskutil"))]
+fn disk_ports(runtime: &RuntimeEnv, process: Arc<dyn ProcessRunner>) -> DiskPorts {
+    use broza::adapters::{DiskutilEnumerator, DiskutilSnapshots};
+    use broza::ports::{FileOps, SpaceProvider};
+
+    if runtime.fake_diskutil_fixtures.is_none() {
+        return system_disk_ports(process);
+    }
+    let space: Arc<dyn SpaceProvider> = Arc::new(
+        broza::testing::FakeSpace::new().with_purgeable(FIXTURE_PURGEABLE_MOUNT, FIXTURE_PURGEABLE_BYTES),
+    );
+    let fs: Arc<dyn FileOps> = Arc::new(StdFileOps);
+    let disks = Arc::new(DiskutilEnumerator::new(Arc::clone(&process), Arc::clone(&space), fs));
+    let snapshots = Arc::new(DiskutilSnapshots::new(process));
+    (disks, space, snapshots)
+}
+
+/// Mount point the recorded machine reports purgeable space for.
+#[cfg(all(debug_assertions, feature = "fake-diskutil"))]
+const FIXTURE_PURGEABLE_MOUNT: &str = "/System/Volumes/Data";
+/// Purgeable bytes the recorded machine reports, 2.4 GB.
+#[cfg(all(debug_assertions, feature = "fake-diskutil"))]
+const FIXTURE_PURGEABLE_BYTES: u64 = 2_400_000_000;
+
+#[cfg(not(all(debug_assertions, feature = "fake-diskutil")))]
+fn disk_ports(_runtime: &RuntimeEnv, process: Arc<dyn ProcessRunner>) -> DiskPorts {
+    system_disk_ports(process)
 }
 
 /// The runner every external command of this run goes through.

@@ -1,0 +1,5 @@
+---
+source: crates/broza-cli/tests/scan_explain.rs
+expression: "stdout_of(&[\"explain\", \"cloud-synced\", \"--short\"])"
+---
+cloud-synced  ·  INFO ONLY  ·  Files already synced to iCloud Drive, Dropbox, OneDrive or Google Drive. Reported only, never deleted.

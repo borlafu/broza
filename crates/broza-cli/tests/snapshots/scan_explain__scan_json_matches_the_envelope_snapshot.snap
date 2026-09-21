@@ -1,0 +1,299 @@
+---
+source: crates/broza-cli/tests/scan_explain.rs
+expression: "json_of(&[\"scan\", \"--json\"])"
+---
+{
+  "broza_version": "[version]",
+  "command": "scan",
+  "data": {
+    "disks": [
+      {
+        "containers": [
+          {
+            "free_bytes": 504479744,
+            "id": "disk1",
+            "purgeable_bytes": 0,
+            "size_bytes": 524288000,
+            "type": "apfs",
+            "used_bytes": 19808256,
+            "volumes": [
+              {
+                "id": "disk1s1",
+                "mount_point": "/System/Volumes/iSCPreboot",
+                "name": "iSCPreboot",
+                "purpose": "Boot loader data that macOS needs before the system volume is available.",
+                "role": "preboot",
+                "used_bytes": 5877760,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk1s2",
+                "mount_point": "/System/Volumes/xarts",
+                "name": "xART",
+                "purpose": "Secure counters used by the Secure Enclave to detect rollback attacks.",
+                "role": "unknown",
+                "used_bytes": 6311936,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk1s3",
+                "mount_point": "/System/Volumes/Hardware",
+                "name": "Hardware",
+                "purpose": "Hardware-specific data written by the firmware of this Mac.",
+                "role": "unknown",
+                "used_bytes": 2641920,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk1s4",
+                "name": "Recovery",
+                "purpose": "The recovery environment used to repair or reinstall macOS.",
+                "role": "recovery",
+                "used_bytes": 20480,
+                "writable_by_broza": false
+              }
+            ]
+          },
+          {
+            "free_bytes": 3049013248,
+            "id": "disk2",
+            "purgeable_bytes": 0,
+            "size_bytes": 5368664064,
+            "type": "apfs",
+            "used_bytes": 2319650816,
+            "volumes": [
+              {
+                "id": "disk2s1",
+                "mount_point": "/System/Volumes/Update/SFR/mnt1",
+                "name": "Recovery",
+                "purpose": "The recovery environment used to repair or reinstall macOS.",
+                "role": "recovery",
+                "used_bytes": 2297442304,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk2s2",
+                "name": "Update",
+                "purpose": "Staging area for macOS updates, written and cleared by the installer.",
+                "role": "unknown",
+                "used_bytes": 2461696,
+                "writable_by_broza": false
+              }
+            ]
+          },
+          {
+            "free_bytes": 39848054784,
+            "id": "disk3",
+            "purgeable_bytes": 2400000000,
+            "size_bytes": 494384795648,
+            "type": "apfs",
+            "used_bytes": 454536740864,
+            "volumes": [
+              {
+                "id": "disk3s1",
+                "mount_point": "/",
+                "name": "Macintosh HD",
+                "purpose": "Read-only, sealed and signed operating system volume (SSV).",
+                "role": "system",
+                "used_bytes": 17116610560,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk3s2",
+                "mount_point": "/System/Volumes/Preboot",
+                "name": "Preboot",
+                "purpose": "Boot loader data that macOS needs before the system volume is available.",
+                "role": "preboot",
+                "used_bytes": 17999499264,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk3s3",
+                "name": "Recovery",
+                "purpose": "The recovery environment used to repair or reinstall macOS.",
+                "role": "recovery",
+                "used_bytes": 2593611776,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk3s4",
+                "mount_point": "/System/Volumes/Update",
+                "name": "Update",
+                "purpose": "Staging area for macOS updates, written and cleared by the installer.",
+                "role": "unknown",
+                "used_bytes": 801103872,
+                "writable_by_broza": false
+              },
+              {
+                "id": "disk3s5",
+                "mount_point": "/System/Volumes/Data",
+                "name": "Data",
+                "purpose": "The writable volume that holds your home folder, your applications and your settings.",
+                "role": "data",
+                "used_bytes": 409422745600,
+                "writable_by_broza": true
+              },
+              {
+                "id": "disk3s6",
+                "mount_point": "/System/Volumes/VM",
+                "name": "VM",
+                "purpose": "Virtual memory: the swap and sleep-image files macOS writes and manages on its own.",
+                "role": "vm",
+                "used_bytes": 6442795008,
+                "writable_by_broza": false
+              }
+            ]
+          }
+        ],
+        "id": "disk0",
+        "internal": true,
+        "model": "APPLE SSD AP0512Z",
+        "size_bytes": 500277792768
+      },
+      {
+        "containers": [
+          {
+            "free_bytes": 2772992,
+            "id": "disk4s1",
+            "purgeable_bytes": 0,
+            "size_bytes": 1878605824,
+            "type": "hfs_plus",
+            "used_bytes": 1875832832,
+            "volumes": [
+              {
+                "id": "disk4s1",
+                "mount_point": "/Volumes/Kiro CLI",
+                "name": "Kiro CLI",
+                "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
+                "role": "unknown",
+                "used_bytes": 1875832832,
+                "writable_by_broza": false
+              }
+            ]
+          }
+        ],
+        "id": "disk4",
+        "internal": false,
+        "model": "Disk Image",
+        "size_bytes": 2012860928
+      },
+      {
+        "containers": [
+          {
+            "free_bytes": 179290112,
+            "id": "disk5s2",
+            "purgeable_bytes": 0,
+            "size_bytes": 2484035584,
+            "type": "hfs_plus",
+            "used_bytes": 2304745472,
+            "volumes": [
+              {
+                "id": "disk5s2",
+                "mount_point": "/private/var/folders/dd/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
+                "name": "Docker",
+                "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
+                "role": "unknown",
+                "used_bytes": 2304745472,
+                "writable_by_broza": false
+              }
+            ]
+          }
+        ],
+        "id": "disk5",
+        "internal": false,
+        "model": "Disk Image",
+        "size_bytes": 2828009472
+      },
+      {
+        "containers": [
+          {
+            "free_bytes": 2772992,
+            "id": "disk6s1",
+            "purgeable_bytes": 0,
+            "size_bytes": 1260167168,
+            "type": "hfs_plus",
+            "used_bytes": 1257394176,
+            "volumes": [
+              {
+                "id": "disk6s1",
+                "mount_point": "/Volumes/Kiro CLI 1",
+                "name": "Kiro CLI",
+                "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
+                "role": "unknown",
+                "used_bytes": 1257394176,
+                "writable_by_broza": false
+              }
+            ]
+          }
+        ],
+        "id": "disk6",
+        "internal": false,
+        "model": "Disk Image",
+        "size_bytes": 1394423808
+      },
+      {
+        "containers": [
+          {
+            "free_bytes": 2752512,
+            "id": "disk7s1",
+            "purgeable_bytes": 0,
+            "size_bytes": 1121935360,
+            "type": "hfs_plus",
+            "used_bytes": 1119182848,
+            "volumes": [
+              {
+                "id": "disk7s1",
+                "mount_point": "/Volumes/Kiro CLI 2",
+                "name": "Kiro CLI",
+                "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
+                "role": "unknown",
+                "used_bytes": 1119182848,
+                "writable_by_broza": false
+              }
+            ]
+          }
+        ],
+        "id": "disk7",
+        "internal": false,
+        "model": "Disk Image",
+        "size_bytes": 1256192512
+      },
+      {
+        "containers": [
+          {
+            "free_bytes": 2785280,
+            "id": "disk8s1",
+            "purgeable_bytes": 0,
+            "size_bytes": 1123201024,
+            "type": "hfs_plus",
+            "used_bytes": 1120415744,
+            "volumes": [
+              {
+                "id": "disk8s1",
+                "mount_point": "/Volumes/Kiro CLI 3",
+                "name": "Kiro CLI",
+                "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
+                "role": "unknown",
+                "used_bytes": 1120415744,
+                "writable_by_broza": false
+              }
+            ]
+          }
+        ],
+        "id": "disk8",
+        "internal": false,
+        "model": "Disk Image",
+        "size_bytes": 1257459712
+      }
+    ],
+    "largest_items": []
+  },
+  "errors": [],
+  "generated_at": "[rfc3339]",
+  "host": {
+    "arch": "arm64",
+    "macos_version": "26.1"
+  },
+  "schema_version": "1.1",
+  "warnings": []
+}

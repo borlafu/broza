@@ -80,19 +80,28 @@ pub fn with_entries(session: &QuarantineSession, entries: Vec<QuarantineEntry>) 
     }
 }
 
-/// Bytes the store actually holds: the entries that are still quarantined.
+/// Bytes the store actually holds: the entries that still have a stored path.
 ///
-/// A restored or purged entry holds nothing, and a skipped one never did.
+/// `stored_path` rather than `status` is the question, because the two can
+/// disagree in the one case that matters: an entry a restore could not put back
+/// is reported as `skipped` and is still sitting in the store.
 pub fn held_bytes(entries: &[QuarantineEntry]) -> u64 {
     entries
         .iter()
-        .filter(|entry| entry.status == ItemStatus::Quarantined)
+        .filter(|entry| entry.stored_path.is_some())
         .fold(0_u64, |sum, entry| sum.saturating_add(entry.size_bytes))
+}
+
+/// `true` when nothing of the session is left inside the store.
+pub fn is_emptied(entries: &[QuarantineEntry]) -> bool {
+    entries.iter().all(|entry| entry.stored_path.is_none())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{held_bytes, planned_entries, sequence_in, sequence_of, with_entries, with_entry};
+    use super::{
+        held_bytes, is_emptied, planned_entries, sequence_in, sequence_of, with_entries, with_entry,
+    };
     use crate::model::{Action, CleanItem, CleanPlan, ItemStatus, QuarantineEntry, SessionState};
     use crate::quarantine::fixtures::{entry, session, session_id};
 
@@ -143,7 +152,7 @@ mod tests {
     }
 
     #[test]
-    fn only_quarantined_entries_hold_bytes() {
+    fn only_the_entries_still_in_the_store_hold_bytes() {
         let entries = vec![
             entry(1, "/Users/dana/a", 10, ItemStatus::Quarantined),
             entry(2, "/Users/dana/b", 20, ItemStatus::Skipped),
@@ -151,6 +160,19 @@ mod tests {
         ];
 
         assert_eq!(held_bytes(&entries), 10);
+        assert!(!is_emptied(&entries));
+        assert!(is_emptied(&entries[1..]), "neither of those is in the store any more");
+    }
+
+    #[test]
+    fn an_entry_a_restore_could_not_put_back_is_still_held() {
+        let stuck = QuarantineEntry {
+            status: ItemStatus::Skipped,
+            ..entry(1, "/Users/dana/a", 10, ItemStatus::Quarantined)
+        };
+
+        assert_eq!(held_bytes(std::slice::from_ref(&stuck)), 10);
+        assert!(!is_emptied(std::slice::from_ref(&stuck)));
     }
 
     #[test]
@@ -162,10 +184,7 @@ mod tests {
                 entry(2, "/Users/dana/b", 20, ItemStatus::Planned),
             ],
         );
-        let moved = QuarantineEntry {
-            status: ItemStatus::Quarantined,
-            ..entry(2, "/Users/dana/b", 20, ItemStatus::Planned)
-        };
+        let moved = entry(2, "/Users/dana/b", 20, ItemStatus::Quarantined);
 
         let after = with_entry(&before, 1, &moved);
 

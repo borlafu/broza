@@ -14,8 +14,11 @@ use crate::model::{
 };
 use crate::ports::Answer;
 use crate::quarantine::layout;
-use crate::safety::guard::{Approved, Verdict, Write, WriteRequest, approve};
-use crate::testing::{FakeFileOps, FakePrompter, mac_mount_table};
+use crate::quarantine::mover::{MoveRequest, quarantine_items};
+use crate::safety::guard::{
+    Approved, QuarantineWrite, Verdict, Write, WriteRequest, approve, approve_quarantine_write,
+};
+use crate::testing::{FakeFileOps, FakePrompter, FixedClock, mac_mount_table};
 
 /// Home directory of the fake user.
 pub const HOME: &str = "/Users/dana";
@@ -131,4 +134,35 @@ pub fn approved_write(fs: &FakeFileOps, paths: &[(&str, u64)]) -> Approved<Write
         }
         other => panic!("expected a pending approval, got {other:?}"),
     }
+}
+
+/// The default retention period, `30d`.
+pub const TTL: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Quarantine `paths` for real, through the guard and the mover.
+pub fn quarantined(fs: &FakeFileOps, paths: &[(&str, u64)]) -> QuarantineSession {
+    let token = approved_write(fs, paths);
+    let request = MoveRequest { root: PathBuf::from(ROOT), ttl: TTL, max_size: None };
+    quarantine_items(&token, &request, fs, &FixedClock::at(at(NOW)))
+        .unwrap_or_else(|error| panic!("{error}"))
+        .session
+}
+
+/// The stored paths of a session, plus the session directory itself.
+///
+/// That is exactly what a `restore`, `expire` or `purge` command approves: the
+/// items it will move and the directory it may remove afterwards.
+pub fn writable_paths(session: &QuarantineSession) -> Vec<PathBuf> {
+    session
+        .entries
+        .iter()
+        .filter_map(|entry| entry.stored_path.clone())
+        .chain(std::iter::once(session_dir()))
+        .collect()
+}
+
+/// A token for writing to `paths` inside the store.
+pub fn quarantine_write(fs: &FakeFileOps, paths: &[PathBuf]) -> Approved<QuarantineWrite> {
+    approve_quarantine_write(paths, Path::new(ROOT), &mac_mount_table(), fs)
+        .unwrap_or_else(|error| panic!("{error}"))
 }

@@ -143,7 +143,12 @@ fn collect(path: &Path) -> Option<Vec<(PathBuf, EntryMetadata)>> {
         if count == 0 {
             return Some(entries);
         }
-        entries = parse_batch(&buffer, count, path, entries)?;
+        let Some(parsed) = parse_batch(&buffer, count, path, entries) else {
+            // The buffer did not read the way this file expects. Rather than
+            // report whatever it decoded, stop using the reader at all.
+            return refuse();
+        };
+        entries = parsed;
     }
 }
 
@@ -172,7 +177,7 @@ fn parse_batch(
         let rest = buffer.get(cursor..)?;
         let length = read_u32(rest, OFF_LENGTH)? as usize;
         if length < MIN_ENTRY_LEN || length > rest.len() {
-            return refuse();
+            return None;
         }
         let entry = rest.get(..length)?;
         let (name, meta) = parse_entry(entry, parent)?;
@@ -190,7 +195,7 @@ fn parse_batch(
 fn parse_entry(entry: &[u8], parent: &Path) -> Option<(PathBuf, EntryMetadata)> {
     let returned_common = read_u32(entry, OFF_RETURNED)?;
     if returned_common & libc::ATTR_CMN_NAME == 0 {
-        return refuse();
+        return None;
     }
     let name = read_name(entry)?;
     let has_everything = returned_common == COMMON_ATTRS
@@ -214,7 +219,7 @@ fn parse_entry(entry: &[u8], parent: &Path) -> Option<(PathBuf, EntryMetadata)> 
         accessed: read_time(entry, OFF_ACCTIME),
     };
     if !is_plausible(&meta) {
-        return refuse();
+        return None;
     }
     Some((name, meta))
 }
@@ -262,7 +267,7 @@ fn read_name(entry: &[u8]) -> Option<PathBuf> {
     let end = start.checked_add(length.checked_sub(1)?)?;
     let bytes = entry.get(start..end)?;
     if bytes.is_empty() || bytes.contains(&b'/') {
-        return refuse();
+        return None;
     }
     Some(PathBuf::from(OsString::from_vec(bytes.to_vec())))
 }
@@ -363,6 +368,93 @@ mod tests {
         use crate::ports::EntryMetadata;
 
         assert!(super::is_plausible(&EntryMetadata { modified: None, ..sane_metadata() }));
+    }
+
+    /// One entry laid out the way the kernel lays one out.
+    fn small(value: usize) -> u32 {
+        u32::try_from(value).unwrap_or_else(|error| panic!("{value} does not fit: {error}"))
+    }
+
+    fn entry_bytes(returned_common: u32, returned_file: u32, name: &[u8], inode: u64) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let length = super::FULL_ENTRY_LEN + name.len();
+        bytes.extend_from_slice(&small(length).to_ne_bytes());
+        bytes.extend_from_slice(&returned_common.to_ne_bytes());
+        bytes.extend_from_slice(&0_u32.to_ne_bytes()); // volattr
+        bytes.extend_from_slice(&0_u32.to_ne_bytes()); // dirattr
+        bytes.extend_from_slice(&returned_file.to_ne_bytes());
+        bytes.extend_from_slice(&0_u32.to_ne_bytes()); // forkattr
+        let name_offset = small(super::FULL_ENTRY_LEN - super::OFF_NAME_REF);
+        bytes.extend_from_slice(&name_offset.to_ne_bytes());
+        bytes.extend_from_slice(&small(name.len() + 1).to_ne_bytes());
+        bytes.extend_from_slice(&16_777_232_u32.to_ne_bytes()); // devid
+        bytes.extend_from_slice(&1_u32.to_ne_bytes()); // objtype: a regular file
+        bytes.extend_from_slice(&1_700_000_000_i64.to_ne_bytes()); // modtime seconds
+        bytes.extend_from_slice(&0_i64.to_ne_bytes());
+        bytes.extend_from_slice(&1_700_000_000_i64.to_ne_bytes()); // acctime seconds
+        bytes.extend_from_slice(&0_i64.to_ne_bytes());
+        bytes.extend_from_slice(&0_u32.to_ne_bytes()); // flags
+        bytes.extend_from_slice(&inode.to_ne_bytes());
+        bytes.extend_from_slice(&1_u32.to_ne_bytes()); // link count
+        bytes.extend_from_slice(&1234_u64.to_ne_bytes()); // total size
+        bytes.extend_from_slice(&4096_u64.to_ne_bytes()); // allocated size
+        bytes.extend_from_slice(name);
+        bytes
+    }
+
+    fn whole_set() -> Vec<u8> {
+        entry_bytes(super::COMMON_ATTRS, super::FILE_ATTRS, b"file", 42)
+    }
+
+    #[test]
+    fn an_entry_with_every_attribute_is_read_out_of_the_buffer() {
+        let parsed = super::parse_entry(&whole_set(), Path::new("/vol"));
+
+        let (name, meta) = parsed.unwrap_or_else(|| panic!("the whole set must parse"));
+        assert_eq!(name, Path::new("file"));
+        assert_eq!(meta.inode, 42);
+        assert_eq!(meta.size_bytes, 1234);
+        assert_eq!(meta.allocated_bytes, 4096);
+        assert_eq!(meta.link_count, 1);
+        assert!(!meta.is_dir);
+    }
+
+    #[test]
+    fn an_entry_that_does_not_even_carry_a_name_is_not_read() {
+        let nameless = entry_bytes(super::COMMON_ATTRS & !libc::ATTR_CMN_NAME, super::FILE_ATTRS, b"f", 42);
+
+        assert!(super::parse_entry(&nameless, Path::new("/vol")).is_none());
+    }
+
+    #[test]
+    fn an_entry_whose_numbers_cannot_be_true_is_not_read() {
+        let no_inode = entry_bytes(super::COMMON_ATTRS, super::FILE_ATTRS, b"file", 0);
+
+        assert!(super::parse_entry(&no_inode, Path::new("/vol")).is_none());
+    }
+
+    #[test]
+    fn a_name_that_is_not_a_name_is_not_read() {
+        let slashed = entry_bytes(super::COMMON_ATTRS, super::FILE_ATTRS, b"a/b", 42);
+
+        assert!(super::parse_entry(&slashed, Path::new("/vol")).is_none());
+    }
+
+    #[test]
+    fn a_batch_that_claims_more_bytes_than_it_holds_is_not_read() {
+        let mut short = whole_set();
+        short.truncate(super::MIN_ENTRY_LEN + 1);
+
+        assert!(super::parse_batch(&short, 1, Path::new("/vol"), Vec::new()).is_none());
+    }
+
+    #[test]
+    fn a_batch_of_one_good_entry_comes_back_with_it() {
+        let parsed = super::parse_batch(&whole_set(), 1, Path::new("/vol"), Vec::new());
+
+        let entries = parsed.unwrap_or_else(|| panic!("one good entry must parse"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, Path::new("/vol/file"));
     }
 
     #[test]

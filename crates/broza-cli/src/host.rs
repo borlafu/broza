@@ -1,18 +1,18 @@
 //! Host description for the JSON envelope (`docs/cli-spec.md` §4.1).
 //!
-//! The real provider shells out to `sw_vers -productVersion`. Tests never do:
-//! they use [`FixedHost`], which is also what `BROZA_HOST` selects in debug
+//! The real provider asks `sw_vers -productVersion`, and it asks it through the
+//! [`ProcessRunner`] port like every other command Broza runs: the port owns
+//! the timeout and the process group, and a test can script the answer instead
+//! of spawning anything (`AGENTS.md` §4). Tests that do not care about the
+//! version use [`FixedHost`], which is also what `BROZA_HOST` selects in debug
 //! builds. When the version cannot be determined the provider says so through a
 //! `host_version_unknown` warning rather than quietly inventing a value.
-//!
-// TODO(M1): move behind the `ProcessRunner` port in `broza::adapters/` so the
-// CLI stops spawning processes directly and the fake runner covers this path.
 
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use broza::model::{Host, Warning};
+use broza::ports::{ProcessOutput, ProcessRunner};
 
 /// How long `sw_vers` may take before Broza gives up on it.
 const SW_VERS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -22,8 +22,10 @@ const UNKNOWN_VERSION: &str = "unknown";
 pub const WARNING_HOST_VERSION_UNKNOWN: &str = "host_version_unknown";
 /// Separator of the `BROZA_HOST` override, `<macos_version>/<arch>`.
 const OVERRIDE_SEPARATOR: char = '/';
-/// Executable asked for the product version.
-const SW_VERS: &str = "/usr/bin/sw_vers";
+/// Executable asked for the product version; never resolved through `PATH`.
+pub const SW_VERS: &str = "/usr/bin/sw_vers";
+/// Arguments that make `sw_vers` print the product version and nothing else.
+pub const SW_VERS_ARGS: [&str; 1] = ["-productVersion"];
 
 /// A host description plus the warning it may have produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,13 +58,29 @@ fn spec_arch(rust_arch: &str) -> &str {
 }
 
 /// Reads the architecture at compile time and the macOS version from `sw_vers`.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SystemHost;
+#[derive(Clone)]
+pub struct SystemHost {
+    /// Runs `sw_vers` with the timeout the port enforces.
+    runner: Arc<dyn ProcessRunner>,
+}
+
+impl std::fmt::Debug for SystemHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SystemHost { .. }")
+    }
+}
+
+impl SystemHost {
+    /// A provider that asks `sw_vers` through `runner`.
+    pub const fn new(runner: Arc<dyn ProcessRunner>) -> Self {
+        Self { runner }
+    }
+}
 
 impl HostInfo for SystemHost {
     fn report(&self) -> HostReport {
         let arch = spec_arch(std::env::consts::ARCH).to_owned();
-        match product_version() {
+        match product_version(self.runner.as_ref()) {
             Ok(macos_version) => HostReport::certain(Host { macos_version, arch }),
             Err(reason) => HostReport {
                 host: Host { macos_version: UNKNOWN_VERSION.to_owned(), arch },
@@ -102,55 +120,32 @@ impl HostInfo for FixedHost {
     }
 }
 
-/// Pick the provider: the override when present and well-formed, else the system.
-pub fn provider(override_value: Option<&str>) -> Box<dyn HostInfo> {
+/// Pick the provider: the override when present and well-formed, else `runner`.
+pub fn provider(override_value: Option<&str>, runner: Arc<dyn ProcessRunner>) -> Box<dyn HostInfo> {
     match override_value.and_then(FixedHost::parse) {
         Some(fixed) => Box::new(fixed),
-        None => Box::new(SystemHost),
+        None => Box::new(SystemHost::new(runner)),
     }
 }
 
-/// Run `sw_vers -productVersion`, giving up after [`SW_VERS_TIMEOUT`].
+/// Run `sw_vers -productVersion`; the port enforces [`SW_VERS_TIMEOUT`].
 ///
 /// Returns why it failed so the caller can put it in a warning.
-fn product_version() -> Result<String, String> {
-    let mut child = Command::new(SW_VERS)
-        .arg("-productVersion")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|source| format!("{SW_VERS} could not be started: {source}"))?;
-    let Some(mut stdout) = child.stdout.take() else {
-        let _ignored = child.kill();
-        let _ignored = child.wait();
-        return Err(format!("{SW_VERS} produced no output stream"));
-    };
-
-    let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
-        use std::io::Read;
-
-        let mut buffer = String::new();
-        let read = stdout.read_to_string(&mut buffer);
-        let _ignored = sender.send(read.ok().map(|_| buffer));
-    });
-
-    let Ok(Some(text)) = receiver.recv_timeout(SW_VERS_TIMEOUT) else {
-        let _ignored = child.kill();
-        let _ignored = child.wait();
-        return Err(format!("{SW_VERS} did not answer within {} s", SW_VERS_TIMEOUT.as_secs()));
-    };
-    let status = child.wait().map_err(|source| format!("{SW_VERS} could not be awaited: {source}"))?;
-    interpret(status, &text)
+fn product_version(runner: &dyn ProcessRunner) -> Result<String, String> {
+    let output = runner
+        .run(SW_VERS, &SW_VERS_ARGS, SW_VERS_TIMEOUT)
+        .map_err(|error| format!("{SW_VERS} could not be run: {error}"))?;
+    interpret(&output)
 }
 
 /// Accept the output only when the process succeeded and said something.
-fn interpret(status: ExitStatus, raw: &str) -> Result<String, String> {
-    if !status.success() {
-        return Err(format!("{SW_VERS} exited with {status}"));
+fn interpret(output: &ProcessOutput) -> Result<String, String> {
+    if !output.success {
+        let code = output.code.map_or_else(|| "a signal".to_owned(), |code| format!("status {code}"));
+        return Err(format!("{SW_VERS} exited with {code}"));
     }
-    let trimmed = raw.trim();
+    let text = output.stdout_text();
+    let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err(format!("{SW_VERS} returned no version"));
     }
@@ -161,9 +156,18 @@ fn interpret(status: ExitStatus, raw: &str) -> Result<String, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use std::os::unix::process::ExitStatusExt;
+    use broza::ports::ProcessOutput;
+    use broza::testing::FakeRunner;
 
     use super::*;
+
+    fn output(success: bool, code: Option<i32>, stdout: &str) -> ProcessOutput {
+        ProcessOutput { success, code, stdout: stdout.as_bytes().to_vec(), stderr: Vec::new() }
+    }
+
+    fn answering(out: ProcessOutput) -> Arc<dyn ProcessRunner> {
+        Arc::new(FakeRunner::new().with_output(SW_VERS, &SW_VERS_ARGS, out))
+    }
 
     #[test]
     fn rust_arch_maps_to_contract_arch() {
@@ -187,10 +191,14 @@ mod tests {
     }
 
     #[test]
-    fn provider_prefers_a_valid_override() {
-        let report = provider(Some("27.0/x86_64")).report();
+    fn provider_prefers_a_valid_override_over_running_anything() {
+        let runner = Arc::new(FakeRunner::new());
+
+        let report = provider(Some("27.0/x86_64"), Arc::clone(&runner) as Arc<dyn ProcessRunner>).report();
+
         assert_eq!(report.host.macos_version, "27.0");
         assert_eq!(report.host.arch, "x86_64");
+        assert!(runner.calls().is_empty(), "the override must not spawn sw_vers");
     }
 
     #[test]
@@ -200,16 +208,51 @@ mod tests {
     }
 
     #[test]
+    fn the_version_is_asked_for_through_the_process_port() {
+        let runner =
+            Arc::new(FakeRunner::new().with_output(SW_VERS, &SW_VERS_ARGS, output(true, Some(0), "26.1\n")));
+
+        let report = provider(None, Arc::clone(&runner) as Arc<dyn ProcessRunner>).report();
+
+        assert_eq!(report.host.macos_version, "26.1");
+        assert_eq!(report.warning, None);
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].program, SW_VERS);
+        assert_eq!(calls[0].args, vec!["-productVersion".to_owned()]);
+        assert_eq!(calls[0].timeout, SW_VERS_TIMEOUT);
+    }
+
+    #[test]
     fn a_successful_run_yields_the_trimmed_version() {
-        assert_eq!(interpret(ExitStatus::from_raw(0), "26.1\n"), Ok("26.1".to_owned()));
-        assert_eq!(interpret(ExitStatus::from_raw(0), "  27.0  "), Ok("27.0".to_owned()));
+        assert_eq!(interpret(&output(true, Some(0), "26.1\n")), Ok("26.1".to_owned()));
+        assert_eq!(interpret(&output(true, Some(0), "  27.0  ")), Ok("27.0".to_owned()));
     }
 
     #[test]
     fn a_failed_run_or_blank_output_is_reported_as_a_reason() {
-        // Raw 256 is "exited with status 1" in the wait(2) encoding.
-        assert!(interpret(ExitStatus::from_raw(256), "26.1").is_err());
-        assert!(interpret(ExitStatus::from_raw(0), "").is_err());
-        assert!(interpret(ExitStatus::from_raw(0), "  \n").is_err());
+        assert!(interpret(&output(false, Some(1), "26.1")).is_err());
+        assert!(interpret(&output(false, None, "26.1")).is_err());
+        assert!(interpret(&output(true, Some(0), "")).is_err());
+        assert!(interpret(&output(true, Some(0), "  \n")).is_err());
+    }
+
+    #[test]
+    fn an_unavailable_sw_vers_becomes_a_warning_and_not_a_failure() {
+        let report = SystemHost::new(answering(output(true, Some(0), ""))).report();
+
+        assert_eq!(report.host.macos_version, UNKNOWN_VERSION);
+        assert_eq!(report.warning.map(|w| w.code), Some(WARNING_HOST_VERSION_UNKNOWN.to_owned()));
+    }
+
+    #[test]
+    fn a_runner_that_cannot_start_the_process_is_also_only_a_warning() {
+        let runner = FakeRunner::new().with_failure(SW_VERS, &SW_VERS_ARGS, "no such file");
+
+        let report = SystemHost::new(Arc::new(runner)).report();
+
+        assert_eq!(report.host.macos_version, UNKNOWN_VERSION);
+        let message = report.warning.map(|w| w.message).unwrap_or_default();
+        assert!(message.contains("no such file"), "{message}");
     }
 }

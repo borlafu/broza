@@ -15,6 +15,14 @@ use broza::config::EnvSnapshot;
 #[cfg(debug_assertions)]
 const HOST_OVERRIDE_VAR: &str = "BROZA_HOST";
 
+/// Test and debug hook: `BROZA_FAKE_DISKUTIL_FIXTURES=<dir>` replaces the
+/// process runner with one replaying the recorded `diskutil` and `tmutil`
+/// plists in `<dir>`, so `scan` and `explain` can be tested end to end without
+/// a disk (`AGENTS.md` §7). Honoured only in debug builds compiled with the
+/// `fake-diskutil` feature; a release binary always talks to the real system.
+#[cfg(all(debug_assertions, feature = "fake-diskutil"))]
+const FAKE_DISKUTIL_VAR: &str = "BROZA_FAKE_DISKUTIL_FIXTURES";
+
 /// Everything the CLI is allowed to learn from the outside world.
 // A snapshot of independent environment facts; grouping them would only add indirection.
 #[allow(clippy::struct_excessive_bools)]
@@ -37,8 +45,12 @@ pub struct RuntimeEnv {
     pub home: Option<PathBuf>,
     /// `BROZA_CONFIG`, lower priority than `--config`.
     pub broza_config: Option<PathBuf>,
+    /// Working directory, used to resolve a relative `explain <PATH>`.
+    pub cwd: Option<PathBuf>,
     /// See `HOST_OVERRIDE_VAR`. Always `None` in release builds.
     pub host_override: Option<String>,
+    /// See `FAKE_DISKUTIL_VAR`. Always `None` in release builds.
+    pub fake_diskutil_fixtures: Option<PathBuf>,
 }
 
 impl RuntimeEnv {
@@ -53,7 +65,9 @@ impl RuntimeEnv {
             broza_no_donate: is_set("BROZA_NO_DONATE"),
             home: std::env::var_os("HOME").map(PathBuf::from).filter(|home| !home.as_os_str().is_empty()),
             broza_config: std::env::var_os("BROZA_CONFIG").map(PathBuf::from),
+            cwd: std::env::current_dir().ok(),
             host_override: host_override(),
+            fake_diskutil_fixtures: fake_diskutil_fixtures(),
         }
     }
 
@@ -68,7 +82,9 @@ impl RuntimeEnv {
             broza_no_donate: false,
             home: Some(home),
             broza_config: None,
+            cwd: None,
             host_override: None,
+            fake_diskutil_fixtures: None,
         }
     }
 
@@ -96,6 +112,17 @@ fn host_override() -> Option<String> {
 /// Release builds ignore the override entirely.
 #[cfg(not(debug_assertions))]
 const fn host_override() -> Option<String> {
+    None
+}
+
+#[cfg(all(debug_assertions, feature = "fake-diskutil"))]
+fn fake_diskutil_fixtures() -> Option<PathBuf> {
+    std::env::var_os(FAKE_DISKUTIL_VAR).map(PathBuf::from).filter(|dir| !dir.as_os_str().is_empty())
+}
+
+/// Release builds, and builds without the feature, always read the real disks.
+#[cfg(not(all(debug_assertions, feature = "fake-diskutil")))]
+const fn fake_diskutil_fixtures() -> Option<PathBuf> {
     None
 }
 

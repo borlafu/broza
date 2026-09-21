@@ -25,8 +25,8 @@ error[E0277]: the trait bound `Approved<broza::safety::Write>: serde::Deserializ
    = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `Approved<broza::safety::Write>` type
    = note: for types from other crates check whether the crate offers a `serde` feature flag
    = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
-             &'a Path
              &'a [u8]
+             &'a std::path::Path
              &'a str
              ()
              (T,)

@@ -11,12 +11,15 @@ pub mod donate;
 pub mod env;
 pub mod host;
 pub mod output;
+pub mod tty_prompter;
+pub mod wiring;
 
 use std::error::Error as _;
 use std::ffi::OsString;
 
 use broza::config::{CliOverrides, Config, EnvSnapshot};
 use broza::model::Warning;
+use broza::ports::Ports;
 use broza::units::{ByteSize, DurationSpec};
 use broza::{BrozaError, ExitCode};
 use clap::Parser;
@@ -24,9 +27,10 @@ use clap::error::ErrorKind;
 
 use crate::args::split_categories;
 use crate::cli::{Cli, Command, GlobalArgs};
+use crate::commands::Outcome;
 use crate::commands::config::ConfigContext;
 use crate::env::RuntimeEnv;
-use crate::output::{OutputFormat, Renderer, Sink};
+use crate::output::{ColorPolicy, OutputFormat, Renderer, Sink};
 
 /// Parse `args` and run the requested command, returning the process exit code.
 pub fn run<I, T>(args: I) -> ExitCode
@@ -67,19 +71,24 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     let core_env = runtime.to_core_snapshot();
     let (file, effective) = resolve_config(cli, &core_env)?;
 
-    let report = crate::host::provider(runtime.host_override.as_deref()).report();
+    let ports = wiring::ports(runtime)?;
+    let report =
+        crate::host::provider(runtime.host_override.as_deref(), std::sync::Arc::clone(&ports.process))
+            .report();
     let warnings: Vec<Warning> = report.warning.into_iter().collect();
     let format = OutputFormat::resolve(cli.global.json, cli.global.csv);
+    let policy = ColorPolicy::resolve(cli.global.no_color, effective.color, runtime, format);
 
-    let rendered = dispatch(
+    let outcome = dispatch(
         command,
         cli,
         &core_env,
-        Inputs { runtime, file, effective, host: report.host, warnings: warnings.clone(), format },
+        Inputs { runtime, ports, file, effective, host: report.host, warnings, format, policy },
     )?;
-    sink.write(&rendered)?;
-    report_warnings(&warnings, &cli.global, format);
-    Ok(ExitCode::Ok)
+    sink.write(&outcome.rendered)?;
+    report_warnings(&outcome.warnings, &cli.global, format);
+    report_notes(&outcome.notes, &cli.global);
+    Ok(outcome.code)
 }
 
 /// Load the file and apply profile, environment and flags on top of it.
@@ -100,11 +109,13 @@ fn resolve_config(cli: &Cli, core_env: &EnvSnapshot) -> Result<(Config, Config),
 /// Everything `dispatch` needs beyond the command itself.
 struct Inputs<'a> {
     runtime: &'a RuntimeEnv,
+    ports: Ports,
     file: Config,
     effective: Config,
     host: broza::model::Host,
     warnings: Vec<Warning>,
     format: OutputFormat,
+    policy: ColorPolicy,
 }
 
 /// Run one command and render it in the selected format.
@@ -113,11 +124,13 @@ fn dispatch(
     cli: &Cli,
     core_env: &EnvSnapshot,
     inputs: Inputs<'_>,
-) -> Result<String, BrozaError> {
+) -> Result<Outcome, BrozaError> {
     let generated_at = jiff::Timestamp::now();
     match command {
         Command::About => {
-            commands::about::About::new(inputs.host, generated_at, inputs.warnings).render(inputs.format)
+            let rendered = commands::about::About::new(inputs.host, generated_at, inputs.warnings.clone())
+                .render(inputs.format)?;
+            Ok(Outcome::ok(rendered).with_warnings(inputs.warnings))
         }
         Command::Config(args) => {
             let context = ConfigContext {
@@ -127,10 +140,30 @@ fn dispatch(
                 host: inputs.host,
                 generated_at,
                 interactive: inputs.runtime.is_interactive(),
-                warnings: inputs.warnings,
+                warnings: inputs.warnings.clone(),
             };
-            commands::config::run(&args.command, &context)?.render(inputs.format)
+            let rendered = commands::config::run(&args.command, &context)?.render(inputs.format)?;
+            Ok(Outcome::ok(rendered).with_warnings(inputs.warnings))
         }
+        Command::Scan(args) => commands::scan::run(&commands::scan::ScanContext {
+            ports: &inputs.ports,
+            args,
+            host: inputs.host,
+            generated_at,
+            warnings: inputs.warnings,
+            policy: inputs.policy,
+            format: inputs.format,
+        }),
+        Command::Explain(args) => commands::explain::run(&commands::explain::ExplainContext {
+            ports: &inputs.ports,
+            args,
+            cwd: inputs.runtime.cwd.as_deref(),
+            host: inputs.host,
+            generated_at,
+            warnings: inputs.warnings,
+            policy: inputs.policy,
+            format: inputs.format,
+        }),
         other => Err(commands::not_implemented(other.name())),
     }
 }
@@ -190,6 +223,21 @@ fn report_warnings(warnings: &[Warning], global: &GlobalArgs, format: OutputForm
     }
     for warning in warnings {
         let _ignored = writeln!(std::io::stderr(), "warning: {}", warning.message);
+    }
+}
+
+/// Notes are remarks for a person only: never in the envelope, never a warning.
+///
+/// `scan` uses them to say that a flag was parsed but has nothing to drive yet,
+/// which is a fact about this release rather than about the machine.
+fn report_notes(notes: &[String], global: &GlobalArgs) {
+    use std::io::Write;
+
+    if global.quiet {
+        return;
+    }
+    for note in notes {
+        let _ignored = writeln!(std::io::stderr(), "note: {note}");
     }
 }
 

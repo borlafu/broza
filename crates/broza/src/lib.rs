@@ -9,7 +9,9 @@
 pub mod config;
 pub mod error;
 pub mod model;
+pub mod ports;
 pub mod safety;
+pub mod scan;
 pub mod units;
 
 pub use error::BrozaError;

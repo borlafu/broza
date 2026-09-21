@@ -51,6 +51,26 @@ pub fn session_write_token(
     Ok(approve_quarantine_write(&paths, root, mounts, ports.fs.as_ref())?)
 }
 
+/// A token covering only the session directories of `ids`, for removing them.
+///
+/// `expire` and `purge` re-check the session directory before `remove_tree`
+/// and never the items inside, so approving each stored item would cost one
+/// `lstat` walk per item for nothing — and would let a stored file removed out
+/// of band fail the whole operation.
+///
+/// # Errors
+///
+/// See [`session_write_token`].
+pub fn session_dirs_token(
+    ports: &Ports,
+    root: &Path,
+    mounts: &MountTable,
+    ids: &[SessionId],
+) -> Result<Approved<QuarantineWrite>, BrozaError> {
+    let paths: Vec<PathBuf> = ids.iter().map(|id| layout::session_dir(root, id)).collect();
+    Ok(approve_quarantine_write(&paths, root, mounts, ports.fs.as_ref())?)
+}
+
 /// The bytes each of `ids` holds, as the store reports them.
 ///
 /// # Errors

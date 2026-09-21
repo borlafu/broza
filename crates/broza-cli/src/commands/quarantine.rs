@@ -13,7 +13,7 @@ use broza::quarantine::{all_sessions, expire, expired_sessions, list_sessions, p
 use crate::args::QuarantineCommand;
 use crate::commands::store::{
     StoreContext, StoreOutput, confirm_purge, confirm_removal, finish, mounts, parse_session_id, root_of,
-    session_sizes, session_write_token,
+    session_dirs_token, session_sizes,
 };
 use crate::commands::{Outcome, Reclaimed};
 use crate::output::csv;
@@ -87,7 +87,7 @@ fn expire_due(context: &StoreContext<'_>, yes: bool) -> Result<Outcome, BrozaErr
     let sizes = session_sizes(ports, &root, &due)?;
     confirm_removal(ports, &sizes, yes, "expire")?;
     let (mounts, mount_warnings) = mounts(ports)?;
-    let token = session_write_token(ports, &root, &mounts, &due)?;
+    let token = session_dirs_token(ports, &root, &mounts, &due)?;
     let reported = expire(&token, &due, &root, ports.fs.as_ref())?;
     reclaimed(context, reported.data, reported.errors, [mount_warnings, reported.warnings].concat())
 }
@@ -108,7 +108,7 @@ fn purge_named(context: &StoreContext<'_>, raw_ids: &[String], all: bool) -> Res
     let sizes = session_sizes(ports, &root, &ids)?;
     confirm_purge(ports, &sizes)?;
     let (mounts, mount_warnings) = mounts(ports)?;
-    let token = session_write_token(ports, &root, &mounts, &ids)?;
+    let token = session_dirs_token(ports, &root, &mounts, &ids)?;
     let reported = purge(&token, &ids, &root, ports.fs.as_ref())?;
     reclaimed(context, reported.data, reported.errors, [mount_warnings, reported.warnings].concat())
 }

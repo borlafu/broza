@@ -29,9 +29,10 @@ use crate::detect::detector::{DetectContext, Detected, Detector};
 /// Suffixes browsers give a download that has not finished.
 const INCOMPLETE_SUFFIXES: [&str; 3] = [".download", ".crdownload", ".part"];
 /// Directory names under `~/Library/Caches` that hold data nothing regenerates:
-/// `JetBrains`' per-file undo history, and Poetry's virtual environments (a
+/// `JetBrains`' per-file undo history (two spellings across IDE versions), and
+/// Poetry's virtual environments (a
 /// `pip install` of every project's dependencies, not a cache of them).
-const DATA_BEARING_DIRS: [&str; 2] = ["LocalHistory", "virtualenvs"];
+const DATA_BEARING_DIRS: [&str; 3] = ["LocalHistory", "fileHistory", "virtualenvs"];
 /// How many levels a cache entry is opened up to isolate a data-bearing directory.
 const MAX_OPEN_DEPTH: usize = 3;
 

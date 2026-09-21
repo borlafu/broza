@@ -4,6 +4,10 @@
 //! over is removed, exactly as `broza quarantine expire` would. The step asks
 //! at green level (`y/N`, covered by `--yes`); a declined prompt skips the step
 //! and says so, it never aborts the cleanup the user already confirmed.
+//!
+//! A dry run only *lists* what is due, but finding out takes each due session's
+//! `.lock` for an instant (never creating one), so a `quarantine expire` running
+//! at the same moment may report that session `session_busy` and skip it.
 
 use std::path::Path;
 use std::time::Duration;
@@ -14,7 +18,7 @@ use broza::ports::{Answer, ConfirmationRequest, Ports};
 use broza::quarantine::{expire, expired_sessions};
 use broza::scan::MountTable;
 
-use crate::commands::store::{session_sizes, session_write_token};
+use crate::commands::store::{session_dirs_token, session_sizes};
 
 /// Warning code: sessions are past their retention and a dry run left them.
 pub const EXPIRY_PENDING_CODE: &str = "expiry_pending";
@@ -65,10 +69,13 @@ pub fn due_sessions(ports: &Ports, root: &Path, ttl: Duration) -> (Vec<(SessionI
 
 /// Confirm and remove the sessions whose retention is over.
 ///
+/// Never fatal once the user has confirmed the plan: a store that cannot be
+/// read, a token the guard refuses or a session that cannot be removed all end
+/// up inside [`Expiry`] as warnings or `errors[]`, and the plan still runs.
+///
 /// # Errors
 ///
-/// Only what the guard or the store report as fatal; a session that cannot be
-/// removed is an `errors[]` entry inside [`Expiry`].
+/// None today; the signature stays fallible for a future step that must abort.
 pub fn expire_due(
     ports: &Ports,
     root: &Path,
@@ -87,8 +94,15 @@ pub fn expire_due(
         return Ok(Expiry { warnings: vec![declined(&due, root)], ..Expiry::default() });
     }
     let ids: Vec<SessionId> = due.iter().map(|(id, _)| id.clone()).collect();
-    let token = session_write_token(ports, root, mounts, &ids)?;
-    let reported = expire(&token, &ids, root, ports.fs.as_ref())?;
+    // From here on nothing may abort the cleanup the user already confirmed:
+    // a store that changed under us (another Broza, a file removed out of
+    // band) costs the expiry step, never the plan.
+    let reported = match session_dirs_token(ports, root, mounts, &ids)
+        .and_then(|token| expire(&token, &ids, root, ports.fs.as_ref()))
+    {
+        Ok(reported) => reported,
+        Err(error) => return Ok(Expiry { warnings: vec![unreadable(root, &error)], ..Expiry::default() }),
+    };
     let sessions: Vec<ExpiredSession> = reported
         .data
         .sessions

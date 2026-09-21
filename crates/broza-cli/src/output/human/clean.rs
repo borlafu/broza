@@ -1,17 +1,19 @@
 //! The human rendering of `broza clean` (`docs/cli-spec.md` §3.4).
 //!
-//! A dry run says so in its first line and never pretends to have moved
-//! anything; an applied run names the session, what moved, what did not and
-//! why, and how to undo it. Pending bytes (quarantined) and freed bytes
-//! (expired sessions) are never added together (`AGENTS.md` §2.7).
+//! A dry run says so in its first line and never pretends: it names the action
+//! the plan really carries (a move to quarantine, or with `--purge` a permanent
+//! deletion) and repeats the exact flags that produced it. An applied run
+//! names the session, what moved, what did not and why, and how to undo it.
+//! Pending bytes (quarantined) and freed bytes (expired sessions) are never
+//! added together (`AGENTS.md` §2.7).
 
 use std::fmt::Write as _;
 use std::path::Path;
 
-use broza::model::{CleanItem, CleanPlan, ItemStatus, SessionId, Warning};
+use broza::model::{Action, CleanItem, CleanPlan, ItemStatus, SessionId, Warning};
 
+use crate::output::format_bytes;
 use crate::output::human::scan::folders::abbreviate;
-use crate::output::{ColorPolicy, format_bytes};
 
 /// Width of the status column.
 const STATUS_WIDTH: usize = 12;
@@ -20,27 +22,41 @@ const SIZE_WIDTH: usize = 9;
 /// How many planned items a dry run lists before folding the rest.
 const DRY_RUN_ITEMS: usize = 40;
 
-/// Render `plan` for a terminal.
+/// Render `plan` for a terminal. `rerun` is the `broza clean …` line that
+/// reproduces the selection, built from the flags by the command.
 pub fn render(
     plan: &CleanPlan,
     due: &[(SessionId, u64)],
     errors: &[Warning],
     home: &Path,
-    _policy: ColorPolicy,
+    rerun: &str,
 ) -> String {
-    if plan.is_dry_run() { render_dry_run(plan, due, home) } else { render_applied(plan, errors, home) }
+    if plan.is_dry_run() {
+        render_dry_run(plan, due, home, rerun)
+    } else if plan.items().is_empty() {
+        render_nothing_moved(plan, errors)
+    } else {
+        render_applied(plan, errors, home)
+    }
 }
 
-fn render_dry_run(plan: &CleanPlan, due: &[(SessionId, u64)], home: &Path) -> String {
+/// `true` when the plan would delete for good rather than move to quarantine.
+fn is_purge(plan: &CleanPlan) -> bool {
+    plan.items().iter().any(|item| item.action == Action::Purge)
+}
+
+fn render_dry_run(plan: &CleanPlan, due: &[(SessionId, u64)], home: &Path, rerun: &str) -> String {
     let mut text = String::from("Dry run: nothing was changed.");
     if plan.items().is_empty() {
         let _ignored =
             write!(text, "\nNothing matches the selection; `broza suggest` lists what could be cleaned.");
         return text;
     }
+    let action =
+        if is_purge(plan) { "delete permanently (no quarantine, no restore)" } else { "move to quarantine" };
     let _ignored = write!(
         text,
-        "\n\nWould move {} item(s), {} in all, to quarantine:",
+        "\n\nWould {action} {} item(s), {} in all:",
         plan.items().len(),
         format_bytes(plan.planned_bytes())
     );
@@ -59,11 +75,12 @@ fn render_dry_run(plan: &CleanPlan, due: &[(SessionId, u64)], home: &Path) -> St
             format_bytes(bytes)
         );
     }
-    let _ignored = write!(
-        text,
-        "\n\nNext step:\n  broza clean {} --apply    (moves to quarantine; `broza restore` brings items back until they expire)",
-        selection_hint(plan)
-    );
+    let consequence = if is_purge(plan) {
+        "deletes for good after you type PURGE; nothing can be restored"
+    } else {
+        "moves to quarantine; `broza restore` brings items back until they expire"
+    };
+    let _ignored = write!(text, "\n\nNext step:\n  {rerun} --apply    ({consequence})");
     text
 }
 
@@ -77,14 +94,7 @@ fn render_applied(plan: &CleanPlan, errors: &[Warning], home: &Path) -> String {
     for item in plan.items().iter().filter(|item| item.status.is_unsuccessful()) {
         render_item(&mut text, item, home);
     }
-    if !plan.expired_sessions().is_empty() {
-        let _ignored = write!(
-            text,
-            "\nExpired {} older session(s): {} freed.",
-            plan.expired_sessions().len(),
-            format_bytes(plan.reclaimed_bytes())
-        );
-    }
+    render_expiry(&mut text, plan);
     if !errors.is_empty() {
         let _ignored =
             write!(text, "\n{} item(s) or session(s) could not be processed (exit 5).", errors.len());
@@ -94,6 +104,31 @@ fn render_applied(plan: &CleanPlan, errors: &[Warning], home: &Path) -> String {
     }
     let _ignored = write!(text, "\nUndo: broza restore --session {}", plan.session_id());
     text
+}
+
+/// `--apply` with nothing to move: no session was created, so nothing to undo.
+fn render_nothing_moved(plan: &CleanPlan, errors: &[Warning]) -> String {
+    let mut text = String::from("Nothing to move: no item of the selection is left to clean.");
+    render_expiry(&mut text, plan);
+    if !errors.is_empty() {
+        let _ignored =
+            write!(text, "\n{} item(s) or session(s) could not be processed (exit 5).", errors.len());
+    }
+    text
+}
+
+/// The expiry line, from the expired sessions' own figures.
+fn render_expiry(text: &mut String, plan: &CleanPlan) {
+    if plan.expired_sessions().is_empty() {
+        return;
+    }
+    let freed = plan.expired_sessions().iter().map(|s| s.freed_bytes).fold(0, u64::saturating_add);
+    let _ignored = write!(
+        text,
+        "\nExpired {} older session(s): {} freed.",
+        plan.expired_sessions().len(),
+        format_bytes(freed)
+    );
 }
 
 /// One item line: status, size, path and, when it was not moved, the reason.
@@ -118,7 +153,7 @@ fn status_word(status: &ItemStatus) -> &'static str {
         ItemStatus::Restored => "restored",
         ItemStatus::Skipped => "skipped",
         ItemStatus::Failed => "failed",
-        ItemStatus::Unknown(_) | _ => "unknown",
+        _ => "unknown",
     }
 }
 
@@ -132,32 +167,26 @@ fn hint_for(code: &str) -> &'static str {
     }
 }
 
-/// The `--category`/`--risk` spelling that reproduces this plan's selection.
-fn selection_hint(plan: &CleanPlan) -> String {
-    let mut categories: Vec<&str> = plan.items().iter().map(|item| item.finding_id.category_part()).collect();
-    categories.sort_unstable();
-    categories.dedup();
-    categories.iter().map(|category| format!("--category {category}")).collect::<Vec<_>>().join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::path::PathBuf;
 
-    use broza::model::{Action, ItemErrorCode};
+    use broza::model::ItemErrorCode;
 
     use super::*;
 
-    fn item(path: &str, bytes: u64, status: ItemStatus, error: Option<ItemErrorCode>) -> CleanItem {
+    const RERUN: &str = "broza clean --risk green";
+
+    fn item(path: &str, bytes: u64, action: Action) -> CleanItem {
         CleanItem {
             path: PathBuf::from(path),
             finding_id: "build-cache.pycache".parse().unwrap(),
             size_bytes: bytes,
-            status,
-            action: Action::Quarantine,
-            error,
+            status: ItemStatus::Planned,
+            action,
+            error: None,
         }
     }
 
@@ -166,20 +195,32 @@ mod tests {
     }
 
     #[test]
-    fn a_dry_run_says_so_lists_the_items_and_names_the_next_command() {
+    fn a_dry_run_says_so_lists_the_items_and_repeats_the_flags_it_was_given() {
         let plan = CleanPlan::dry_run(
             session(),
-            vec![item("/Users/dana/code/x/__pycache__", 4096, ItemStatus::Planned, None)],
+            vec![item("/Users/dana/code/x/__pycache__", 4096, Action::Quarantine)],
         )
         .unwrap();
 
-        let text = render(&plan, &[(session(), 500)], &[], Path::new("/Users/dana"), ColorPolicy::Never);
+        let text = render(&plan, &[(session(), 500)], &[], Path::new("/Users/dana"), RERUN);
 
         assert!(text.starts_with("Dry run: nothing was changed."), "{text}");
-        assert!(text.contains("Would move 1 item(s), 4.1 KB in all"), "{text}");
+        assert!(text.contains("Would move to quarantine 1 item(s), 4.1 KB in all"), "{text}");
         assert!(text.contains("planned        4.1 KB  ~/code/x/__pycache__"), "{text}");
         assert!(text.contains("1 quarantine session(s) past their retention hold 500 B"), "{text}");
-        assert!(text.contains("broza clean --category build-cache --apply"), "{text}");
+        assert!(text.contains("  broza clean --risk green --apply    (moves to quarantine;"), "{text}");
+    }
+
+    #[test]
+    fn a_purge_dry_run_never_promises_a_restore() {
+        let plan =
+            CleanPlan::dry_run(session(), vec![item("/Users/dana/.Trash/x", 4096, Action::Purge)]).unwrap();
+
+        let text = render(&plan, &[], &[], Path::new("/Users/dana"), "broza clean --category trash --purge");
+
+        assert!(text.contains("Would delete permanently (no quarantine, no restore) 1 item(s)"), "{text}");
+        assert!(text.contains("--purge --apply    (deletes for good after you type PURGE"), "{text}");
+        assert!(!text.contains("restore` brings"), "{text}");
     }
 
     #[test]
@@ -187,8 +228,8 @@ mod tests {
         let plan = CleanPlan::dry_run(
             session(),
             vec![
-                item("/Users/dana/a", 10, ItemStatus::Planned, None),
-                item("/Volumes/Ext/b", 5, ItemStatus::Planned, None),
+                item("/Users/dana/a", 10, Action::Quarantine),
+                item("/Volumes/Ext/b", 5, Action::Quarantine),
             ],
         )
         .unwrap()
@@ -203,7 +244,7 @@ mod tests {
         .with_bytes(10, 0)
         .unwrap();
 
-        let text = render(&plan, &[], &[], Path::new("/Users/dana"), ColorPolicy::Never);
+        let text = render(&plan, &[], &[], Path::new("/Users/dana"), RERUN);
 
         assert!(
             text.starts_with("Session cln_20260921103608_a1b2: 1 item(s) moved to quarantine, 10 B pending"),
@@ -218,5 +259,24 @@ mod tests {
             "{text}"
         );
         assert!(text.ends_with("Undo: broza restore --session cln_20260921103608_a1b2"), "{text}");
+    }
+
+    #[test]
+    fn an_applied_run_with_nothing_to_move_reports_only_the_expiry_and_no_undo() {
+        let expired = broza::model::ExpiredSession { id: session(), freed_bytes: 700 };
+        let plan = CleanPlan::dry_run(session(), Vec::new())
+            .unwrap()
+            .into_applied(None)
+            .unwrap()
+            .with_expired_sessions(vec![expired])
+            .unwrap()
+            .with_bytes(0, 700)
+            .unwrap();
+
+        let text = render(&plan, &[], &[], Path::new("/Users/dana"), RERUN);
+
+        assert!(text.starts_with("Nothing to move:"), "{text}");
+        assert!(text.contains("Expired 1 older session(s): 700 B freed."), "{text}");
+        assert!(!text.contains("Undo"), "{text}");
     }
 }

@@ -50,6 +50,9 @@ fn canonicalize_store_root(
     loop {
         match canonicalize_no_follow(probe, fs) {
             Ok(checked) => {
+                // `canonicalize_no_follow` hands back the spelling it was given, so
+                // today `checked.path == probe`; the join is kept for a future
+                // canonicaliser that rewrites the prefix.
                 let intended = match store_root.strip_prefix(probe) {
                     Ok(rest) if !rest.as_os_str().is_empty() => checked.path.join(rest),
                     _ => checked.path.clone(),
@@ -58,6 +61,9 @@ fn canonicalize_store_root(
             }
             Err(error) if error.is_missing_path() => {
                 let Some(parent) = probe.parent() else { return Err(invalid(&error)) };
+                // Defence in depth: the raw-byte check of `canonicalize_no_follow`
+                // already refused `.`, `..` and empty components on the first
+                // iteration, so a missing component here is always a plain name.
                 if !is_plain_name(probe) {
                     return Err(invalid(&error));
                 }

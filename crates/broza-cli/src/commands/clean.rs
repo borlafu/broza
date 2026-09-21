@@ -70,7 +70,7 @@ pub fn run(context: &CleanContext<'_>) -> Result<Outcome, BrozaError> {
     let unused_after =
         detection::duration_or(context.args.unused_after.as_deref(), context.config.unused_after)?;
     if context.args.apply && context.args.purge {
-        return Err(crate::commands::not_implemented("clean --apply --purge"));
+        return Err(crate::commands::not_implemented_until("clean --apply --purge", PURGE_MILESTONE));
     }
     let detected = detection::detect(&DetectionRequest {
         ports: context.ports,
@@ -97,16 +97,20 @@ pub fn run(context: &CleanContext<'_>) -> Result<Outcome, BrozaError> {
     };
     let verdict =
         approve(&outcome, &detected.findings, &request, &detected.mounts, context.ports.fs.as_ref())?;
+    let execution = Execution { root: &root, max_size, mounts: &detected.mounts };
     let executed = match verdict {
-        Verdict::Nothing(plan) | Verdict::DryRun(plan) => dry_run(context, plan, &root),
-        Verdict::NeedsConfirmation(pending) => {
-            execute(context, pending, &Execution { root: &root, max_size, mounts: &detected.mounts })?
-        }
+        Verdict::DryRun(plan) => dry_run(context, plan, &root),
+        Verdict::Nothing(plan) if !context.args.apply => dry_run(context, plan, &root),
+        Verdict::Nothing(plan) => nothing_to_move(context, plan, &execution)?,
+        Verdict::NeedsConfirmation(pending) => execute(context, pending, &execution)?,
     };
     let mut warnings = detected.warnings;
     warnings.extend(outcome.informed_in_passing.iter().map(inform_only_skipped));
     render(context, executed, warnings, home)
 }
+
+/// When the irreversible path of the mover lands (`docs/cli-spec.md` §3.4).
+const PURGE_MILESTONE: &str = "milestone M4";
 
 /// Warning code: an inform-only finding of a selected category was left out.
 pub const INFORM_ONLY_SKIPPED_CODE: &str = "inform_only_skipped";
@@ -124,7 +128,7 @@ fn inform_only_skipped(id: &broza::model::FindingId) -> Warning {
 }
 
 /// What the run leaves for the report.
-pub struct Executed {
+pub(crate) struct Executed {
     /// The plan, with every item's outcome.
     pub plan: CleanPlan,
     /// `errors[]` of the envelope: what made the run partial.
@@ -178,6 +182,21 @@ fn dry_run(context: &CleanContext<'_>, plan: CleanPlan, root: &Path) -> Executed
     Executed { plan, errors: Vec::new(), warnings, due }
 }
 
+/// `--apply` with nothing left to move: the expiry step still runs, and the
+/// items the guard skipped still reach `errors[]`.
+fn nothing_to_move(
+    context: &CleanContext<'_>,
+    plan: CleanPlan,
+    execution: &Execution<'_>,
+) -> Result<Executed, BrozaError> {
+    let ttl = context.config.quarantine_ttl.to_duration();
+    let Expiry { sessions, freed_bytes, mut errors, warnings } =
+        expire_due(context.ports, execution.root, ttl, execution.mounts, context.args.yes)?;
+    errors.extend(item_errors(&plan));
+    let plan = plan.with_expired_sessions(sessions)?.with_bytes(0, freed_bytes)?;
+    Ok(Executed { plan, errors, warnings, due: Vec::new() })
+}
+
 /// Confirm, expire what is due, move the items, fold the numbers together.
 fn execute(
     context: &CleanContext<'_>,
@@ -193,30 +212,58 @@ fn execute(
         quarantine_items(&approved, &request, context.ports.fs.as_ref(), context.ports.clock.as_ref())?;
     warnings.extend(moved.warnings);
     errors.extend(item_errors(&moved.plan));
-    let reclaimed = moved.plan.reclaimed_bytes().saturating_add(freed_bytes);
-    let plan = moved
-        .plan
-        .clone()
-        .with_expired_sessions(sessions)?
-        .with_bytes(moved.plan.quarantined_bytes(), reclaimed)?;
+    let (quarantined, reclaimed) =
+        (moved.plan.quarantined_bytes(), moved.plan.reclaimed_bytes().saturating_add(freed_bytes));
+    let plan = moved.plan.with_expired_sessions(sessions)?.with_bytes(quarantined, reclaimed)?;
     Ok(Executed { plan, errors, warnings, due: Vec::new() })
 }
 
 /// One `errors[]` entry per item that was not moved (`docs/cli-spec.md` §2).
-fn item_errors(plan: &CleanPlan) -> Vec<Warning> {
+pub(crate) fn item_errors(plan: &CleanPlan) -> Vec<Warning> {
     plan.items()
         .iter()
         .filter(|item| item.status.is_unsuccessful())
         .map(|item| Warning {
             code: item.error.as_ref().map_or_else(|| "item_not_moved".to_owned(), ToString::to_string),
-            message: format!("{} was not moved ({:?})", item.path.display(), item.status),
+            message: format!("{} was not moved ({})", item.path.display(), status_token(&item.status)),
             path: Some(item.path.clone()),
         })
         .collect()
 }
 
+/// The contract's spelling of a status (`skipped`, `failed`), never the Rust one.
+fn status_token(status: &broza::model::ItemStatus) -> String {
+    serde_json::to_value(status).ok().and_then(|v| v.as_str().map(ToOwned::to_owned)).unwrap_or_default()
+}
+
+/// The `broza clean …` line that reproduces this run's selection, for the
+/// dry-run footer: built from the flags, never guessed from the plan.
+fn rerun_command(args: &CleanArgs) -> String {
+    let mut parts = vec!["broza clean".to_owned()];
+    parts.extend(args.categories.iter().map(|c| format!("--category {c}")));
+    if let Some(risk) = args.risk {
+        let level = match risk {
+            RiskLevel::Green => "green",
+            RiskLevel::Amber => "amber",
+            RiskLevel::Red => "red",
+        };
+        parts.push(format!("--risk {level}"));
+    }
+    parts.extend(args.exclude.iter().map(|glob| format!("--exclude '{glob}'")));
+    if let Some(size) = &args.max_size {
+        parts.push(format!("--max-size {size}"));
+    }
+    if let Some(period) = &args.unused_after {
+        parts.push(format!("--unused-after {period}"));
+    }
+    if args.purge {
+        parts.push("--purge".to_owned());
+    }
+    parts.join(" ")
+}
+
 /// The envelope, the exit code, the text.
-fn render(
+pub(crate) fn render(
     context: &CleanContext<'_>,
     executed: Executed,
     detection_warnings: Vec<Warning>,
@@ -231,6 +278,7 @@ fn render(
     let output = CleanOutput {
         plan: executed.plan,
         due: executed.due,
+        rerun: rerun_command(context.args),
         errors: executed.errors,
         warnings: warnings.clone(),
         host: context.host.clone(),

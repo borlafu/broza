@@ -1,6 +1,6 @@
 //! Command implementations.
 //!
-//! Every command of `docs/cli-spec.md` §3 is implemented; [`not_implemented`]
+//! Every command of `docs/cli-spec.md` §3 is implemented; [`not_implemented_until`]
 //! remains for the one execution path that is not (`clean --apply --purge`,
 //! which waits for the irreversible path of the mover in M4).
 //!
@@ -32,9 +32,6 @@ pub(crate) mod test_world;
 
 use broza::model::Warning;
 use broza::{BrozaError, ExitCode};
-
-/// Milestone that will implement the remaining disk-facing commands.
-const PENDING_MILESTONE: &str = "milestone M3";
 
 /// Everything one command produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,9 +88,9 @@ impl Outcome {
     }
 }
 
-/// Error returned by commands whose engine does not exist yet (exit code `1`).
-pub fn not_implemented(command: &str) -> BrozaError {
-    BrozaError::Other(format!("`broza {command}` is not implemented until {PENDING_MILESTONE}"))
+/// Error returned by a command path whose engine does not exist yet (exit code `1`).
+pub fn not_implemented_until(command: &str, milestone: &str) -> BrozaError {
+    BrozaError::Other(format!("`broza {command}` is not implemented until {milestone}"))
 }
 
 #[cfg(test)]
@@ -104,7 +101,7 @@ mod tests {
 
     #[test]
     fn pending_commands_map_to_the_generic_exit_code() {
-        let err = not_implemented("clean");
+        let err = not_implemented_until("clean --apply --purge", "milestone M4");
         assert_eq!(ExitCode::from(&err), ExitCode::GenericError);
         assert!(err.to_string().contains("not implemented"), "{err}");
         assert!(err.to_string().contains("clean"), "{err}");

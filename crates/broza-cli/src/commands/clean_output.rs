@@ -19,6 +19,8 @@ pub struct CleanOutput {
     pub plan: CleanPlan,
     /// Dry run only: sessions `--apply` would expire, with their bytes.
     pub due: Vec<(SessionId, u64)>,
+    /// The `broza clean …` line that reproduces the selection, for the footer.
+    pub rerun: String,
     /// `errors[]` of the envelope.
     pub errors: Vec<Warning>,
     /// `warnings[]` of the envelope.
@@ -43,7 +45,7 @@ impl CleanOutput {
 
 impl Renderer for CleanOutput {
     fn to_human(&self) -> String {
-        human_clean::render(&self.plan, &self.due, &self.errors, &self.home, self.policy)
+        human_clean::render(&self.plan, &self.due, &self.errors, &self.home, &self.rerun)
     }
 
     fn to_json(&self) -> Result<String, BrozaError> {

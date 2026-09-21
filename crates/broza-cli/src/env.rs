@@ -91,12 +91,16 @@ impl RuntimeEnv {
             Err(_) => tmpdir.to_path_buf(),
         };
         let Ok(rest) = canonical.strip_prefix(UID_TEMP_PARENT) else { return Vec::new() };
-        let mut parts = rest.components().filter_map(|c| match c {
+        // A `.` or `..` anywhere is a shape Broza does not name a root for,
+        // rather than something to normalise away.
+        let mut parts = rest.components().map(|c| match c {
             Component::Normal(name) => Some(name),
             _ => None,
         });
         match (parts.next(), parts.next()) {
-            (Some(bucket), Some(hash)) => vec![Path::new(UID_TEMP_PARENT).join(bucket).join(hash)],
+            (Some(Some(bucket)), Some(Some(hash))) => {
+                vec![Path::new(UID_TEMP_PARENT).join(bucket).join(hash)]
+            }
             _ => Vec::new(),
         }
     }
@@ -230,7 +234,7 @@ mod tests {
 
     #[test]
     fn a_tmpdir_of_another_shape_yields_no_temporary_root() {
-        for raw in ["/tmp", "/private/var/folders/zz", "relative/T"] {
+        for raw in ["/tmp", "/private/var/folders/zz", "relative/T", "/var/folders/../../Users/x/y/T"] {
             let env = RuntimeEnv {
                 tmpdir: Some(PathBuf::from(raw)),
                 ..RuntimeEnv::for_tests(PathBuf::from("/Users/d"))

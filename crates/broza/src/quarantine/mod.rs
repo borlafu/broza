@@ -41,9 +41,13 @@ pub mod list;
 pub mod manifest;
 pub mod measure;
 pub mod mover;
+#[cfg(test)]
+mod mover_tests;
 pub mod putback;
 pub mod report;
 pub mod restore;
+#[cfg(test)]
+mod restore_tests;
 pub mod store;
 pub mod ttl;
 

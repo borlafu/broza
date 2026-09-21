@@ -124,6 +124,10 @@ A single code space for the whole CLI. Scripts MUST be able to distinguish "I di
 | Cross-volume quarantine (item on a different device than the quarantine root) | Item `skipped` with `error: "cross_volume"`; overall exit `5` if other items succeeded, `0` only if the plan was empty |
 | `--purge` or `quarantine purge` without a TTY | `7` |
 | `quarantine expire` with nothing past TTL | `0` |
+| Safety-kernel refusal (protected volume role, symlink component, path outside the allowed roots, exclusion, `--max-size` exceeded, relative or `..` path, inconsistent plan) | `2` — the request is invalid; nothing is executed |
+| An item's path no longer exists at `--apply` time | Item `skipped` with `error: "not_found"`; the plan continues; exit `5` if other items succeeded |
+| OS denies reading or acting on a path (`EACCES`/`EPERM`) | Item `failed` with `error: "permission_denied"`; whole-command `3` only when the operation was impossible without the permission |
+| `clean` dry run whose selection contains only `inform_only` findings | `0` with a warning; the plan lists nothing and stderr points to `broza explain <category>` |
 
 > **Rule:** `clean` in dry-run mode always returns `0` if the analysis succeeded, even if it proposes removing 200 GB. A dry run is not a failure.
 
@@ -901,3 +905,4 @@ Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<vol
 - §8: former "open questions" resolved (node_modules, hashing, last_used, Docker, treemap, snapshot sizes, tmutil privileges) and a deferred list added (treemap, schedule/launchd, native DiskArbitration, per-volume quarantine roots, Docker daemon integration).
 - §9: this changelog.
 - §4 (while 1.1 is unreleased, so no bump): documented what the model of `crates/broza/src/model/` already implements — optional `volumes[].mount_point` (unmounted `Preboot` / `Recovery`), optional `snapshots[].uuid`, optional `clean.quarantine_path`, the `entries` array of `manifest.json` and the item fields `stored_path` / `restored_to`; `type` added to the stable-enum table with pass-through of unknown tokens; unknown-value handling made explicit per enum (verbatim pass-through for the persisted ones, collapse to `unknown` for `role`); `instructions` required for every `inform_only` finding; normative consistency rules for `clean`, and its example renumbered so `planned_bytes` is the sum of the items shown.
+- §2 (M1 safety kernel, unreleased): explicit exit-code rows for safety-kernel refusals (`2`), vanished items (`skipped` + `not_found`), OS permission errors on single items (`failed` + `permission_denied`), and dry runs whose selection is entirely `inform_only` (`0` with a warning).

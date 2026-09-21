@@ -78,8 +78,9 @@ pub struct Volume {
     pub mount_point: Option<PathBuf>,
     /// Bytes in use on this volume.
     pub used_bytes: u64,
-    /// `true` when Broza is allowed to write to the volume; mirrors
-    /// [`VolumeRole::writable_by_broza`].
+    /// `true` when the role permits writes **and** the volume was observed to
+    /// be writable; [`VolumeRole::writable_by_broza`] is the first of the two
+    /// gates, never the whole answer.
     pub writable_by_broza: bool,
     /// One-sentence explanation of what the volume is for.
     pub purpose: String,

@@ -24,6 +24,30 @@ pub const TIME_MACHINE_MARKER: &str = "Backups.backupdb";
 /// Fragments that only appear in the naming of a Time Machine destination.
 const TIME_MACHINE_HINTS: [&str; 3] = ["com.apple.TimeMachine", "Time Machine", "TimeMachine"];
 
+/// What `tmutil destinationinfo` says about one volume, and how firmly.
+///
+/// The distinction is the difference between "this volume is a destination"
+/// and "a destination happens to share this name", and it decides whether the
+/// answer may override the role macOS declared
+/// ([`crate::adapters::tmutil_destinations`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BackupEvidence {
+    /// Time Machine said nothing about this volume.
+    #[default]
+    None,
+    /// A destination goes by this volume's name, and nothing stronger.
+    ///
+    /// A name belongs to no volume in particular — a network share has one
+    /// and no disk behind it — so this only counts for a volume macOS gave no
+    /// role at all, where the alternative reading is "the user's disk".
+    Name,
+    /// Time Machine named this very volume, by mount point or by identifier.
+    ///
+    /// A fact about the volume itself, and therefore strong enough to outrank
+    /// the declared role.
+    Volume,
+}
+
 /// What the adapters could observe about a volume besides its roles.
 ///
 /// Everything here defaults to the cautious answer: not writable, no backup
@@ -32,12 +56,8 @@ const TIME_MACHINE_HINTS: [&str; 3] = ["com.apple.TimeMachine", "Time Machine", 
 pub struct VolumeFacts<'a> {
     /// `true` only when `diskutil info` reports `WritableVolume`.
     pub writable_volume: bool,
-    /// `true` when Time Machine itself lists this volume as a destination.
-    ///
-    /// The authority on the question
-    /// ([`crate::adapters::tmutil_destinations`]); the two heuristics below
-    /// only matter when `tmutil` could not be asked.
-    pub backup_destination: bool,
+    /// How strongly Time Machine claims this volume as a destination.
+    pub backup_evidence: BackupEvidence,
     /// `true` when a Time Machine backup directory sits at the volume root.
     pub time_machine_marker: bool,
     /// Partition content token (`Apple_HFS`, `Apple_APFS`), when known.
@@ -82,7 +102,7 @@ pub fn volume_role(roles: &[String], mount_point: Option<&Path>, facts: VolumeFa
     // Time Machine's own answer outranks everything, including a declared
     // role: a volume it backs up to is a backup volume, and Broza writes to
     // backups only through `tmutil` (`AGENTS.md` §2.3).
-    if facts.backup_destination {
+    if facts.backup_evidence == BackupEvidence::Volume {
         return VolumeRole::Backup;
     }
     let declared = roles_to_volume_role(roles);
@@ -98,13 +118,17 @@ pub fn volume_role(roles: &[String], mount_point: Option<&Path>, facts: VolumeFa
     VolumeRole::Unknown
 }
 
-/// `true` when everything Broza can see says "Time Machine destination".
+/// `true` when everything Broza can see about a *roleless* volume says "Time
+/// Machine destination": a destination of that name, a backup directory at
+/// the root, or a name or content token that says so.
 ///
 /// A backup volume is writable and sits under `/Volumes` like any other, so
 /// without this check it would be classified `user` and become writable. It is
 /// not: backups are only ever changed through `tmutil` (`AGENTS.md` §2.3).
 fn is_time_machine_destination(facts: VolumeFacts<'_>) -> bool {
-    facts.time_machine_marker || [facts.content, facts.name].into_iter().flatten().any(mentions_time_machine)
+    facts.backup_evidence == BackupEvidence::Name
+        || facts.time_machine_marker
+        || [facts.content, facts.name].into_iter().flatten().any(mentions_time_machine)
 }
 
 /// `true` when a content token or a volume name names Time Machine.
@@ -138,7 +162,7 @@ fn is_user_volume_mount_point(mount_point: &Path) -> bool {
 mod tests {
     use std::path::Path;
 
-    use super::{VolumeFacts, roles_to_volume_role, volume_role};
+    use super::{BackupEvidence, VolumeFacts, roles_to_volume_role, volume_role};
     use crate::model::VolumeRole;
 
     fn roles(tokens: &[&str]) -> Vec<String> {
@@ -253,7 +277,7 @@ mod tests {
     #[test]
     fn a_volume_time_machine_backs_up_to_is_a_backup_volume_whatever_it_is_called() {
         let mount = Path::new("/Volumes/Backup4TB");
-        let facts = VolumeFacts { backup_destination: true, ..writable() };
+        let facts = VolumeFacts { backup_evidence: BackupEvidence::Volume, ..writable() };
 
         let role = volume_role(&[], Some(mount), facts);
 
@@ -262,10 +286,32 @@ mod tests {
     }
 
     #[test]
-    fn time_machine_outranks_even_a_declared_role() {
-        let facts = VolumeFacts { backup_destination: true, ..writable() };
+    fn time_machine_outranks_even_a_declared_role_when_it_names_the_volume_itself() {
+        let facts = VolumeFacts { backup_evidence: BackupEvidence::Volume, ..writable() };
 
         assert_eq!(volume_role(&roles(&["Data"]), Some(Path::new("/x")), facts), VolumeRole::Backup);
+    }
+
+    #[test]
+    fn a_destination_that_only_shares_a_name_never_demotes_a_volume_with_a_role() {
+        let by_name = VolumeFacts { backup_evidence: BackupEvidence::Name, ..writable() };
+
+        assert_eq!(
+            volume_role(&roles(&["Data"]), Some(Path::new("/System/Volumes/Data")), by_name),
+            VolumeRole::Data,
+            "a network destination called `Data` must not demote the boot data volume"
+        );
+        assert_eq!(volume_role(&roles(&["System"]), Some(Path::new("/")), by_name), VolumeRole::System);
+    }
+
+    #[test]
+    fn a_destination_that_shares_a_name_does_claim_a_volume_with_no_role() {
+        let by_name = VolumeFacts { backup_evidence: BackupEvidence::Name, ..writable() };
+
+        let role = volume_role(&[], Some(Path::new("/Volumes/Backup4TB")), by_name);
+
+        assert_eq!(role, VolumeRole::Backup, "the alternative reading would be `user`");
+        assert!(!role.writable_by_broza());
     }
 
     #[test]

@@ -96,10 +96,11 @@ fn a_local_destination_is_recognised_by_mount_point_name_and_identifier() {
         .unwrap_or_else(|e| panic!("{e}"));
 
     let mount_point = Path::new("/Volumes/Backup4TB");
-    assert!(parsed.contains(Some(mount_point), "", None));
-    assert!(parsed.contains(None, "Backup4TB", None));
-    assert!(parsed.contains(None, "", Some("00000101-1111-4222-8333-000000000101")));
-    assert!(!parsed.contains(Some(Path::new("/System/Volumes/Data")), "Data", None));
+    assert!(parsed.contains(Some(mount_point), None));
+    assert!(parsed.contains(None, Some("00000101-1111-4222-8333-000000000101")));
+    assert!(parsed.contains_name("Backup4TB"));
+    assert!(!parsed.contains(Some(Path::new("/System/Volumes/Data")), None));
+    assert!(!parsed.contains_name("Data"), "the network destination is called Time Capsule");
 }
 
 #[test]

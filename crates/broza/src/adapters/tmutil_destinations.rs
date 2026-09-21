@@ -13,10 +13,11 @@
 //! asked once per enumeration and its answer outranks every heuristic
 //! (`AGENTS.md` §2.3).
 //!
-//! The matching is deliberately generous — mount point, destination id, or
-//! name. The two mistakes are not equal: calling a volume a backup when it is
-//! not costs it its writability, while missing one would let Broza write into
-//! backups.
+//! Matching by mount point or by destination id is universal: those identify
+//! the volume itself, and a match outranks the role macOS declared. Matching
+//! by *name* is narrower — only a volume with no role at all is judged by its
+//! name — because a name is not a fact about a volume, and a network
+//! destination called `Data` must not demote the boot data volume.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -61,17 +62,25 @@ impl BackupDestinations {
         self.mount_points.is_empty() && self.names.is_empty() && self.ids.is_empty()
     }
 
-    /// `true` when a volume is one of the destinations.
+    /// `true` when a volume *is* one of the destinations.
     ///
-    /// Names are compared case-insensitively, the way a user reads them; an
-    /// empty name matches nothing, because half the volumes on a Mac have one.
-    pub fn contains(&self, mount_point: Option<&Path>, name: &str, uuid: Option<&str>) -> bool {
-        if mount_point.is_some_and(|path| self.mount_points.contains(path)) {
-            return true;
-        }
-        if uuid.is_some_and(|uuid| self.ids.iter().any(|known| known.eq_ignore_ascii_case(uuid))) {
-            return true;
-        }
+    /// Mount point and identifier are facts about the volume itself, so this
+    /// answer is trustworthy enough to outrank the role macOS declared.
+    pub fn contains(&self, mount_point: Option<&Path>, uuid: Option<&str>) -> bool {
+        mount_point.is_some_and(|path| self.mount_points.contains(path))
+            || uuid.is_some_and(|uuid| self.ids.iter().any(|known| known.eq_ignore_ascii_case(uuid)))
+    }
+
+    /// `true` when a destination goes by `name`.
+    ///
+    /// A name is not a fact about a volume: two volumes can share one, a
+    /// network destination has a name and no disk behind it, and a share
+    /// called `Data` would otherwise demote the boot data volume. So this is
+    /// only ever consulted for a volume macOS gave no role at all, where the
+    /// alternative reading is "the user's disk" and being careful costs
+    /// nothing. Comparison is case-insensitive, the way a user reads a name;
+    /// an empty name matches nothing.
+    pub fn contains_name(&self, name: &str) -> bool {
         !name.is_empty() && self.names.iter().any(|known| known.eq_ignore_ascii_case(name))
     }
 }
@@ -186,31 +195,33 @@ mod tests {
 
     #[test]
     fn a_destination_is_recognised_by_its_mount_point() {
-        assert!(two().contains(Some(Path::new("/Volumes/Backup4TB")), "", None));
+        assert!(two().contains(Some(Path::new("/Volumes/Backup4TB")), None));
     }
 
     #[test]
     fn a_destination_is_recognised_by_its_identifier_whatever_it_is_mounted_as() {
         let uuid = "00000101-1111-4222-8333-000000000101";
 
-        assert!(two().contains(Some(Path::new("/Volumes/Moved")), "Moved", Some(uuid)));
-        assert!(two().contains(None, "", Some(&uuid.to_lowercase())));
+        assert!(two().contains(Some(Path::new("/Volumes/Moved")), Some(uuid)));
+        assert!(two().contains(None, Some(&uuid.to_lowercase())));
     }
 
     #[test]
     fn a_destination_is_recognised_by_its_name_however_it_is_capitalised() {
-        assert!(two().contains(Some(Path::new("/Volumes/Elsewhere")), "backup4tb", None));
-        assert!(two().contains(None, "Time Capsule", None), "a network share is a destination too");
+        assert!(two().contains_name("backup4tb"));
+        assert!(two().contains_name("Time Capsule"), "a network share has a name too");
+        assert!(!two().contains(Some(Path::new("/Volumes/Elsewhere")), None), "but a name is not a volume");
     }
 
     #[test]
     fn a_volume_nobody_backs_up_to_is_not_a_destination() {
         let destinations = two();
 
-        assert!(!destinations.contains(Some(Path::new("/Volumes/Scratch")), "Scratch", None));
-        assert!(!destinations.contains(None, "", None));
+        assert!(!destinations.contains(Some(Path::new("/Volumes/Scratch")), None));
+        assert!(!destinations.contains(None, None));
+        assert!(!destinations.contains_name("Scratch"));
         assert!(
-            !destinations.contains(Some(Path::new("/System/Volumes/Data")), "", None),
+            !destinations.contains_name(""),
             "an empty name must not match the destinations that have one"
         );
     }
@@ -220,7 +231,8 @@ mod tests {
         let destinations = parse_destination_info(NO_DESTINATIONS).unwrap_or_else(|e| panic!("{e}"));
 
         assert!(destinations.is_empty());
-        assert!(!destinations.contains(Some(Path::new("/Volumes/Backup4TB")), "Backup4TB", None));
+        assert!(!destinations.contains(Some(Path::new("/Volumes/Backup4TB")), None));
+        assert!(!destinations.contains_name("Backup4TB"));
         assert_eq!(destinations, BackupDestinations::none());
     }
 

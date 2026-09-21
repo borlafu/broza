@@ -63,6 +63,7 @@ pub(crate) fn hfs_container(
         writable_by_broza: writable(role, observed, &name, warnings),
         name,
         role,
+        uuid: uuid.clone(),
         mount_point,
         used_bytes,
     }];

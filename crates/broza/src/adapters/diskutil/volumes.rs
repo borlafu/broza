@@ -85,6 +85,7 @@ fn apfs_volume(volume: &ApfsVolume, inputs: &Inputs<'_>, warnings: &mut Vec<Warn
         writable_by_broza: writable(role, observed, &name, warnings),
         name,
         role,
+        uuid: volume.apfs_volume_uuid.clone().or_else(|| info.and_then(|info| info.volume_uuid.clone())),
         mount_point: listed.and_then(ListApfsVolume::effective_mount_point),
         used_bytes: volume.capacity_in_use,
     })

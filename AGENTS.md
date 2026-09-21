@@ -103,7 +103,8 @@ Run all of them before reporting work as done. Report actual output, including f
 
 - TDD: write the failing test first, run it, implement, run, refactor.
 - Unit tests live beside the code; integration tests in each crate's `tests/`.
-- No test touches the real `$HOME`, real disks, or spawns `diskutil`/`tmutil`. Use `tempfile` plus
+- No test touches the real `$HOME`, real disks, or spawns `diskutil`/`tmutil`. The one exception is
+  an `#[ignore]` benchmark, which may read `$HOME` read-only and never runs in CI. Use `tempfile` plus
   the fakes: `FakeRunner` (fixture plists in `crates/broza/tests/fixtures/plist/<macos_major>/`),
   `FakeFileOps`, `FakePrompter`, `FixedClock`.
 - `insta` snapshots for every JSON example in `docs/cli-spec.md` §4 and for every `--help` output.

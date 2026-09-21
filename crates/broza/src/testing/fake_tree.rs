@@ -42,6 +42,8 @@ pub(crate) struct Node {
     pub modified: Option<Timestamp>,
     /// Last access time.
     pub accessed: Option<Timestamp>,
+    /// `true` for a cloud placeholder whose contents are not on this disk.
+    pub is_dataless: bool,
 }
 
 impl Node {
@@ -153,7 +155,8 @@ impl Tree {
             |node| node.inode,
         );
         let now = default_time();
-        let node = Node { kind, inode, size_override: None, modified: now, accessed: now };
+        let node =
+            Node { kind, inode, size_override: None, modified: now, accessed: now, is_dataless: false };
         self.nodes.insert(path.to_path_buf(), node);
     }
 
@@ -191,6 +194,13 @@ impl Tree {
         }
     }
 
+    /// Mark an existing entry as a cloud placeholder.
+    pub fn set_dataless(&mut self, path: &Path) {
+        if let Some(node) = self.nodes.get_mut(path) {
+            node.is_dataless = true;
+        }
+    }
+
     /// Give an existing entry an apparent size unrelated to its contents.
     pub fn set_size(&mut self, path: &Path, size_bytes: u64) {
         if let Some(node) = self.nodes.get_mut(path) {
@@ -222,10 +232,25 @@ impl Tree {
         }
     }
 
-    /// Link count: the unix convention for directories, one for everything else.
+    /// Add `link` as another name for the entry at `existing`.
+    ///
+    /// Both names share one inode, as `link(2)` does. Directories cannot be hard
+    /// linked, and a missing source is a no-op; both report `false`.
+    pub fn link(&mut self, existing: &Path, link: &Path) -> bool {
+        let Some(node) = self.nodes.get(existing).cloned() else { return false };
+        if matches!(node.kind, NodeKind::Dir) {
+            return false;
+        }
+        self.nodes.insert(link.to_path_buf(), node);
+        true
+    }
+
+    /// Link count: the unix convention for directories, names sharing an inode
+    /// for everything else.
     pub fn link_count(&self, path: &Path) -> u64 {
         if !self.is_dir(path) {
-            return 1;
+            let Some(node) = self.get(path) else { return 1 };
+            return self.nodes.values().filter(|other| other.inode == node.inode).count() as u64;
         }
         let subdirectories = self.children(path).iter().filter(|child| self.is_dir(child)).count() as u64;
         EMPTY_DIR_LINK_COUNT + subdirectories

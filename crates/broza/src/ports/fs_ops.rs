@@ -13,18 +13,30 @@
 //! ```
 //!
 //! Only `clean::executor` and `quarantine::{mover,restore,expiry}` may call those
-//! four methods, and only while holding an
+//! four methods **on the user's data**, and only while holding an
 //! [`Approved`](crate::safety::guard::Approved) token whose
 //! [`ApprovedItem`](crate::safety::guard::ApprovedItem) covers the path — after
 //! re-`lstat`ing it and comparing `(device, inode)`. Any other call site is a bug,
 //! and review rejects it; the trait is deliberately not split, because splitting it
 //! would only move the obligation somewhere less visible.
+//!
+//! One exception exists, and it is not about user data: `scan::cache::store` calls
+//! `create_dir_all` and `write_atomic` on Broza's own cache file under
+//! `~/.cache/broza/v1/` (`docs/cli-spec.md` §7). It never touches a path the user
+//! asked about, never deletes anything, and a lost cache costs one slow scan — so
+//! it needs no `Approved` token. Any *other* writer outside the list above is a bug.
 
 use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
 use crate::BrozaError;
+
+/// One directory listing: every child with the metadata read for it.
+///
+/// A child that could not be stated carries the error instead of the metadata,
+/// so the caller can warn about it rather than lose it.
+pub type DirListing = Vec<(PathBuf, Result<EntryMetadata, BrozaError>)>;
 
 /// Metadata of a filesystem entry, obtained without following symlinks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +55,13 @@ pub struct EntryMetadata {
     pub is_dir: bool,
     /// `true` for symbolic links.
     pub is_symlink: bool,
+    /// `true` when the entry is a cloud placeholder whose contents are not on
+    /// this disk (`SF_DATALESS`: iCloud Drive, Files On-Demand providers).
+    ///
+    /// Its `size_bytes` is what the file *would* take once downloaded, so a
+    /// scan that counted it would report space that is not in use. Touching one
+    /// is also expensive: opening or listing it blocks on the provider.
+    pub is_dataless: bool,
     /// Last modification time.
     pub modified: Option<Timestamp>,
     /// Last access time.
@@ -71,6 +90,27 @@ pub trait FileOps: Send + Sync {
     fn metadata(&self, path: &Path) -> Result<EntryMetadata, BrozaError>;
     /// Direct children of a directory (names joined to `path`).
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, BrozaError>;
+    /// Direct children of a directory, each with the metadata of a `lstat`.
+    ///
+    /// The walker asks for a whole directory at once because the alternative —
+    /// one `readdir` plus one `lstat` per entry — is two syscalls per file, and
+    /// a scan looks at millions of them. The default implementation is exactly
+    /// that pair, so an adapter only overrides this when its platform offers
+    /// something better (macOS: `getattrlistbulk`).
+    ///
+    /// A child whose metadata cannot be read keeps its place in the listing
+    /// with the error: a directory the process may not stat is something the
+    /// user has to be told about, not something to drop quietly.
+    fn read_dir_with_metadata(&self, path: &Path) -> Result<DirListing, BrozaError> {
+        Ok(self
+            .read_dir(path)?
+            .into_iter()
+            .map(|child| {
+                let meta = self.metadata(&child);
+                (child, meta)
+            })
+            .collect())
+    }
     /// `true` when something exists at `path` (symlinks are not followed).
     fn exists(&self, path: &Path) -> bool;
     /// Atomic rename within one device.

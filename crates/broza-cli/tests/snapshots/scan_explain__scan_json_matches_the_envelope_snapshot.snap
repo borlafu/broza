@@ -24,6 +24,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Boot loader data that macOS needs before the system volume is available.",
                 "role": "preboot",
                 "used_bytes": 5877760,
+                "uuid": "00000003-1111-4222-8333-000000000003",
                 "writable_by_broza": false
               },
               {
@@ -33,6 +34,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Secure counters used by the Secure Enclave to detect rollback attacks.",
                 "role": "unknown",
                 "used_bytes": 6311936,
+                "uuid": "00000004-1111-4222-8333-000000000004",
                 "writable_by_broza": false
               },
               {
@@ -42,6 +44,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Hardware-specific data written by the firmware of this Mac.",
                 "role": "unknown",
                 "used_bytes": 2641920,
+                "uuid": "00000005-1111-4222-8333-000000000005",
                 "writable_by_broza": false
               },
               {
@@ -50,6 +53,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "The recovery environment used to repair or reinstall macOS.",
                 "role": "recovery",
                 "used_bytes": 20480,
+                "uuid": "00000006-1111-4222-8333-000000000006",
                 "writable_by_broza": false
               }
             ]
@@ -69,6 +73,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "The recovery environment used to repair or reinstall macOS.",
                 "role": "recovery",
                 "used_bytes": 2297442304,
+                "uuid": "00000009-1111-4222-8333-000000000009",
                 "writable_by_broza": false
               },
               {
@@ -77,6 +82,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Staging area for macOS updates, written and cleared by the installer.",
                 "role": "unknown",
                 "used_bytes": 2461696,
+                "uuid": "0000000A-1111-4222-8333-00000000000A",
                 "writable_by_broza": false
               }
             ]
@@ -96,6 +102,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Read-only, sealed and signed operating system volume (SSV).",
                 "role": "system",
                 "used_bytes": 17116610560,
+                "uuid": "0000000D-1111-4222-8333-00000000000D",
                 "writable_by_broza": false
               },
               {
@@ -105,6 +112,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Boot loader data that macOS needs before the system volume is available.",
                 "role": "preboot",
                 "used_bytes": 17999499264,
+                "uuid": "0000000E-1111-4222-8333-00000000000E",
                 "writable_by_broza": false
               },
               {
@@ -113,6 +121,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "The recovery environment used to repair or reinstall macOS.",
                 "role": "recovery",
                 "used_bytes": 2593611776,
+                "uuid": "0000000F-1111-4222-8333-00000000000F",
                 "writable_by_broza": false
               },
               {
@@ -122,6 +131,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Staging area for macOS updates, written and cleared by the installer.",
                 "role": "unknown",
                 "used_bytes": 801103872,
+                "uuid": "00000010-1111-4222-8333-000000000010",
                 "writable_by_broza": false
               },
               {
@@ -131,6 +141,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "The writable volume that holds your home folder, your applications and your settings.",
                 "role": "data",
                 "used_bytes": 409422745600,
+                "uuid": "00000011-1111-4222-8333-000000000011",
                 "writable_by_broza": true
               },
               {
@@ -140,6 +151,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "Virtual memory: the swap and sleep-image files macOS writes and manages on its own.",
                 "role": "vm",
                 "used_bytes": 6442795008,
+                "uuid": "00000012-1111-4222-8333-000000000012",
                 "writable_by_broza": false
               }
             ]
@@ -167,6 +179,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
                 "role": "unknown",
                 "used_bytes": 1875832832,
+                "uuid": "00000019-1111-4222-8333-000000000019",
                 "writable_by_broza": false
               }
             ]
@@ -194,6 +207,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
                 "role": "unknown",
                 "used_bytes": 2304745472,
+                "uuid": "0000001B-1111-4222-8333-00000000001B",
                 "writable_by_broza": false
               }
             ]
@@ -221,6 +235,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
                 "role": "unknown",
                 "used_bytes": 1257394176,
+                "uuid": "0000001D-1111-4222-8333-00000000001D",
                 "writable_by_broza": false
               }
             ]
@@ -248,6 +263,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
                 "role": "unknown",
                 "used_bytes": 1119182848,
+                "uuid": "0000001F-1111-4222-8333-00000000001F",
                 "writable_by_broza": false
               }
             ]
@@ -275,6 +291,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
                 "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only.",
                 "role": "unknown",
                 "used_bytes": 1120415744,
+                "uuid": "00000021-1111-4222-8333-000000000021",
                 "writable_by_broza": false
               }
             ]

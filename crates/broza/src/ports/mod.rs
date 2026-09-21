@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 pub use clock::Clock;
 pub use disk_enum::{DiskEnumerator, EnumerationReport, SnapshotProvider, SpaceProvider};
-pub use fs_ops::{EntryMetadata, FileOps};
+pub use fs_ops::{DirListing, EntryMetadata, FileOps};
 pub use process::{ProcessOutput, ProcessRunner};
 pub use prompter::{Answer, ConfirmationRequest, Prompter};
 

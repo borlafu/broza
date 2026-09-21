@@ -6,14 +6,16 @@
 
 use std::fs::{self, Permissions};
 use std::io::Write;
+use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::BrozaError;
 use crate::adapters::io_error::from_io;
-use crate::ports::{EntryMetadata, FileOps};
+use crate::ports::{DirListing, EntryMetadata, FileOps};
 
 /// Size of the blocks `st_blocks` counts, fixed at 512 bytes by POSIX.
 const STAT_BLOCK_BYTES: u64 = 512;
@@ -21,6 +23,8 @@ const STAT_BLOCK_BYTES: u64 = 512;
 const DEFAULT_FILE_MODE: u32 = 0o644;
 /// The permission bits of `st_mode`, without the file type.
 const MODE_BITS: u32 = 0o7777;
+/// `SF_DATALESS` in `st_flags`: a cloud placeholder whose contents are elsewhere.
+const SF_DATALESS: u32 = 0x4000_0000;
 
 /// [`FileOps`] backed by the real filesystem.
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,6 +43,7 @@ impl FileOps for StdFileOps {
             link_count: meta.nlink(),
             is_dir: kind.is_dir(),
             is_symlink: kind.is_symlink(),
+            is_dataless: meta.st_flags() & SF_DATALESS != 0,
             modified: timestamp(meta.mtime(), meta.mtime_nsec()),
             accessed: timestamp(meta.atime(), meta.atime_nsec()),
         })
@@ -54,6 +59,24 @@ impl FileOps for StdFileOps {
             children.push(entry.path());
         }
         Ok(children)
+    }
+
+    fn read_dir_with_metadata(&self, path: &Path) -> Result<DirListing, BrozaError> {
+        if let Some(listing) = crate::adapters::bulk_dir::read_dir_with_attributes(path) {
+            return Ok(listing);
+        }
+        // The kernel would not answer in bulk here: pair up `readdir` and
+        // `lstat` like everybody else, but spread the `lstat`s over the pool.
+        // They are independent, and on a cold cache each one waits on the disk
+        // rather than on a core.
+        let children = self.read_dir(path)?;
+        Ok(children
+            .into_par_iter()
+            .map(|child| {
+                let meta = self.metadata(&child);
+                (child, meta)
+            })
+            .collect())
     }
 
     fn exists(&self, path: &Path) -> bool {

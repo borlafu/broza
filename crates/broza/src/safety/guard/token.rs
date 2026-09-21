@@ -204,6 +204,7 @@ pub(super) fn evidence_for(path: &str, device: u64, inode: u64) -> ApprovedItem 
             link_count: 1,
             is_dir: false,
             is_symlink: false,
+            is_dataless: false,
             modified: None,
             accessed: None,
         },

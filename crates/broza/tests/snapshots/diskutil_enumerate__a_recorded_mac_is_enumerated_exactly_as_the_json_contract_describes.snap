@@ -20,6 +20,7 @@ expression: recorded_disks()
           {
             "id": "disk1s1",
             "name": "iSCPreboot",
+            "uuid": "00000003-1111-4222-8333-000000000003",
             "role": "preboot",
             "mount_point": "/System/Volumes/iSCPreboot",
             "used_bytes": 5877760,
@@ -29,6 +30,7 @@ expression: recorded_disks()
           {
             "id": "disk1s2",
             "name": "xART",
+            "uuid": "00000004-1111-4222-8333-000000000004",
             "role": "unknown",
             "mount_point": "/System/Volumes/xarts",
             "used_bytes": 6311936,
@@ -38,6 +40,7 @@ expression: recorded_disks()
           {
             "id": "disk1s3",
             "name": "Hardware",
+            "uuid": "00000005-1111-4222-8333-000000000005",
             "role": "unknown",
             "mount_point": "/System/Volumes/Hardware",
             "used_bytes": 2641920,
@@ -47,6 +50,7 @@ expression: recorded_disks()
           {
             "id": "disk1s4",
             "name": "Recovery",
+            "uuid": "00000006-1111-4222-8333-000000000006",
             "role": "recovery",
             "used_bytes": 20480,
             "writable_by_broza": false,
@@ -65,6 +69,7 @@ expression: recorded_disks()
           {
             "id": "disk2s1",
             "name": "Recovery",
+            "uuid": "00000009-1111-4222-8333-000000000009",
             "role": "recovery",
             "mount_point": "/System/Volumes/Update/SFR/mnt1",
             "used_bytes": 2297442304,
@@ -74,6 +79,7 @@ expression: recorded_disks()
           {
             "id": "disk2s2",
             "name": "Update",
+            "uuid": "0000000A-1111-4222-8333-00000000000A",
             "role": "unknown",
             "used_bytes": 2461696,
             "writable_by_broza": false,
@@ -92,6 +98,7 @@ expression: recorded_disks()
           {
             "id": "disk3s1",
             "name": "Macintosh HD",
+            "uuid": "0000000D-1111-4222-8333-00000000000D",
             "role": "system",
             "mount_point": "/",
             "used_bytes": 17116610560,
@@ -101,6 +108,7 @@ expression: recorded_disks()
           {
             "id": "disk3s2",
             "name": "Preboot",
+            "uuid": "0000000E-1111-4222-8333-00000000000E",
             "role": "preboot",
             "mount_point": "/System/Volumes/Preboot",
             "used_bytes": 17999499264,
@@ -110,6 +118,7 @@ expression: recorded_disks()
           {
             "id": "disk3s3",
             "name": "Recovery",
+            "uuid": "0000000F-1111-4222-8333-00000000000F",
             "role": "recovery",
             "used_bytes": 2593611776,
             "writable_by_broza": false,
@@ -118,6 +127,7 @@ expression: recorded_disks()
           {
             "id": "disk3s4",
             "name": "Update",
+            "uuid": "00000010-1111-4222-8333-000000000010",
             "role": "unknown",
             "mount_point": "/System/Volumes/Update",
             "used_bytes": 801103872,
@@ -127,6 +137,7 @@ expression: recorded_disks()
           {
             "id": "disk3s5",
             "name": "Data",
+            "uuid": "00000011-1111-4222-8333-000000000011",
             "role": "data",
             "mount_point": "/System/Volumes/Data",
             "used_bytes": 409422745600,
@@ -136,6 +147,7 @@ expression: recorded_disks()
           {
             "id": "disk3s6",
             "name": "VM",
+            "uuid": "00000012-1111-4222-8333-000000000012",
             "role": "vm",
             "mount_point": "/System/Volumes/VM",
             "used_bytes": 6442795008,
@@ -163,6 +175,7 @@ expression: recorded_disks()
           {
             "id": "disk4s1",
             "name": "Kiro CLI",
+            "uuid": "00000019-1111-4222-8333-000000000019",
             "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI",
             "used_bytes": 1875832832,
@@ -190,6 +203,7 @@ expression: recorded_disks()
           {
             "id": "disk5s2",
             "name": "Docker",
+            "uuid": "0000001B-1111-4222-8333-00000000001B",
             "role": "unknown",
             "mount_point": "/private/var/folders/dd/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
             "used_bytes": 2304745472,
@@ -217,6 +231,7 @@ expression: recorded_disks()
           {
             "id": "disk6s1",
             "name": "Kiro CLI",
+            "uuid": "0000001D-1111-4222-8333-00000000001D",
             "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI 1",
             "used_bytes": 1257394176,
@@ -244,6 +259,7 @@ expression: recorded_disks()
           {
             "id": "disk7s1",
             "name": "Kiro CLI",
+            "uuid": "0000001F-1111-4222-8333-00000000001F",
             "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI 2",
             "used_bytes": 1119182848,
@@ -271,6 +287,7 @@ expression: recorded_disks()
           {
             "id": "disk8s1",
             "name": "Kiro CLI",
+            "uuid": "00000021-1111-4222-8333-000000000021",
             "role": "unknown",
             "mount_point": "/Volumes/Kiro CLI 3",
             "used_bytes": 1120415744,

@@ -4,6 +4,7 @@
 //! `unsafe` (`AGENTS.md` §4). Everything here implements a trait from
 //! [`crate::ports`], so the rest of the core stays pure and testable.
 
+pub(crate) mod bulk_dir;
 pub mod diskutil;
 pub(crate) mod io_error;
 pub mod mount_table;
@@ -16,6 +17,8 @@ pub mod tmutil_destinations;
 
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use bulk_dir::reset_bulk_state_for_tests;
 pub use diskutil::{DiskutilEnumerator, DiskutilSnapshots};
 pub use mount_table::{FIRMLINKS_PATH, MountTableReport, parse_firmlinks, system_mount_table};
 pub use nsurl_space::NsUrlSpaceProvider;

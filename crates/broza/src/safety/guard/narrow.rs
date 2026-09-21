@@ -116,6 +116,7 @@ mod tests {
             volume: Volume {
                 id: "disk3s5".parse().unwrap_or_else(|error| panic!("{error}")),
                 name: "test".to_owned(),
+                uuid: None,
                 role,
                 mount_point: Some(PathBuf::from("/")),
                 used_bytes: 0,

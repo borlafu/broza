@@ -41,6 +41,8 @@ struct Fixture {
     mounted: bool,
     /// One-sentence explanation of what the volume is for.
     purpose: &'static str,
+    /// Filesystem UUID, as `diskutil` reports it.
+    uuid: &'static str,
 }
 
 /// The fixture, in the order `diskutil` reports it.
@@ -53,6 +55,7 @@ const FIXTURES: [Fixture; 6] = [
         device: SYSTEM_DEVICE,
         mounted: true,
         purpose: "The sealed, read-only macOS system volume.",
+        uuid: "11111111-1111-4111-8111-111111111111",
     },
     Fixture {
         id: "disk3s5",
@@ -62,6 +65,7 @@ const FIXTURES: [Fixture; 6] = [
         device: DATA_DEVICE,
         mounted: true,
         purpose: "Your files, applications and settings.",
+        uuid: "22222222-2222-4222-8222-222222222222",
     },
     Fixture {
         id: "disk3s6",
@@ -71,6 +75,7 @@ const FIXTURES: [Fixture; 6] = [
         device: VM_DEVICE,
         mounted: true,
         purpose: "Virtual memory swap files, managed by macOS.",
+        uuid: "33333333-3333-4333-8333-333333333333",
     },
     Fixture {
         id: "disk3s2",
@@ -80,6 +85,7 @@ const FIXTURES: [Fixture; 6] = [
         device: PREBOOT_DEVICE,
         mounted: false,
         purpose: "Boot loader data needed before macOS starts.",
+        uuid: "44444444-4444-4444-8444-444444444444",
     },
     Fixture {
         id: "disk3s3",
@@ -89,6 +95,7 @@ const FIXTURES: [Fixture; 6] = [
         device: RECOVERY_DEVICE,
         mounted: false,
         purpose: "The recovery environment used to reinstall macOS.",
+        uuid: "55555555-5555-4555-8555-555555555555",
     },
     Fixture {
         id: "disk4s1",
@@ -98,6 +105,7 @@ const FIXTURES: [Fixture; 6] = [
         device: EXTERNAL_DEVICE,
         mounted: true,
         purpose: "An external disk you attached.",
+        uuid: "66666666-6666-4666-8666-666666666666",
     },
 ];
 
@@ -135,6 +143,7 @@ fn volume(fixture: &Fixture) -> Volume {
         id: volume_id(fixture.id),
         name: fixture.name.to_owned(),
         role: fixture.role,
+        uuid: Some(fixture.uuid.to_owned()),
         mount_point: fixture.mounted.then(|| PathBuf::from(fixture.mount_point)),
         used_bytes: 0,
         writable_by_broza: fixture.role.writable_by_broza(),

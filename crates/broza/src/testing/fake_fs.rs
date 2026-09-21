@@ -16,8 +16,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use jiff::Timestamp;
-
 use crate::BrozaError;
 use crate::adapters::io_error::not_found;
 use crate::ports::{EntryMetadata, FileOps};
@@ -27,6 +25,8 @@ use crate::testing::fake_posix::{
 };
 use crate::testing::fake_tree::{NodeKind, Tree};
 use crate::testing::sync::lock;
+
+mod builders;
 
 /// An in-memory filesystem.
 ///
@@ -41,7 +41,7 @@ use crate::testing::sync::lock;
 #[derive(Debug)]
 pub struct FakeFileOps {
     /// The tree, behind a lock so the fake can be shared as `Arc<dyn FileOps>`.
-    tree: Mutex<Tree>,
+    pub(super) tree: Mutex<Tree>,
 }
 
 impl Default for FakeFileOps {
@@ -56,107 +56,8 @@ impl FakeFileOps {
         Self::default()
     }
 
-    /// Declare `path` as a root directory sitting on `device`.
-    ///
-    /// Everything below a root reports that root's device, so two roots are what a
-    /// test needs to exercise a cross-device failure.
-    pub fn add_root(&self, path: impl AsRef<Path>, device: u64) {
-        lock(&self.tree).add_root(path.as_ref(), device);
-    }
-
-    /// Add a file, creating any missing parent directory.
-    pub fn add_file(&self, path: impl AsRef<Path>, contents: &[u8]) {
-        self.add_node(path.as_ref(), NodeKind::File(contents.to_vec()));
-    }
-
-    /// Add a symbolic link to `target`; `metadata` reports it without following it.
-    pub fn add_symlink(&self, path: impl AsRef<Path>, target: impl AsRef<Path>) {
-        self.add_node(path.as_ref(), NodeKind::Symlink(target.as_ref().to_path_buf()));
-    }
-
-    /// Add a directory and every missing parent.
-    pub fn add_dir(&self, path: impl AsRef<Path>) {
-        let path = path.as_ref();
-        expect_buildable(path, lock(&self.tree).create_dir_all(path));
-    }
-
-    /// Give an existing entry an apparent size unrelated to its contents.
-    pub fn set_size(&self, path: impl AsRef<Path>, size_bytes: u64) {
-        lock(&self.tree).set_size(path.as_ref(), size_bytes);
-    }
-
-    /// Refuse every access to `path` and everything below it.
-    ///
-    /// This is how a test reproduces a volume Broza has no Full Disk Access to:
-    /// every call about such a path fails with
-    /// [`BrozaError::PermissionDenied`](crate::BrozaError::PermissionDenied).
-    pub fn add_denied(&self, path: impl AsRef<Path>) {
-        lock(&self.tree).add_denied(path.as_ref());
-    }
-
-    /// Builder form of [`FakeFileOps::add_denied`].
-    #[must_use]
-    pub fn with_denied(self, path: impl AsRef<Path>) -> Self {
-        self.add_denied(path);
-        self
-    }
-
-    /// Set the modification and access times of an existing entry.
-    pub fn set_times(&self, path: impl AsRef<Path>, modified: Timestamp, accessed: Timestamp) {
-        lock(&self.tree).set_times(path.as_ref(), modified, accessed);
-    }
-
-    /// Builder form of [`FakeFileOps::add_root`].
-    #[must_use]
-    pub fn with_root(self, path: impl AsRef<Path>, device: u64) -> Self {
-        self.add_root(path, device);
-        self
-    }
-
-    /// Builder form of [`FakeFileOps::add_file`].
-    #[must_use]
-    pub fn with_file(self, path: impl AsRef<Path>, contents: &[u8]) -> Self {
-        self.add_file(path, contents);
-        self
-    }
-
-    /// Builder form of [`FakeFileOps::add_dir`].
-    #[must_use]
-    pub fn with_dir(self, path: impl AsRef<Path>) -> Self {
-        self.add_dir(path);
-        self
-    }
-
-    /// Builder form of [`FakeFileOps::add_symlink`].
-    #[must_use]
-    pub fn with_symlink(self, path: impl AsRef<Path>, target: impl AsRef<Path>) -> Self {
-        self.add_symlink(path, target);
-        self
-    }
-
-    /// Add a file whose apparent size is `size_bytes` but that stores no contents.
-    #[must_use]
-    pub fn with_sized_file(self, path: impl AsRef<Path>, size_bytes: u64) -> Self {
-        let path = path.as_ref().to_path_buf();
-        self.add_file(&path, &[]);
-        self.set_size(&path, size_bytes);
-        self
-    }
-
-    /// Builder form of [`FakeFileOps::set_times`].
-    #[must_use]
-    pub fn with_times(self, path: impl AsRef<Path>, modified: Timestamp, accessed: Timestamp) -> Self {
-        self.set_times(path, modified, accessed);
-        self
-    }
-
-    /// Every path in the tree, sorted. For assertions on what a test left behind.
-    pub fn paths(&self) -> Vec<PathBuf> {
-        lock(&self.tree).paths()
-    }
-
     /// Insert `kind` at `path`, creating the parents a test did not spell out.
-    fn add_node(&self, path: &Path, kind: NodeKind) {
+    pub(super) fn add_node(&self, path: &Path, kind: NodeKind) {
         let mut tree = lock(&self.tree);
         if let Some(parent) = path.parent() {
             expect_buildable(parent, tree.create_dir_all(parent));
@@ -179,6 +80,7 @@ impl FileOps for FakeFileOps {
             link_count: tree.link_count(&resolved),
             is_dir: matches!(node.kind, NodeKind::Dir),
             is_symlink: matches!(node.kind, NodeKind::Symlink(_)),
+            is_dataless: node.is_dataless,
             modified: node.modified,
             accessed: node.accessed,
         })
@@ -366,6 +268,25 @@ mod tests {
         assert!(matches!(fs.remove_tree(Path::new("/a/secret/f")), Err(BrozaError::PermissionDenied { .. })));
         assert!(!fs.exists(Path::new("/a/secret/f")));
         assert!(fs.exists(Path::new("/a")));
+    }
+
+    #[test]
+    fn a_hard_link_is_a_second_name_for_one_inode() {
+        let fs =
+            FakeFileOps::new().with_root("/a", 1).with_file("/a/f", b"1234").with_hard_link("/a/f", "/a/g");
+
+        let original = fs.metadata(Path::new("/a/f")).unwrap_or_else(|e| panic!("{e}"));
+        let link = fs.metadata(Path::new("/a/g")).unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(original.inode, link.inode);
+        assert_eq!(original.link_count, 2);
+        assert_eq!(link.size_bytes, 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot hard link")]
+    fn the_builder_refuses_to_hard_link_a_directory() {
+        let _ = FakeFileOps::new().with_root("/a", 1).with_dir("/a/d").with_hard_link("/a/d", "/a/e");
     }
 
     #[test]

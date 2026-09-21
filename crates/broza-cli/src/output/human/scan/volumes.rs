@@ -123,6 +123,7 @@ mod tests {
         Volume {
             id: "disk3s1".parse().unwrap_or_else(|e| panic!("{e}")),
             name: name.to_owned(),
+            uuid: None,
             role,
             mount_point: Some(PathBuf::from("/")),
             used_bytes,

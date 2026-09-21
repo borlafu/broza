@@ -21,6 +21,7 @@ expression: "json_of(&[\"explain\", \"/Users\", \"--json\"])"
       "purpose": "The writable volume that holds your home folder, your applications and your settings.",
       "role": "data",
       "used_bytes": 409422745600,
+      "uuid": "00000011-1111-4222-8333-000000000011",
       "writable_by_broza": true
     }
   },

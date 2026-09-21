@@ -71,6 +71,14 @@ pub struct Volume {
     pub id: VolumeId,
     /// Volume name as shown in Finder.
     pub name: String,
+    /// Filesystem UUID, when macOS reports one (`APFSVolumeUUID`, `VolumeUUID`).
+    ///
+    /// Optional because a volume Broza could not fully enumerate still has an
+    /// identity worth reporting. It is what the scan cache is filed under: a
+    /// BSD name like `disk3s5` belongs to whatever is plugged in today, while
+    /// the UUID follows the volume itself (`docs/cli-spec.md` §7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
     /// Role assigned by macOS.
     pub role: VolumeRole,
     /// Mount point. Absent when the volume is not mounted (`Preboot`, `Recovery`).
@@ -201,6 +209,7 @@ mod tests {
         let volume = Volume {
             id: "disk3s2".parse().unwrap_or_else(|e| panic!("{e}")),
             name: "Preboot".into(),
+            uuid: None,
             role: VolumeRole::Preboot,
             mount_point: None,
             used_bytes: 0,

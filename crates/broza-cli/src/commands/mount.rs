@@ -51,6 +51,7 @@ mod tests {
                 volumes: vec![Volume {
                     id: "disk3s5".parse().unwrap_or_else(|e| panic!("{e}")),
                     name: "Data".to_owned(),
+                    uuid: None,
                     role: VolumeRole::Data,
                     mount_point: Some(PathBuf::from("/System/Volumes/Data")),
                     used_bytes: 1,

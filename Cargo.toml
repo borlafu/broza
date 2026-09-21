@@ -37,6 +37,8 @@ objc2-foundation = { version = "0.3", features = [
     "NSError",
     "NSValue",
 ] }
+rayon = "1"
+postcard = { version = "1", default-features = false, features = ["use-std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

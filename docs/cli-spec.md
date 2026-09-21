@@ -398,7 +398,7 @@ broza restore [ID...] [OPTIONS]
 | `--session <id>` | string | — | Restore one complete cleanup session. |
 | `--to <path>` | path | original | Restore to an alternative location instead of the original path. |
 
-`ID` is either a session id (`cln_…`) or an item id (`cln_…/<seq>`). At least one of `ID...`, `--all` or `--session` is required (else exit `2`). Unknown ids exit `4`.
+`ID` is either a session id (`cln_…`) or an item id (`cln_…/<seq>`); one invocation takes ids of one kind (mixing them exits `2`). At least one of `ID...`, `--all` or `--session` is required (else exit `2`). Unknown ids exit `4`, before anything is written. `restore` asks no confirmation: it puts things back. `--list` prints one line per item still in the store (`Item`, `Size`, `Original path`); its `--csv` columns are `id,original_path,size_bytes,status` with `status` always `planned`. An empty store prints "Quarantine is empty." and exits `0`.
 
 Quarantine lives in `~/.local/share/broza/quarantine/` (configurable via `quarantine-path`), one directory per cleanup session, with a configurable TTL (default **30 days**). Every cleanup session receives an identifier of the form `cln_YYYYMMDDHHMMSS_xxxx`. Each session directory holds a `manifest.json` (written atomically via temp file + rename; `state` is `in_progress`, `complete` or `restoring`) and an `items/<seq>/<basename>` tree.
 
@@ -490,7 +490,7 @@ broza quarantine purge  [<SESSION_ID>...|--all]
 
 #### 3.8.1 `quarantine list`
 
-Lists quarantine sessions. Supports `--json` and `--csv`. Columns / fields per session: `id`, `created_at`, `expires_at`, `total_bytes`, `item_count`, `state` (`in_progress` · `complete` · `restoring` · `expired`).
+Lists quarantine sessions. Supports `--json` and `--csv`. Columns / fields per session: `id`, `created_at`, `expires_at`, `total_bytes`, `item_count`, `state` (`in_progress` · `complete` · `restoring` · `expired`). Dates in the human table are UTC, `YYYY-MM-DD HH:MM`. An empty store prints "Quarantine is empty." (the `--csv` form is the header alone) and exits `0`. A session whose manifest cannot be read is reported in `errors[]` and the command exits `5`; the rest of the store is still listed.
 
 ```
 $ broza quarantine list
@@ -1084,3 +1084,4 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §3.1 and §4.2 (M2-D, unreleased): the folder walker is wired into `scan`. `largest_items` is populated (allocated sizes, drill-down rule), `--tree` draws the folder tree, `PATH` arguments scan from those paths on the volume they live on (exit `4` on a protected or unknown volume, `2` when relative), progress is drawn on stderr on a TTY, `size_exceeds_volume` warns about clone overcount. The `folder_scan_pending` warning is gone.
 - §3.3, §4.1 and §4.3 (M3, unreleased): `suggest` totals count actionable findings only; `inform_only_bytes` added; paths claimed by two findings are credited once; per-finding risk of `build-cache` listed; orphan `node_modules` criterion narrowed (tool-managed trees excluded, idleness judged by the project's entries); `~/Library/Caches` entries holding non-regenerable data (`LocalHistory`) are opened up around it; detection warning codes `detector_failed`, `location_unreadable`, `finding_dropped`; `--min-size` keeps inform-only findings; human sketch corrected (inform-only line format, ordering, footer). §7: why `suggest` walks cold.
 - §2, §3.4 and §4.1 (M3, unreleased): `broza clean` is implemented (dry run, `--apply` with the confirmation matrix, automatic expiry, `--max-size`, `--exclude`). An inform-only finding inside an actionable category is skipped with `inform_only_skipped` instead of rejecting the plan; a dry run reports due sessions as `expiry_pending`; the store need not exist before the first cleanup; `clean --apply --purge` is "not implemented" (exit `1`) until M4. `clean` warning codes listed in §4.1.
+- §3.5 and §3.8 (M3, unreleased): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.

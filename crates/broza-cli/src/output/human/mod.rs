@@ -7,6 +7,8 @@
 
 pub mod clean;
 pub mod explain;
+pub mod quarantine;
+pub mod restore;
 pub mod scan;
 pub mod suggest;
 

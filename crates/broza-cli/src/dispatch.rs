@@ -17,6 +17,7 @@ use crate::commands::config::ConfigContext;
 use crate::commands::explain::ExplainContext;
 use crate::commands::scan::ScanContext;
 use crate::commands::scan::folders::FolderSettings;
+use crate::commands::store::StoreContext;
 use crate::commands::suggest::SuggestContext;
 use crate::commands::{self, Outcome};
 use crate::env::RuntimeEnv;
@@ -111,6 +112,10 @@ pub fn dispatch(
             ci: inputs.runtime.ci,
             uid_temp_dirs: inputs.runtime.uid_temp_dirs(),
         }),
+        Command::Restore(args) => commands::restore::run(args, &store_context(&inputs, generated_at)),
+        Command::Quarantine(args) => {
+            commands::quarantine::run(&args.command, &store_context(&inputs, generated_at))
+        }
         Command::Explain(args) => commands::explain::run(&ExplainContext {
             ports: &inputs.ports,
             args,
@@ -121,7 +126,21 @@ pub fn dispatch(
             policy: inputs.policy,
             format: inputs.format,
         }),
-        other => Err(commands::not_implemented(other.name())),
+    }
+}
+
+/// What the store commands (`restore`, `quarantine`) need from the run.
+fn store_context<'a>(inputs: &'a Inputs<'a>, generated_at: jiff::Timestamp) -> StoreContext<'a> {
+    StoreContext {
+        ports: &inputs.ports,
+        config: &inputs.effective,
+        host: inputs.host.clone(),
+        generated_at,
+        warnings: inputs.warnings.clone(),
+        policy: inputs.policy,
+        format: inputs.format,
+        home: walked_home(inputs.runtime),
+        uid_temp_dirs: inputs.runtime.uid_temp_dirs(),
     }
 }
 
@@ -233,15 +252,6 @@ mod tests {
         let error = dispatch(&command, &cli, &EnvSnapshot::default(), inputs(ports)).expect_err("must fail");
 
         assert_eq!(ExitCode::from(&error), ExitCode::UsageError);
-    }
-
-    #[test]
-    fn the_commands_of_the_next_milestone_are_routed_to_a_clear_refusal() {
-        for argv in [vec!["broza", "restore", "--all"], vec!["broza", "quarantine", "list"]] {
-            let error = route(&argv).expect_err("must fail");
-            assert_eq!(ExitCode::from(&error), ExitCode::GenericError, "{argv:?}");
-            assert!(error.to_string().contains("not implemented"), "{error}");
-        }
     }
 
     #[test]

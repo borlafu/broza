@@ -5,15 +5,16 @@
 //! at green level (`y/N`, covered by `--yes`); a declined prompt skips the step
 //! and says so, it never aborts the cleanup the user already confirmed.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use broza::BrozaError;
 use broza::model::{ExpiredSession, ItemStatus, Risk, SessionId, Warning};
 use broza::ports::{Answer, ConfirmationRequest, Ports};
-use broza::quarantine::{expire, expired_sessions, layout, store};
-use broza::safety::guard::approve_quarantine_write;
+use broza::quarantine::{expire, expired_sessions};
 use broza::scan::MountTable;
+
+use crate::commands::store::{session_sizes, session_write_token};
 
 /// Warning code: sessions are past their retention and a dry run left them.
 pub const EXPIRY_PENDING_CODE: &str = "expiry_pending";
@@ -86,8 +87,7 @@ pub fn expire_due(
         return Ok(Expiry { warnings: vec![declined(&due, root)], ..Expiry::default() });
     }
     let ids: Vec<SessionId> = due.iter().map(|(id, _)| id.clone()).collect();
-    let paths = store_paths(ports, root, &ids)?;
-    let token = approve_quarantine_write(&paths, root, mounts, ports.fs.as_ref())?;
+    let token = session_write_token(ports, root, mounts, &ids)?;
     let reported = expire(&token, &ids, root, ports.fs.as_ref())?;
     let sessions: Vec<ExpiredSession> = reported
         .data
@@ -107,23 +107,7 @@ pub fn expire_due(
 /// The due sessions with their bytes, newest first as the store lists them.
 fn sessions_due(ports: &Ports, root: &Path, ttl: Duration) -> Result<Vec<(SessionId, u64)>, BrozaError> {
     let ids = expired_sessions(root, ports.fs.as_ref(), ports.clock.as_ref(), ttl)?;
-    ids.into_iter()
-        .map(|id| {
-            let found = store::read_one(ports.fs.as_ref(), root, &id)?;
-            Ok((id, found.session().total_bytes))
-        })
-        .collect()
-}
-
-/// Every path the removal of `ids` writes to: the stored items and the session directories.
-fn store_paths(ports: &Ports, root: &Path, ids: &[SessionId]) -> Result<Vec<PathBuf>, BrozaError> {
-    let mut paths = Vec::new();
-    for id in ids {
-        let found = store::read_one(ports.fs.as_ref(), root, id)?;
-        paths.extend(found.session().entries.iter().filter_map(|entry| entry.stored_path.clone()));
-        paths.push(layout::session_dir(root, id));
-    }
-    Ok(paths)
+    session_sizes(ports, root, &ids)
 }
 
 /// The green-level prompt for the expiry step.

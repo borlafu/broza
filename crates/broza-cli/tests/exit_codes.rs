@@ -94,17 +94,6 @@ fn clean_without_a_selection_exits_two() {
 }
 
 #[test]
-fn unimplemented_commands_exit_one_with_a_message_on_stderr() {
-    let home = temp_home();
-    broza(home.path())
-        .args(["restore", "--all"])
-        .assert()
-        .code(1)
-        .stderr(contains("not implemented"))
-        .stdout(predicates::str::is_empty());
-}
-
-#[test]
 fn about_json_is_a_valid_envelope() {
     let home = temp_home();
     let output = broza(home.path()).args(["about", "--json"]).output().unwrap_or_else(|e| panic!("{e}"));

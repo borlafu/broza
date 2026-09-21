@@ -3,58 +3,19 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Duration;
 
-use broza::model::{Container, Disk, FsKind, Volume, VolumeId, VolumeRole};
+use broza::config::Config;
 use broza::ports::{Answer, FileOps};
-use broza::testing::Handles;
+use broza::{BrozaError, ExitCode};
 
 use crate::args::CleanArgs;
 use crate::commands::Outcome;
 use crate::commands::clean::{CleanContext, INFORM_ONLY_SKIPPED_CODE, run};
-use crate::commands::scan::folders::FolderSettings;
+use crate::commands::test_world::{CACHE_FILE, STORE, folders, host, now, world};
 use crate::output::{ColorPolicy, OutputFormat};
-use broza::config::Config;
-use broza::model::Host;
 use broza::ports::Ports;
-use broza::{BrozaError, ExitCode};
-use std::path::Path;
-
-const HOME: &str = "/System/Volumes/Data/Users/dana";
-const CACHE_FILE: &str = "/System/Volumes/Data/Users/dana/Library/Caches/App/c.db";
-const STORE: &str = "/System/Volumes/Data/Users/dana/.local/share/broza/quarantine";
-
-fn id(raw: &str) -> VolumeId {
-    raw.parse().unwrap()
-}
-
-fn data_disk() -> Vec<Disk> {
-    vec![Disk {
-        id: id("disk0"),
-        model: "SSD".into(),
-        size_bytes: 1_000_000_000_000,
-        internal: true,
-        containers: vec![Container {
-            id: id("disk3"),
-            kind: FsKind::Apfs,
-            size_bytes: 1_000_000_000_000,
-            used_bytes: 500_000_000_000,
-            free_bytes: 500_000_000_000,
-            purgeable_bytes: 0,
-            volumes: vec![Volume {
-                id: id("disk3s5"),
-                name: "Data".into(),
-                uuid: None,
-                role: VolumeRole::Data,
-                mount_point: Some(PathBuf::from("/System/Volumes/Data")),
-                used_bytes: 500_000_000_000,
-                writable_by_broza: true,
-                purpose: String::new(),
-            }],
-        }],
-    }]
-}
 
 fn args() -> CleanArgs {
     CleanArgs {
@@ -69,38 +30,18 @@ fn args() -> CleanArgs {
     }
 }
 
-fn world() -> (Ports, Handles) {
-    let (ports, handles) = broza::testing::fake_ports();
-    handles.disks.set_disks(data_disk());
-    handles.fs.add_root("/", 1);
-    handles.fs.add_root("/System/Volumes/Data", 2);
-    handles.fs.add_file(CACHE_FILE, b"cached");
-    handles.fs.set_size(CACHE_FILE, 900_000_000);
-    handles
-        .fs
-        .add_file(format!("{HOME}/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"), &[]);
-    (ports, handles)
-}
-
 fn run_with(ports: &Ports, args: &CleanArgs, tty: bool, format: OutputFormat) -> Result<Outcome, BrozaError> {
     let config = Config::default();
     run(&CleanContext {
         ports,
         args,
         config: &config,
-        host: Host { macos_version: "26.1".into(), arch: "arm64".into() },
-        generated_at: "2026-09-21T10:36:08Z".parse().unwrap(),
+        host: host(),
+        generated_at: now(),
         warnings: Vec::new(),
         policy: ColorPolicy::Never,
         format,
-        folders: FolderSettings {
-            home: Some(PathBuf::from(HOME)),
-            cache_ttl: Duration::from_secs(60),
-            no_cache: true,
-            show_progress: false,
-            verbose: false,
-            own_stores: vec![PathBuf::from(STORE)],
-        },
+        folders: folders(),
         tty,
         ci: false,
         uid_temp_dirs: Vec::new(),

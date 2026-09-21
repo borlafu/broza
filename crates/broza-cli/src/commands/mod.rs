@@ -1,8 +1,8 @@
 //! Command implementations.
 //!
-//! `about`, `config`, `scan`, `explain`, `suggest` and `clean` are complete.
-//! `restore` and `quarantine` parse fully and then report [`not_implemented`]
-//! until the rest of milestone M3 lands.
+//! Every command of `docs/cli-spec.md` §3 is implemented; [`not_implemented`]
+//! remains for the one execution path that is not (`clean --apply --purge`,
+//! which waits for the irreversible path of the mover in M4).
 //!
 //! Every command returns an [`Outcome`]: the text to write to the sink, the
 //! exit code, and the warnings the envelope already carries, which
@@ -19,9 +19,16 @@ pub mod config;
 pub mod detection;
 pub mod explain;
 pub mod mount;
+pub mod quarantine;
+#[cfg(test)]
+mod quarantine_tests;
+pub mod restore;
 pub mod scan;
+pub mod store;
 pub mod suggest;
 pub mod target;
+#[cfg(test)]
+pub(crate) mod test_world;
 
 use broza::model::Warning;
 use broza::{BrozaError, ExitCode};
@@ -38,12 +45,37 @@ pub struct Outcome {
     pub code: ExitCode,
     /// Warnings of the envelope, repeated on stderr unless `--quiet`.
     pub warnings: Vec<Warning>,
+    /// What an applied cleanup moved or freed; `None` for every other run.
+    /// This is condition 1 of the donation gate (`docs/cli-spec.md` §5).
+    pub reclaimed: Option<Reclaimed>,
+}
+
+/// The two figures an applied cleanup reports, never summed for display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reclaimed {
+    /// Bytes moved into quarantine: pending until expiry or purge.
+    pub quarantined_bytes: u64,
+    /// Bytes actually freed: expired or purged sessions.
+    pub freed_bytes: u64,
+}
+
+impl Reclaimed {
+    /// Bytes made reclaimable in all, for the gate's "at least one byte".
+    pub const fn total(self) -> u64 {
+        self.quarantined_bytes.saturating_add(self.freed_bytes)
+    }
 }
 
 impl Outcome {
     /// A successful outcome carrying only its rendered text.
     pub const fn ok(rendered: String) -> Self {
-        Self { rendered, code: ExitCode::Ok, warnings: Vec::new() }
+        Self { rendered, code: ExitCode::Ok, warnings: Vec::new(), reclaimed: None }
+    }
+
+    /// The same outcome, recorded as an applied cleanup that moved or freed `reclaimed`.
+    #[must_use]
+    pub fn with_reclaimed(self, reclaimed: Reclaimed) -> Self {
+        Self { reclaimed: Some(reclaimed), ..self }
     }
 
     /// The same outcome with `warnings` attached.

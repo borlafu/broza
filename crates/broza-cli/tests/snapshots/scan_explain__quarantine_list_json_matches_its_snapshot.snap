@@ -1,0 +1,22 @@
+---
+source: crates/broza-cli/tests/scan_explain.rs
+expression: envelope
+---
+{
+  "broza_version": "[version]",
+  "command": "quarantine list",
+  "data": {
+    "expired_bytes": 0,
+    "quarantine_path": "/System/Volumes/Data/Users/dana/.local/share/broza/quarantine",
+    "sessions": [],
+    "total_bytes": 0
+  },
+  "errors": [],
+  "generated_at": "[timestamp]",
+  "host": {
+    "arch": "arm64",
+    "macos_version": "26.1"
+  },
+  "schema_version": "1.1",
+  "warnings": []
+}

@@ -283,6 +283,39 @@ fn clean_of_build_cache_skips_the_docker_disk_with_a_warning() {
 }
 
 #[test]
+fn an_empty_quarantine_lists_as_empty_and_has_nothing_to_expire() {
+    let list = stdout_of(&["quarantine", "list"]);
+    let csv = stdout_of(&["quarantine", "list", "--csv"]);
+    let expire = stdout_of(&["quarantine", "expire", "--yes"]);
+    let restore_list = stdout_of(&["restore", "--list"]);
+
+    assert_eq!(list.trim_end(), "Quarantine is empty.");
+    assert_eq!(csv.trim_end(), "id,created_at,expires_at,total_bytes,item_count,state");
+    assert_eq!(expire.trim_end(), "Nothing to expire.");
+    assert_eq!(restore_list.trim_end(), "Quarantine is empty.");
+}
+
+#[test]
+fn quarantine_list_json_matches_its_snapshot() {
+    let envelope = json_of(&["quarantine", "list", "--json"]);
+
+    insta::assert_json_snapshot!(envelope, {
+        ".generated_at" => "[timestamp]",
+        ".broza_version" => "[version]",
+    });
+}
+
+#[test]
+fn restoring_an_unknown_session_exits_four_and_purging_without_a_terminal_exits_seven() {
+    let (restore_code, restore_err) = failure_of(&["restore", "--session", "cln_20200101000000_zzzz"]);
+    let (purge_code, purge_err) = failure_of(&["quarantine", "purge", "--all"]);
+
+    assert_eq!(restore_code, Some(4), "{restore_err}");
+    // An empty store has nothing to purge, which is not an error.
+    assert_eq!(purge_code, Some(0), "{purge_err}");
+}
+
+#[test]
 fn suggest_csv_has_one_row_per_finding_in_contract_tokens() {
     let text = stdout_of(&["suggest", "--csv", "--category", "build-cache"]);
 

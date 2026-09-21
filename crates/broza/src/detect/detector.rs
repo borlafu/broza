@@ -99,27 +99,31 @@ pub struct DetectContext<'a> {
     pub unused_after: Duration,
     /// Every directory under the home, as the scanner measured it.
     pub home_nodes: &'a [DirNode],
-    /// The same nodes, indexed by path and by final component.
+    /// The same nodes, indexed by path and by parent.
     index: NodeIndex<'a>,
 }
 
 /// Lookups over the walk that would otherwise be linear scans of every node.
+///
+/// Paths and parents are indexed; names are not. Detectors ask for a handful of
+/// fixed names, and one pass over the nodes per name is cheaper than a vector
+/// per distinct directory name on a home with a million of them.
 struct NodeIndex<'a> {
     by_path: HashMap<&'a Path, &'a DirNode>,
-    by_name: HashMap<&'a OsStr, Vec<&'a DirNode>>,
+    by_parent: HashMap<&'a Path, Vec<&'a DirNode>>,
 }
 
 impl<'a> NodeIndex<'a> {
     fn of(nodes: &'a [DirNode]) -> Self {
         let by_path = nodes.iter().map(|node| (node.path.as_path(), node)).collect();
-        let by_name = nodes.iter().filter_map(|node| node.path.file_name().map(|name| (name, node))).fold(
-            HashMap::<&OsStr, Vec<&DirNode>>::new(),
-            |mut map, (name, node)| {
-                map.entry(name).or_default().push(node);
+        let by_parent = nodes.iter().filter_map(|node| node.path.parent().map(|parent| (parent, node))).fold(
+            HashMap::<&Path, Vec<&DirNode>>::new(),
+            |mut map, (parent, node)| {
+                map.entry(parent).or_default().push(node);
                 map
             },
         );
-        Self { by_path, by_name }
+        Self { by_path, by_parent }
     }
 }
 
@@ -147,13 +151,14 @@ impl<'a> DetectContext<'a> {
     }
 
     /// The nodes whose final component is `name`, in walk order.
-    pub fn nodes_named(&self, name: &str) -> impl Iterator<Item = &'a DirNode> + '_ {
-        self.index.by_name.get(OsStr::new(name)).into_iter().flatten().copied()
+    pub fn nodes_named<'b>(&'b self, name: &'b str) -> impl Iterator<Item = &'a DirNode> + 'b {
+        let wanted = OsStr::new(name);
+        self.home_nodes.iter().filter(move |node| node.path.file_name() == Some(wanted))
     }
 
     /// The direct child directories of `path`, as the walk saw them.
-    pub fn children_of<'b>(&'b self, path: &'b Path) -> impl Iterator<Item = &'a DirNode> + 'b {
-        self.home_nodes.iter().filter(move |node| node.path.parent() == Some(path))
+    pub fn children_of(&self, path: &Path) -> impl Iterator<Item = &'a DirNode> + '_ {
+        self.index.by_parent.get(path).into_iter().flatten().copied()
     }
 
     /// `true` when `moment` is at least `unused_after` before `now`.

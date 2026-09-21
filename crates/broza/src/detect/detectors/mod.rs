@@ -1,6 +1,7 @@
 //! The detectors Broza ships, one file per category.
 
 pub mod build_cache;
+mod node_modules;
 pub mod user_cache;
 
 use super::detector::Detector;

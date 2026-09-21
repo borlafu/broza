@@ -7,30 +7,22 @@
 //! - `build-cache.xcode-archives` — `~/Library/Developer/Xcode/Archives/*`, amber
 //!   (an archive is a shipped build, not a scratch file);
 //! - `build-cache.orphan-node-modules` — leaf `node_modules` of a project that
-//!   is gone or idle (see the `orphan_node_modules` rule below), amber;
+//!   is gone or idle (the rule lives in `node_modules.rs`), amber;
 //! - `build-cache.pycache` — every `__pycache__`, green;
 //! - `build-cache.gradle-caches` — `~/.gradle/caches`, green;
 //! - `build-cache.cargo-target` — `target/` beside a `Cargo.toml`, amber;
 //! - `build-cache.docker-raw` — the Docker Desktop virtual disk, **inform only**
 //!   with its allocated size; Broza never talks to the Docker daemon.
 
-use std::path::Path;
-
-use jiff::Timestamp;
-
 use crate::BrozaError;
 use crate::model::{Action, Category, Finding, Instructions, Risk};
 
+use super::node_modules::orphan_node_modules;
 use super::support::{by_size_then_path, finish, path_of, path_with, start};
 use crate::detect::detector::{DetectContext, Detected, Detector};
 
 /// Where Docker Desktop keeps its virtual disk, relative to the home.
 const DOCKER_RAW: &str = "Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw";
-/// The manifest that makes a directory a JavaScript project.
-const NODE_MANIFEST: &str = "package.json";
-/// Home-level directories whose `node_modules` belong to a tool, not a project:
-/// package-manager stores, editor extensions, application payloads.
-const TOOL_MANAGED_ROOTS: [&str; 1] = ["Library"];
 
 /// The `build-cache` detector.
 pub struct BuildCache;
@@ -115,75 +107,6 @@ fn named_dirs(
         .risk(risk)
         .reasoning(format!("A `{name}` directory is derived from the code beside it and rebuilt on demand."));
     finish(builder, paths)
-}
-
-/// Leaf `node_modules` directories nobody is using.
-///
-/// A `node_modules` is listed when it is not tool-managed and either
-///
-/// - its parent has no `package.json` — the project is gone and nothing can
-///   use the dependencies — or
-/// - its parent is a project none of whose own entries changed for
-///   `--unused-after`, judged by the newest mtime among the parent's entries
-///   other than `node_modules` itself (the parent directory's own mtime only
-///   says when an entry was last added or removed).
-///
-/// Tool-managed means under `~/Library` (pnpm's store, editor and application
-/// payloads), under a hidden directory (`~/.vscode/extensions`, `~/.npm/_npx`,
-/// `~/.cache`) or inside an `.app` bundle: those are installed software, and
-/// `npm install` in a project does not bring them back. Nested `node_modules`
-/// (inside another `node_modules`) are never listed on their own: their
-/// parent's line covers them.
-fn orphan_node_modules(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaError> {
-    let mut paths = Vec::new();
-    for node in context.nodes_named("node_modules") {
-        if node.allocated_bytes == 0
-            || is_nested_node_modules(&node.path)
-            || is_tool_managed(context, &node.path)
-        {
-            continue;
-        }
-        let Some(parent) = node.path.parent() else { continue };
-        let has_manifest = context.fs.exists(&parent.join(NODE_MANIFEST));
-        if !has_manifest || is_idle_project(context, parent) {
-            paths.push(path_of(node));
-        }
-    }
-    paths.sort_by(by_size_then_path);
-    let builder = start(Category::BuildCache, "orphan-node-modules", "Orphan node_modules")?
-        .description("Dependency trees whose project is gone or has not changed in a long time.")
-        .risk(Risk::Amber)
-        .reasoning(
-            "Without a package.json beside it nothing can use it; under a project that has not changed since --unused-after, `npm install` brings it back when work resumes.",
-        );
-    finish(builder, paths)
-}
-
-/// `true` when another `node_modules` sits above `path`.
-fn is_nested_node_modules(path: &Path) -> bool {
-    path.ancestors().skip(1).any(|ancestor| ancestor.file_name().is_some_and(|n| n == "node_modules"))
-}
-
-/// `true` when `path` belongs to a tool or an application rather than a project.
-fn is_tool_managed(context: &DetectContext<'_>, path: &Path) -> bool {
-    let Ok(relative) = path.strip_prefix(context.home) else { return true };
-    relative.components().any(|component| {
-        let name = component.as_os_str().to_string_lossy();
-        TOOL_MANAGED_ROOTS.contains(&name.as_ref()) || name.starts_with('.') || name.ends_with(".app")
-    })
-}
-
-/// `true` when nothing in `project` except `node_modules` changed for `--unused-after`.
-///
-/// A listing that cannot be read is not evidence of idleness: the project stays.
-fn is_idle_project(context: &DetectContext<'_>, project: &Path) -> bool {
-    let Ok(listing) = context.fs.read_dir_with_metadata(project) else { return false };
-    let newest: Option<Timestamp> = listing
-        .into_iter()
-        .filter(|(path, _)| path.file_name().is_none_or(|name| name != "node_modules"))
-        .filter_map(|(_, meta)| meta.ok().and_then(|meta| meta.modified))
-        .max();
-    newest.is_some_and(|moment| context.is_unused_since(moment))
 }
 
 /// `~/.gradle/caches`, as one line.
@@ -315,60 +238,6 @@ mod tests {
         let archives = by_id(&findings, "build-cache.xcode-archives");
         assert_eq!(archives.risk(), Risk::Amber);
         assert!(archives.reasoning().unwrap().contains("nothing recreates it"), "{:?}", archives.reasoning());
-    }
-
-    #[test]
-    fn only_orphan_leaf_node_modules_are_listed() {
-        let findings = detect(&fs());
-
-        let orphans = by_id(&findings, "build-cache.orphan-node-modules");
-        assert_eq!(listed(orphans), vec![format!("{H}/code/gone/node_modules")]);
-        assert_eq!(orphans.risk(), Risk::Amber);
-    }
-
-    #[test]
-    fn a_project_whose_files_are_all_old_is_idle_and_its_node_modules_an_orphan() {
-        let fs = fs();
-        let old = "2020-01-01T00:00:00Z".parse::<Timestamp>().unwrap();
-        fs.set_times(format!("{H}/code/live"), old, old);
-        fs.set_times(format!("{H}/code/live/package.json"), old, old);
-
-        let findings = detect(&fs);
-
-        let orphans = by_id(&findings, "build-cache.orphan-node-modules");
-        assert_eq!(orphans.paths().len(), 2, "{:?}", listed(orphans));
-    }
-
-    #[test]
-    fn an_old_directory_mtime_alone_does_not_make_a_project_idle() {
-        let fs = fs();
-        let old = "2020-01-01T00:00:00Z".parse::<Timestamp>().unwrap();
-        fs.set_times(format!("{H}/code/live"), old, old);
-        fs.set_times(format!("{H}/code/live/node_modules"), old, old);
-
-        let findings = detect(&fs);
-
-        let orphans = by_id(&findings, "build-cache.orphan-node-modules");
-        assert_eq!(listed(orphans), vec![format!("{H}/code/gone/node_modules")], "package.json is recent");
-    }
-
-    #[test]
-    fn tool_managed_node_modules_are_never_orphans() {
-        let fs = fs();
-        for path in [
-            format!("{H}/Library/pnpm/store/v11/links/abc/node_modules/x/i.js"),
-            format!("{H}/.vscode/extensions/some.ext-1.0.0/node_modules/y/i.js"),
-            format!("{H}/Applications/Tool.app/Contents/Resources/app/node_modules/z/i.js"),
-            format!("{H}/.cache/firebase/tools/lib/node_modules/w/i.js"),
-        ] {
-            fs.add_file(&path, &[]);
-            fs.set_size(&path, 9000);
-        }
-
-        let findings = detect(&fs);
-
-        let orphans = by_id(&findings, "build-cache.orphan-node-modules");
-        assert_eq!(listed(orphans), vec![format!("{H}/code/gone/node_modules")]);
     }
 
     #[test]

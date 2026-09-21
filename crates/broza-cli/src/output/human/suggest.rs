@@ -62,7 +62,8 @@ fn heading(risk: Risk, policy: ColorPolicy) -> String {
     let token = match risk {
         Risk::Green => "green",
         Risk::Amber => "amber",
-        _ => "red",
+        Risk::Red => "red",
+        _ => "unknown",
     };
     format!("{} ({token})", risk_chip(policy, risk))
 }
@@ -138,7 +139,7 @@ fn render_reasoning(text: &mut String, finding: &Finding, home: &Path) {
 /// What to run next: the dry run, then the real thing, for the safest level
 /// that has something to clean. Nothing when nothing is actionable.
 fn footer(report: &SuggestReport) -> Option<String> {
-    let level = [(Risk::Green, "green"), (Risk::Amber, "amber")]
+    let level = [(Risk::Green, "green"), (Risk::Amber, "amber"), (Risk::Red, "red")]
         .into_iter()
         .find(|(risk, _)| report.findings.iter().any(|f| f.is_actionable() && f.risk() == *risk))
         .map(|(_, token)| token)?;

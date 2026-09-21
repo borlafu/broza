@@ -28,8 +28,10 @@ use crate::detect::detector::{DetectContext, Detected, Detector};
 
 /// Suffixes browsers give a download that has not finished.
 const INCOMPLETE_SUFFIXES: [&str; 3] = [".download", ".crdownload", ".part"];
-/// Directory names under `~/Library/Caches` that hold data nothing regenerates.
-const DATA_BEARING_DIRS: [&str; 1] = ["LocalHistory"];
+/// Directory names under `~/Library/Caches` that hold data nothing regenerates:
+/// `JetBrains`' per-file undo history, and Poetry's virtual environments (a
+/// `pip install` of every project's dependencies, not a cache of them).
+const DATA_BEARING_DIRS: [&str; 2] = ["LocalHistory", "virtualenvs"];
 /// How many levels a cache entry is opened up to isolate a data-bearing directory.
 const MAX_OPEN_DEPTH: usize = 3;
 
@@ -223,6 +225,31 @@ mod tests {
             listed.iter().all(|p| !p.contains("LocalHistory") && !p.ends_with("/JetBrains")),
             "{listed:?}"
         );
+    }
+
+    #[test]
+    fn poetry_virtualenvs_under_caches_are_kept_and_their_siblings_listed() {
+        let fs = fs();
+        let poetry = "/System/Volumes/Data/Users/dana/Library/Caches/pypoetry";
+        for (path, size) in [
+            (format!("{poetry}/virtualenvs/app-py3.12/lib/site.py"), 50_000_u64),
+            (format!("{poetry}/artifacts/ab/wheel.whl"), 20_000),
+            (format!("{poetry}/cache/repositories/pypi/x.json"), 1000),
+        ] {
+            fs.add_file(&path, &[]);
+            fs.set_size(&path, size);
+        }
+
+        let detected = detect(&fs);
+
+        let listed: Vec<String> = by_id(&detected, "user-cache.library-caches")
+            .paths()
+            .iter()
+            .map(|p| p.path.display().to_string())
+            .collect();
+        assert!(listed.contains(&format!("{poetry}/artifacts")), "{listed:?}");
+        assert!(listed.contains(&format!("{poetry}/cache")), "{listed:?}");
+        assert!(listed.iter().all(|p| !p.contains("virtualenvs") && p != poetry), "{listed:?}");
     }
 
     #[test]

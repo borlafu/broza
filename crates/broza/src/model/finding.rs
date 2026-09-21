@@ -254,6 +254,8 @@ impl Finding {
     ///
     /// For a path-backed finding the numbers it prints are the numbers its paths
     /// add up to; anything that narrows the paths must narrow the numbers too.
+    /// `item_count` becomes the number of paths: a detector that counts
+    /// something else (snapshots, duplicate groups) must not be narrowed this way.
     ///
     /// # Errors
     ///

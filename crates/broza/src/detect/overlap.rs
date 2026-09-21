@@ -4,9 +4,11 @@
 //! findings' worth of the same bytes. Summing them promises space that exists
 //! once (`AGENTS.md` §2.7, "honest numbers"), so a path that lies under another
 //! finding's path is dropped from its finding and the finding's numbers are
-//! recomputed. The ancestor always wins: removing it removes the descendant
-//! anyway. Two findings naming the *same* path keep it in the first, in the
-//! category-then-id order the registry established.
+//! recomputed. The ancestor always wins whatever its risk: removing it removes
+//! the descendant anyway, so the bytes are reported at the ancestor's level. Two
+//! findings naming the *same* path keep it in the first, in the
+//! category-then-id order the registry established. Inform-only findings take
+//! no part: see [`credit_once`].
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -18,17 +20,23 @@ pub const FINDING_DROPPED_CODE: &str = "finding_dropped";
 
 /// Drop every path that another finding already covers, recompute the totals.
 ///
-/// Findings without paths (inform-only prose, snapshots) pass through
-/// unchanged. A finding left with no path is removed, since it would otherwise
-/// promise zero bytes for nothing.
+/// Inform-only findings pass through untouched and claim nothing: they are a
+/// report the user asked for, with the instructions the model requires, and
+/// their bytes are never summed with the actionable ones anyway
+/// (`SuggestReport::inform_only_bytes`). Findings without paths (snapshots)
+/// pass through too. An actionable finding left with no path is removed, since
+/// it would otherwise promise zero bytes for nothing.
 pub fn credit_once(findings: Vec<Finding>) -> (Vec<Finding>, Vec<Diagnostic>) {
-    let claimed: BTreeSet<PathBuf> =
-        findings.iter().flat_map(|finding| finding.paths().iter().map(|p| p.path.clone())).collect();
+    let claimed: BTreeSet<PathBuf> = findings
+        .iter()
+        .filter(|finding| finding.is_actionable())
+        .flat_map(|finding| finding.paths().iter().map(|p| p.path.clone()))
+        .collect();
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
     let mut kept = Vec::with_capacity(findings.len());
     let mut warnings = Vec::new();
     for finding in findings {
-        if finding.paths().is_empty() {
+        if !finding.is_actionable() || finding.paths().is_empty() {
             kept.push(finding);
             continue;
         }
@@ -128,6 +136,38 @@ mod tests {
 
         assert_eq!(kept[0].reclaimable_bytes(), 7);
         assert_eq!(kept[1].reclaimable_bytes(), 1);
+    }
+
+    #[test]
+    fn inform_only_findings_neither_lose_paths_nor_claim_them() {
+        let docker =
+            Finding::builder("build-cache.docker-raw".parse().unwrap(), Category::BuildCache, "Docker disk")
+                .action(crate::model::Action::InformOnly)
+                .instructions(crate::model::Instructions {
+                    provider: "Docker".into(),
+                    summary: "s".into(),
+                    steps: vec![],
+                })
+                .reclaimable_bytes(9)
+                .paths(vec![FindingPath {
+                    path: PathBuf::from("/h/Library/Containers/docker/Docker.raw"),
+                    size_bytes: 9,
+                    last_used: None,
+                }])
+                .build()
+                .unwrap();
+        let containers = finding("user-cache.a", Category::UserCache, &[("/h/Library/Containers", 100)]);
+        let inside = finding(
+            "build-cache.b",
+            Category::BuildCache,
+            &[("/h/Library/Containers/docker/Docker.raw/x", 1)],
+        );
+
+        let (kept, _) = credit_once(vec![containers, docker.clone(), inside]);
+
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        assert_eq!(kept[1], docker, "the inform-only finding is untouched although an ancestor covers it");
+        assert_eq!(kept[0].reclaimable_bytes(), 100);
     }
 
     #[test]

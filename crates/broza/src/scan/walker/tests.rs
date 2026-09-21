@@ -352,3 +352,59 @@ fn progress_counts_every_entry_and_every_byte() {
     assert_eq!(reporter.snapshot().entries_scanned, 8);
     assert_eq!(reporter.snapshot().bytes_scanned, node(&result, "/vol").size_bytes);
 }
+
+#[test]
+fn a_discounted_hard_link_is_not_a_directory_s_biggest_item() {
+    // `/vol/mid` holds ten real 90-byte files and one name of a big file whose
+    // other name, in `/vol/aaa`, wins the credit. The link must not pose as a
+    // dominant item of `mid`: nothing there is bigger than one block.
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/aaa/keeper.bin", &[]);
+    fs.set_size("/vol/aaa/keeper.bin", 100_000);
+    fs.add_hard_link("/vol/aaa/keeper.bin", "/vol/mid/alias.bin");
+    for index in 0..10 {
+        fs.add_file(format!("/vol/mid/real{index}.bin"), &[]);
+        fs.set_size(format!("/vol/mid/real{index}.bin"), 90);
+    }
+
+    let result = walk_sample(&fs, &WalkOptions::default());
+
+    let mid = node(&result, "/vol/mid");
+    assert_eq!(mid.largest_item_bytes, 4096, "one 4 KiB block: the biggest *real* file");
+    assert!(mid.largest_item_bytes * 2 < mid.allocated_bytes, "so nothing dominates `mid`");
+    let aaa = node(&result, "/vol/aaa");
+    assert_eq!(aaa.largest_item_bytes, aaa.allocated_bytes, "the credited name is the whole directory");
+}
+
+#[test]
+fn a_directory_holding_only_a_discounted_link_has_no_item_at_all() {
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/aaa/keeper.bin", &[]);
+    fs.set_size("/vol/aaa/keeper.bin", 100_000);
+    fs.add_hard_link("/vol/aaa/keeper.bin", "/vol/zzz/alias.bin");
+
+    let result = walk_sample(&fs, &WalkOptions::default());
+
+    let zzz = node(&result, "/vol/zzz");
+    assert_eq!(zzz.allocated_bytes, 0, "the bytes were credited to `aaa`");
+    assert_eq!(zzz.largest_item_bytes, 0);
+}
+
+#[test]
+fn a_depth_limit_keeps_the_largest_item_of_what_it_hides() {
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/a/b/c/huge.bin", &[]);
+    fs.set_size("/vol/a/b/c/huge.bin", 900_000);
+    fs.add_file("/vol/a/small.bin", &[]);
+    fs.set_size("/vol/a/small.bin", 10);
+    let options = WalkOptions { max_depth: Some(1), ..WalkOptions::default() };
+
+    let limited = walk_sample(&fs, &options);
+    let full = walk_sample(&fs, &WalkOptions::default());
+
+    assert_eq!(
+        node(&limited, "/vol/a").largest_item_bytes,
+        node(&full, "/vol/a").largest_item_bytes,
+        "`max_depth` limits what is reported, never what is measured"
+    );
+}

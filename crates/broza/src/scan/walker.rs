@@ -106,6 +106,10 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     let truncated = skipped || !reports_children;
     let totals = leaves.totals.merge(below.totals).with_child_dirs(child_dirs).with_truncation(truncated);
     let node = DirNode::new(&identity, totals, truncated);
+    // Children below `max_depth` are not reported, but they are still this
+    // directory's items: the limit shapes what is reported, never what is measured.
+    let biggest_hidden = (!reports_children)
+        .then(|| below.nodes.iter().map(|n| n.largest_item_bytes.max(n.allocated_bytes)).max().unwrap_or(0));
     let mut nodes = if reports_children { below.nodes } else { Vec::new() };
     nodes.push(node);
     let mut links = leaves.links;
@@ -114,6 +118,9 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     all_errors.extend(below.errors);
     let mut direct_maxima = below.direct_maxima;
     direct_maxima.push((identity.path.clone(), totals.largest_direct_file_bytes));
+    if let Some(hidden) = biggest_hidden {
+        direct_maxima.push((identity.path.clone(), hidden));
+    }
     Partial {
         nodes,
         files: leaves.files.merge(below.files),
@@ -183,20 +190,27 @@ fn walk_leaf_root(root: &Path, meta: &EntryMetadata, context: &Context<'_>) -> P
 /// served from the cache keep the value their record carries and only feed
 /// their parents.
 fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u64)]) -> Vec<DirNode> {
-    let direct: HashMap<&Path, u64> =
-        direct_maxima.iter().map(|(path, max)| (path.as_path(), *max)).collect();
+    let mut direct: HashMap<&Path, u64> = HashMap::new();
+    for (path, max) in direct_maxima {
+        let entry = direct.entry(path.as_path()).or_insert(0);
+        *entry = (*entry).max(*max);
+    }
     let mut from_children: HashMap<PathBuf, u64> = HashMap::new();
-    nodes.sort_by_key(|node| std::cmp::Reverse(node.path.components().count()));
+    nodes.sort_by_cached_key(|node| std::cmp::Reverse(node.path.components().count()));
     for node in &mut nodes {
         if !node.from_cache {
             let own = direct.get(node.path.as_path()).copied().unwrap_or(0);
-            let below = from_children.get(&node.path).copied().unwrap_or(0);
+            let below = from_children.get(node.path.as_path()).copied().unwrap_or(0);
             node.largest_item_bytes = own.max(below).min(node.allocated_bytes);
         }
         if let Some(parent) = node.path.parent() {
             let as_item = node.largest_item_bytes.max(node.allocated_bytes);
-            let entry = from_children.entry(parent.to_path_buf()).or_insert(0);
-            *entry = (*entry).max(as_item);
+            match from_children.get_mut(parent) {
+                Some(entry) => *entry = (*entry).max(as_item),
+                None => {
+                    from_children.insert(parent.to_path_buf(), as_item);
+                }
+            }
         }
     }
     nodes
@@ -207,9 +221,17 @@ fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u
 /// Parallel walks finish in whatever order the threads happen to take, and a report
 /// that changes between two identical scans is a report nobody can diff.
 fn sorted(partial: Partial) -> WalkResult {
-    let Partial { nodes, files, links, mut errors, direct_maxima, .. } = partial;
-    let (nodes, mut files) = dedupe::settle_hard_links(nodes, files.into_vec(), links);
-    let mut nodes = recompute_largest_items(nodes, &direct_maxima);
+    let Partial { nodes, files, links, mut errors, mut direct_maxima, .. } = partial;
+    let settled = dedupe::settle_hard_links(nodes, files.into_vec(), links);
+    let mut files = settled.files;
+    // The surviving name of every multiply-linked file is a direct file of the
+    // directory it is credited to; the discounted names count nowhere.
+    for link in &settled.credited {
+        if let Some(parent) = link.path.parent() {
+            direct_maxima.push((parent.to_path_buf(), link.allocated_bytes));
+        }
+    }
+    let mut nodes = recompute_largest_items(settled.nodes, &direct_maxima);
     nodes.sort_by(|left, right| left.path.cmp(&right.path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));

@@ -249,3 +249,29 @@ fn an_error_in_the_envelope_means_a_partial_failure() {
     assert_eq!(value["errors"][0]["code"], "io_error");
     assert_eq!(out.exit_code(), ExitCode::PartialFailure);
 }
+
+#[test]
+fn the_upper_bounds_note_is_printed_when_the_walk_overcounted() {
+    use crate::commands::scan::folders::VolumeTree;
+    use broza::scan::{TreeNode, TreeView};
+    let mut out = output(machine());
+    out.upper_bounds = true;
+    out.trees = vec![VolumeTree {
+        volume_id: id("disk3s5"),
+        name: "Data".to_owned(),
+        tree: TreeView {
+            root: TreeNode {
+                name: "/".into(),
+                path: PathBuf::from("/"),
+                size_bytes: 0,
+                percent_of_parent: 100.0,
+                other_bytes: 0,
+                children: Vec::new(),
+            },
+        },
+    }];
+
+    let text = out.to_human();
+
+    assert!(text.contains("Sizes below are upper bounds"), "{text}");
+}

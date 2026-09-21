@@ -15,10 +15,11 @@
 //! but not all names of an inode, or when the walk did not see every name at
 //! all (`link_count` says there are more).
 //!
-//! Two things are left slightly generous. `largest_item_bytes` still claims a
-//! big file that turned out to be a discounted link, which only makes the
-//! cache descend where it could have skipped. And a name created *outside* a
-//! self-contained subtree after that subtree was recorded is counted twice
+//! `largest_item_bytes` is recomputed after settlement from the surviving
+//! names ([`Settled::credited`]) and each directory's single-name files, so a
+//! discounted link never poses as a directory's biggest item. One thing is left
+//! slightly generous: a name created *outside* a self-contained subtree after
+//! that subtree was recorded is counted twice
 //! until the record expires: the walk sees the new name and an inode that
 //! claims more names than it can find, while the cached total already counted
 //! the file. It is bounded by `cache-ttl`, like every other thing a cache can
@@ -36,18 +37,31 @@ pub(super) fn settle_hard_links(
     nodes: Vec<DirNode>,
     files: Vec<FileEntry>,
     links: Vec<LinkSighting>,
-) -> (Vec<DirNode>, Vec<FileEntry>) {
+) -> Settled {
     if links.is_empty() {
-        return (nodes, files);
+        return Settled { nodes, files, credited: Vec::new() };
     }
     let nodes = mark_uncacheable(nodes, &hiders(&links));
-    let duplicates = duplicates_of(links);
-    if duplicates.is_empty() {
-        return (nodes, files);
-    }
+    let duplicates = duplicates_of(links.clone());
     let dropped: HashSet<&Path> = duplicates.iter().map(|link| link.path.as_path()).collect();
+    let credited = links.into_iter().filter(|link| !dropped.contains(link.path.as_path())).collect();
+    if duplicates.is_empty() {
+        return Settled { nodes, files, credited };
+    }
     let kept_files = files.into_iter().filter(|file| !dropped.contains(file.path.as_path())).collect();
-    (subtract(nodes, &duplicates), kept_files)
+    Settled { nodes: subtract(nodes, &duplicates), files: kept_files, credited }
+}
+
+/// What settling the hard links leaves behind.
+pub(super) struct Settled {
+    /// The nodes, with duplicate names discounted and hiders marked.
+    pub nodes: Vec<DirNode>,
+    /// The collected files, minus the discounted names.
+    pub files: Vec<FileEntry>,
+    /// The one sighting per inode that keeps the bytes: the name whose
+    /// directory the file is credited to. What the largest item of that
+    /// directory is recomputed from.
+    pub credited: Vec<LinkSighting>,
 }
 
 /// Directories that hold some, but not all, of an inode's names.
@@ -207,7 +221,8 @@ mod tests {
     fn a_walk_without_hard_links_is_left_alone() {
         let nodes = vec![node("/vol", 100, 1)];
 
-        let (nodes, files) = settle_hard_links(nodes, vec![file("/vol/f", 100)], Vec::new());
+        let settled = settle_hard_links(nodes, vec![file("/vol/f", 100)], Vec::new());
+        let (nodes, files) = (settled.nodes, settled.files);
 
         assert_eq!(sizes(&nodes), vec![("/vol".to_owned(), 100, 1)]);
         assert_eq!(files.len(), 1);
@@ -219,8 +234,8 @@ mod tests {
         let forwards = vec![sighting("/vol/a/f", 7, 100), sighting("/vol/b/f", 7, 100)];
         let backwards = vec![sighting("/vol/b/f", 7, 100), sighting("/vol/a/f", 7, 100)];
 
-        let (first, _) = settle_hard_links(nodes.clone(), Vec::new(), forwards);
-        let (second, _) = settle_hard_links(nodes, Vec::new(), backwards);
+        let first = settle_hard_links(nodes.clone(), Vec::new(), forwards).nodes;
+        let second = settle_hard_links(nodes, Vec::new(), backwards).nodes;
 
         assert_eq!(sizes(&first), sizes(&second));
         assert_eq!(
@@ -234,7 +249,7 @@ mod tests {
         let nodes = vec![node("/vol", 200, 2)];
         let links = vec![sighting("/vol/a", 7, 100), sighting("/vol/b", 7, 100)];
 
-        let (_, files) = settle_hard_links(nodes, vec![file("/vol/a", 100), file("/vol/b", 100)], links);
+        let files = settle_hard_links(nodes, vec![file("/vol/a", 100), file("/vol/b", 100)], links).files;
 
         assert_eq!(
             files.iter().map(|file| file.path.display().to_string()).collect::<Vec<_>>(),
@@ -247,7 +262,7 @@ mod tests {
         let nodes = vec![node("/vol", 300, 3)];
         let links = vec![sighting("/vol/a", 7, 100), sighting("/vol/b", 8, 100)];
 
-        let (nodes, _) = settle_hard_links(nodes, Vec::new(), links);
+        let nodes = settle_hard_links(nodes, Vec::new(), links).nodes;
 
         assert_eq!(sizes(&nodes), vec![("/vol".to_owned(), 300, 3)]);
     }
@@ -257,7 +272,7 @@ mod tests {
         let nodes = vec![node("/vol", 300, 3)];
         let links = vec![named("/vol/c", 7, 100, 3), named("/vol/a", 7, 100, 3), named("/vol/b", 7, 100, 3)];
 
-        let (nodes, _) = settle_hard_links(nodes, Vec::new(), links);
+        let nodes = settle_hard_links(nodes, Vec::new(), links).nodes;
 
         assert_eq!(sizes(&nodes), vec![("/vol".to_owned(), 100, 1)]);
     }
@@ -268,7 +283,7 @@ mod tests {
         // Both names live in `copies`, and the filesystem says there are two.
         let links = vec![named("/vol/copies/a", 7, 100, 2), named("/vol/copies/b", 7, 100, 2)];
 
-        let (nodes, _) = settle_hard_links(nodes, Vec::new(), links);
+        let nodes = settle_hard_links(nodes, Vec::new(), links).nodes;
 
         assert!(hidden(&nodes).is_empty(), "nobody hides a name: {:?}", hidden(&nodes));
     }
@@ -278,7 +293,7 @@ mod tests {
         let nodes = vec![node("/vol", 200, 2), node("/vol/a", 100, 1), node("/vol/b", 100, 1)];
         let links = vec![named("/vol/a/f", 7, 100, 2), named("/vol/b/f", 7, 100, 2)];
 
-        let (nodes, _) = settle_hard_links(nodes, Vec::new(), links);
+        let nodes = settle_hard_links(nodes, Vec::new(), links).nodes;
 
         // `a` and `b` each hold one name of two; `vol` holds both, so it is
         // free to be cached.
@@ -291,7 +306,7 @@ mod tests {
         // Two names exist; only one is inside the walk.
         let links = vec![named("/vol/here/f", 7, 100, 2)];
 
-        let (nodes, _) = settle_hard_links(nodes, Vec::new(), links);
+        let nodes = settle_hard_links(nodes, Vec::new(), links).nodes;
 
         assert_eq!(hidden(&nodes), vec!["/vol".to_owned(), "/vol/here".to_owned()]);
     }
@@ -301,7 +316,7 @@ mod tests {
         let nodes = vec![node("/vol", 10, 0)];
         let links = vec![sighting("/vol/a", 7, 100), sighting("/vol/b", 7, 100)];
 
-        let (nodes, _) = settle_hard_links(nodes, Vec::new(), links);
+        let nodes = settle_hard_links(nodes, Vec::new(), links).nodes;
 
         assert_eq!(sizes(&nodes), vec![("/vol".to_owned(), 0, 0)]);
     }

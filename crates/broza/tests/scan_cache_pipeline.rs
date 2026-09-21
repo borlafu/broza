@@ -4,12 +4,12 @@
 
 mod scan_world;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use broza::model::Volume;
 use broza::ports::FileOps;
 use broza::scan::{MountEntry, MountTable};
-use broza::scan::{ScanRequest, scan_volume};
+use broza::scan::{ScanRequest, scan_paths, scan_volume};
 use broza::testing::mac_mount_table;
 use broza::{BrozaError, ExitCode};
 use scan_world::*;
@@ -267,4 +267,25 @@ fn an_unreadable_subtree_becomes_a_warning_and_the_volume_is_still_reported() {
     assert_eq!(scan.root.size_bytes, 5000);
     assert_eq!(scan.warnings.len(), 1, "{:?}", scan.warnings);
     assert_eq!(scan.warnings[0].code, "permission_denied");
+}
+
+#[test]
+fn two_roots_on_one_volume_share_one_store_and_both_are_kept() {
+    let (ports, handles) = ports();
+    let alpha = PathBuf::from("/System/Volumes/Data/Users/dana/Movies");
+    let beta = PathBuf::from("/System/Volumes/Data/Users/dana/Documents");
+    let request = request();
+
+    let _both = scan_paths(&[alpha.clone(), beta.clone()], &request, &ports, &mac_mount_table(), None)
+        .unwrap_or_else(|error| panic!("{error}"));
+    let store_after_both = handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|error| panic!("{error}"));
+
+    // Scanning each root alone must add nothing the joint store did not already hold.
+    let _alpha =
+        scan_paths(&[alpha], &request, &ports, &mac_mount_table(), None).unwrap_or_else(|e| panic!("{e}"));
+    let _beta =
+        scan_paths(&[beta], &request, &ports, &mac_mount_table(), None).unwrap_or_else(|e| panic!("{e}"));
+    let store_after_each = handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(store_after_both, store_after_each, "the joint scan already held both roots' records");
 }

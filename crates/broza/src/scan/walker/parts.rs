@@ -110,7 +110,10 @@ impl Totals {
             dir_count: 0,
             dataless_count: 0,
             largest_item_bytes: meta.allocated_bytes,
-            largest_direct_file_bytes: meta.allocated_bytes,
+            // A file with several names may be credited to another directory
+            // once hard links are settled; its size comes back through the
+            // surviving sighting, so it must not be claimed twice here.
+            largest_direct_file_bytes: if meta.link_count > 1 { 0 } else { meta.allocated_bytes },
             has_truncation: false,
         }
     }

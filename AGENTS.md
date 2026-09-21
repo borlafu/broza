@@ -78,10 +78,10 @@ Layer rules:
 
 ```bash
 cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
-cargo llvm-cov --workspace --fail-under-lines 80
+cargo llvm-cov --workspace --all-features --fail-under-lines 80
 cargo insta review
 ```
 

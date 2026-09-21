@@ -341,8 +341,11 @@ fn save_store<'a>(
     ports: &Ports,
 ) -> Result<(), BrozaError> {
     let Some(path) = path else { return Ok(()) };
-    let now = ports.clock.now();
-    let fresh = walked.flat_map(|walk| walk.nodes.iter()).filter_map(|node| DirRecord::of(node, now));
+    // Stamped with the store's own opening instant, not the clock after the
+    // walk: a walk longer than `cache-ttl` would otherwise write records the
+    // store considers too new to keep, and never fill.
+    let recorded_at = store.opened_at();
+    let fresh = walked.flat_map(|walk| walk.nodes.iter()).filter_map(|node| DirRecord::of(node, recorded_at));
     let updated = store.with_records(fresh);
     if !updated.has_changes() {
         // Nothing the file does not already say. On a big volume this is tens

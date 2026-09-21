@@ -91,6 +91,10 @@ impl<'a> Children<'a> {
 
 /// The `top` largest items of a walk, biggest first.
 ///
+/// Expects an unlimited walk (`max_depth: None`, as `scan_volume` always asks):
+/// with directories hidden by a depth limit, a dominated directory has nothing
+/// visible to drill into and its bytes would vanish from the list.
+///
 /// Sizes are **allocated** bytes — blocks on the disk — because that is what
 /// removing the item gives back. Apparent lengths can exceed the volume (sparse
 /// files, APFS clones) and would make the list lie about what is freeable.

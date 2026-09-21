@@ -203,7 +203,8 @@ fn a_lock_is_exclusive_until_it_is_dropped() {
         );
         drop(second);
         drop(held);
-        assert!(subject.fs.lock_exclusive(&path).is_ok(), "{}: after release", subject.name);
+        let again = subject.fs.lock_exclusive(&path);
+        assert!(again.is_ok(), "{}: after release: {:?}", subject.name, again.err());
     }
 }
 

@@ -159,6 +159,11 @@ impl CacheStore {
         self.records.is_empty()
     }
 
+    /// When this store was opened: the instant this scan's records are stamped with.
+    pub fn opened_at(&self) -> Timestamp {
+        self.opened_at
+    }
+
     /// `true` when `record` is within one TTL of the store's opening, either way.
     fn is_fresh(&self, record: &DirRecord) -> bool {
         // A record measured *after* the store was opened — this very scan, on a

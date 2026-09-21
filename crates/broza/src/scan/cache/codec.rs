@@ -73,6 +73,8 @@ mod tests {
             allocated_bytes: 8192,
             file_count: 2,
             dir_count: 3,
+            dataless_count: 0,
+            largest_item_bytes: 4096,
             recorded_at: Timestamp::UNIX_EPOCH,
         }
     }

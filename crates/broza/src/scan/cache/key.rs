@@ -44,6 +44,15 @@ pub struct DirRecord {
     pub file_count: u64,
     /// Directories in the subtree, excluding the directory itself.
     pub dir_count: u64,
+    /// Cloud placeholders in the subtree.
+    pub dataless_count: u64,
+    /// Biggest single reportable thing inside: the largest file, or the largest
+    /// descendant directory's subtree.
+    ///
+    /// This is what lets a warm scan stay honest. A subtree may only be served
+    /// from the cache when nothing inside it could have been *listed* on its
+    /// own, and that is decided by comparing this against `--min-size`.
+    pub largest_item_bytes: u64,
     /// When the aggregate was measured; the TTL is counted from here.
     pub recorded_at: Timestamp,
 }
@@ -64,6 +73,8 @@ impl DirRecord {
             allocated_bytes: node.allocated_bytes,
             file_count: node.file_count,
             dir_count: node.dir_count,
+            dataless_count: node.dataless_count,
+            largest_item_bytes: node.largest_item_bytes,
             recorded_at,
         })
     }
@@ -93,6 +104,8 @@ mod tests {
             allocated_bytes: 512,
             file_count: 4,
             dir_count: 1,
+            dataless_count: 2,
+            largest_item_bytes: 300,
             device: 3,
             inode: 42,
             mtime: Some(at("2026-01-01T00:00:00Z")),
@@ -130,6 +143,8 @@ mod tests {
         assert_eq!(record.allocated_bytes, 512);
         assert_eq!(record.file_count, 4);
         assert_eq!(record.dir_count, 1);
+        assert_eq!(record.dataless_count, 2);
+        assert_eq!(record.largest_item_bytes, 300);
         assert_eq!(record.recorded_at, recorded_at);
         assert_eq!(record.key.inode, 42);
     }

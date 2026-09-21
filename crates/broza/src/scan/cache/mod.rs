@@ -22,4 +22,4 @@ pub mod store;
 
 pub use codec::{MAGIC, NO_CACHE_HINT, STORE_VERSION};
 pub use key::{CacheKey, DirRecord};
-pub use store::{CacheStore, STORE_FILE_NAME, store_path};
+pub use store::{BSD_ID_KEY_CODE, CacheStore, STORE_FILE_NAME, store_path};

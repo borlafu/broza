@@ -12,10 +12,10 @@ use crate::scan::walker::DirNode;
 const WHOLE_PERCENT: f64 = 100.0;
 
 /// The tree of one scanned root.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TreeView {
-    /// The scanned root; `None` when the walk reported no directory at all.
-    pub root: Option<TreeNode>,
+    /// The scanned root.
+    pub root: TreeNode,
 }
 
 /// One directory of the [`TreeView`].
@@ -30,23 +30,25 @@ pub struct TreeNode {
     /// Share of the parent, in percent; `100.0` for the root, `0.0` when the
     /// parent holds no bytes at all.
     pub percent_of_parent: f64,
+    /// Bytes of this directory that none of the listed children account for:
+    /// its own files, and the children left out by the depth or size limits.
+    /// `children` plus `other_bytes` always add up to `size_bytes`.
+    pub other_bytes: u64,
     /// Children above the minimum size, largest first.
     pub children: Vec<TreeNode>,
 }
 
-/// Nest `nodes` under their common root, down to `depth` levels below it.
+/// Nest `nodes` under `root`, down to `depth` levels below it.
 ///
 /// `depth` counts levels **below** the root, matching `--depth`: `0` is the root
-/// alone. Children smaller than `min_size` are left out, the root never is.
-pub fn tree(nodes: &[DirNode], depth: usize, min_size: u64) -> TreeView {
-    let Some(root) = nodes.iter().min_by_key(|node| node.path.components().count()) else {
-        return TreeView::default();
-    };
+/// alone. Children smaller than `min_size` are left out of the listing and end
+/// up in their parent's `other_bytes`, so the arithmetic on screen adds up.
+pub fn tree(root: &DirNode, nodes: &[DirNode], depth: usize, min_size: u64) -> TreeView {
     let index = index_by_parent(nodes);
     let built = build(root, WHOLE_PERCENT, depth, min_size, &index);
     // The root is the only node shown with its whole path: it is where the scan
     // started, and `Data` alone would not tell the user which volume that is.
-    TreeView { root: Some(TreeNode { name: root.path.display().to_string(), ..built }) }
+    TreeView { root: TreeNode { name: root.path.display().to_string(), ..built } }
 }
 
 /// Children of every directory, keyed by the parent's path.
@@ -67,7 +69,7 @@ fn build(
     min_size: u64,
     index: &BTreeMap<&Path, Vec<&DirNode>>,
 ) -> TreeNode {
-    let children = if depth == 0 {
+    let children: Vec<TreeNode> = if depth == 0 {
         Vec::new()
     } else {
         children_of(node, min_size, index)
@@ -75,11 +77,13 @@ fn build(
             .map(|child| build(child, share(child.size_bytes, node.size_bytes), depth - 1, min_size, index))
             .collect()
     };
+    let listed: u64 = children.iter().map(|child| child.size_bytes).sum();
     TreeNode {
         name: name_of(&node.path),
         path: node.path.clone(),
         size_bytes: node.size_bytes,
         percent_of_parent,
+        other_bytes: node.size_bytes.saturating_sub(listed),
         children,
     }
 }
@@ -129,6 +133,8 @@ mod tests {
             allocated_bytes: size_bytes,
             file_count: 1,
             dir_count: 0,
+            dataless_count: 0,
+            largest_item_bytes: size_bytes,
             device: 1,
             inode: 10,
             mtime: None,
@@ -151,7 +157,8 @@ mod tests {
     }
 
     fn root_of(nodes: &[DirNode], depth: usize, min_size: u64) -> TreeNode {
-        tree(nodes, depth, min_size).root.unwrap_or_else(|| panic!("no root in {nodes:?}"))
+        let root = nodes.first().unwrap_or_else(|| panic!("no nodes"));
+        tree(root, nodes, depth, min_size).root
     }
 
     #[test]
@@ -171,6 +178,25 @@ mod tests {
         assert!((root.percent_of_parent - 100.0).abs() < f64::EPSILON);
         assert!((root.children[0].percent_of_parent - 60.0).abs() < f64::EPSILON);
         assert!((root.children[0].children[0].percent_of_parent - 500.0 / 6.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn what_the_children_do_not_account_for_is_reported_as_the_rest() {
+        let root = root_of(&sample(), 2, 0);
+
+        assert_eq!(root.other_bytes, 1000 - 600 - 300 - 10);
+        assert_eq!(root.children[0].other_bytes, 600 - 500);
+        let accounted: u64 = root.children.iter().map(|child| child.size_bytes).sum();
+        assert_eq!(accounted + root.other_bytes, root.size_bytes);
+    }
+
+    #[test]
+    fn children_left_out_by_a_limit_end_up_in_the_rest() {
+        let shallow = root_of(&sample(), 0, 0);
+        let filtered = root_of(&sample(), 2, 100);
+
+        assert_eq!(shallow.other_bytes, 1000, "with no children listed, everything is the rest");
+        assert_eq!(filtered.other_bytes, 1000 - 600 - 300, "the 10-byte child is in the rest");
     }
 
     #[test]
@@ -208,8 +234,13 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_walk_has_no_tree() {
-        assert!(tree(&[], 3, 0).root.is_none());
+    fn a_walk_with_only_a_root_has_a_tree_of_one_node() {
+        let only = dir("/vol", 7);
+
+        let view = tree(&only, std::slice::from_ref(&only), 3, 0);
+
+        assert_eq!(view.root.size_bytes, 7);
+        assert!(view.root.children.is_empty());
     }
 
     #[test]

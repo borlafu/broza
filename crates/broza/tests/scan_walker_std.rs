@@ -124,7 +124,8 @@ fn an_unreadable_directory_is_a_warning_and_the_rest_is_still_reported() {
 #[test]
 fn files_above_the_threshold_come_back_with_their_real_sizes() {
     let dir = sample_tree();
-    let options = WalkOptions { report_files_min_size: Some(2500), ..WalkOptions::default() };
+    let options =
+        WalkOptions { report_files_min_size: Some(2500), report_files_top: 10, ..WalkOptions::default() };
 
     let result = walk(dir.path(), &options, &StdFileOps);
 

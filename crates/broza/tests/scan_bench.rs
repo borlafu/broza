@@ -30,6 +30,18 @@ const BENCH_TTL: Duration = Duration::from_secs(60 * 60);
 const BENCH_MIN_FILE_BYTES: u64 = 100_000_000;
 /// Volume directory the benchmark writes its store under.
 const BENCH_VOLUME: &str = "bench";
+/// How many files the benchmark keeps, as `--top` would.
+const BENCH_TOP: usize = 20;
+/// Levels the benchmark reports, as `--depth` would; the cache may not answer
+/// above this, because those levels are what a report shows.
+const BENCH_DEPTH: usize = 2;
+/// Entries per second a cold walk must manage.
+///
+/// The budget of `docs/cli-spec.md` §7 is under ten seconds for the boot disk.
+/// A Data volume of a few hundred gigabytes runs to a few million entries, so
+/// this is the rate that makes that budget reachable — stated as a rate so the
+/// assertion means the same thing on a bigger or smaller home directory.
+const MIN_ENTRIES_PER_SECOND: f64 = 40_000.0;
 /// Separator of the `BENCH_EXCLUDE` list.
 const EXCLUDE_SEPARATOR: char = ':';
 
@@ -46,11 +58,14 @@ fn exclusions() -> Vec<PathBuf> {
 /// Walk `root` once, with `store` answering for unchanged subtrees.
 fn timed_walk(root: &Path, store: &CacheStore) -> (WalkResult, Duration) {
     let hook = |identity: &DirIdentity| {
-        CacheKey::of(identity).and_then(|key| store.lookup(&key)).map(|record| record.size_bytes)
+        let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
+        (record.largest_item_bytes < BENCH_MIN_FILE_BYTES).then(|| record.clone())
     };
     let options = WalkOptions {
         skip_hook: Some(&hook),
+        cache_from_depth: BENCH_DEPTH + 1,
         report_files_min_size: Some(BENCH_MIN_FILE_BYTES),
+        report_files_top: BENCH_TOP,
         exclude: exclusions(),
         ..WalkOptions::default()
     };
@@ -106,4 +121,25 @@ fn bench_home_walk() {
     println!("store: {store_bytes} bytes for {} records", loaded.len());
 
     assert!(cold_result.root().is_some(), "the walk found nothing at {}", home.display());
+    assert_eq!(
+        warm_result.root().map(|node| node.size_bytes),
+        cold_result.root().map(|node| node.size_bytes),
+        "a warm walk must report the same disk as the cold one"
+    );
+    let rate = entries_per_second(&cold_result, cold);
+    assert!(
+        rate >= MIN_ENTRIES_PER_SECOND,
+        "cold walk managed {rate:.0} entries/s, below the {MIN_ENTRIES_PER_SECOND:.0} the \
+         ten-second budget of docs/cli-spec.md §7 needs"
+    );
+    assert!(warm <= cold, "the cache made the walk slower: {warm:?} against {cold:?}");
+}
+
+/// Entries per second a run managed.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a rate printed to zero decimals does not need every bit of a u64"
+)]
+fn entries_per_second(result: &WalkResult, elapsed: Duration) -> f64 {
+    entry_count(result) as f64 / elapsed.as_secs_f64().max(f64::EPSILON)
 }

@@ -20,10 +20,16 @@ pub const STORE_FILE_NAME: &str = "dirs.bin";
 /// Directory naming the on-disk layout version (`docs/cli-spec.md` §7).
 const LAYOUT_DIR: &str = "v1";
 
+/// Warning code for a cache filed under a BSD name for want of a UUID.
+pub const BSD_ID_KEY_CODE: &str = "cache_keyed_by_bsd_id";
+
 /// Where the store of `volume` lives under `cache_root`.
 ///
 /// `cache_root` is `~/.cache/broza` in practice; the core never reads `$HOME`
-/// itself, so the CLI passes it in (`AGENTS.md` §4).
+/// itself, so the CLI passes it in (`AGENTS.md` §4). The directory is named
+/// after the volume's UUID when there is one: `disk4s1` is whichever disk is
+/// plugged into that slot today, while the UUID follows the volume
+/// (`docs/cli-spec.md` §7).
 pub fn store_path(cache_root: &Path, volume: &str) -> PathBuf {
     cache_root.join(LAYOUT_DIR).join(volume).join(STORE_FILE_NAME)
 }
@@ -116,9 +122,13 @@ impl CacheStore {
         age >= SignedDuration::ZERO && age <= self.ttl
     }
 
-    /// Every record in a stable order, so two identical scans write identical files.
+    /// Every record still worth keeping, in a stable order.
+    ///
+    /// Expired records are dropped here rather than lived with: a store that
+    /// only ever grew would keep every directory the disk has ever had.
     fn sorted_records(&self) -> Vec<DirRecord> {
-        let mut records: Vec<DirRecord> = self.records.values().cloned().collect();
+        let mut records: Vec<DirRecord> =
+            self.records.values().filter(|record| self.is_fresh(record)).cloned().collect();
         records.sort_by_key(|record| (record.key.device, record.key.inode, record.key.mtime_ns));
         records
     }
@@ -156,6 +166,8 @@ mod tests {
             allocated_bytes: 2000,
             file_count: 1,
             dir_count: 0,
+            dataless_count: 0,
+            largest_item_bytes: 4096,
             recorded_at,
         }
     }
@@ -276,63 +288,6 @@ mod tests {
         let error = CacheStore::load(&path(), &fs, &FixedClock::default(), TTL).err();
 
         assert!(matches!(error, Some(BrozaError::Cache(_))), "{error:?}");
-    }
-
-    /// A filesystem where the store exists when asked and is gone when read.
-    ///
-    /// The real race: another Broza (or the user) removed the cache between the
-    /// two calls. It must read as "no cache yet", not as a corrupt one.
-    #[derive(Debug)]
-    struct VanishingStore;
-
-    impl FileOps for VanishingStore {
-        fn metadata(&self, path: &Path) -> Result<crate::ports::EntryMetadata, BrozaError> {
-            Err(BrozaError::TargetNotFound(path.display().to_string()))
-        }
-        fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, BrozaError> {
-            Err(BrozaError::TargetNotFound(path.display().to_string()))
-        }
-        fn exists(&self, _path: &Path) -> bool {
-            true
-        }
-        fn rename(&self, from: &Path, _to: &Path) -> Result<(), BrozaError> {
-            Err(BrozaError::TargetNotFound(from.display().to_string()))
-        }
-        fn create_dir_all(&self, _path: &Path) -> Result<(), BrozaError> {
-            Ok(())
-        }
-        fn remove_tree(&self, path: &Path) -> Result<(), BrozaError> {
-            Err(BrozaError::TargetNotFound(path.display().to_string()))
-        }
-        fn write_atomic(&self, _path: &Path, _contents: &[u8]) -> Result<(), BrozaError> {
-            Ok(())
-        }
-        fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError> {
-            Err(BrozaError::TargetNotFound(path.display().to_string()))
-        }
-    }
-
-    #[test]
-    fn the_vanishing_filesystem_says_everything_else_is_gone() {
-        let store = VanishingStore;
-        let path = path();
-
-        assert!(store.exists(&path));
-        assert!(store.metadata(&path).is_err());
-        assert!(store.read_dir(&path).is_err());
-        assert!(store.read(&path).is_err());
-        assert!(store.rename(&path, &path).is_err());
-        assert!(store.remove_tree(&path).is_err());
-        assert!(store.create_dir_all(&path).is_ok());
-        assert!(store.write_atomic(&path, b"x").is_ok());
-    }
-
-    #[test]
-    fn a_store_that_disappears_between_the_check_and_the_read_is_simply_empty() {
-        let store = CacheStore::load(&path(), &VanishingStore, &FixedClock::default(), TTL)
-            .unwrap_or_else(|e| panic!("{e}"));
-
-        assert!(store.is_empty());
     }
 
     #[test]

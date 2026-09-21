@@ -9,6 +9,7 @@ use jiff::Timestamp;
 
 use crate::model::Diagnostic;
 use crate::ports::EntryMetadata;
+use crate::scan::cache::DirRecord;
 use crate::scan::progress::ProgressReporter;
 use crate::scan::walker::parts::Totals;
 
@@ -16,9 +17,14 @@ use crate::scan::walker::parts::Totals;
 pub const PERMISSION_DENIED_CODE: &str = "permission_denied";
 /// Warning code for a path that could not be read for any other reason.
 pub const UNREADABLE_ENTRY_CODE: &str = "unreadable_entry";
+/// Shallowest depth a cached answer may be used at, counting the root as 0.
+///
+/// The root is always walked: a scan whose first question is "has anything
+/// changed here?" would answer "no" and report nothing at all.
+pub const MIN_CACHE_DEPTH: usize = 1;
 
-/// A cache lookup: answers with the size of a subtree that need not be walked.
-pub type SkipHook<'a> = &'a (dyn Fn(&DirIdentity) -> Option<u64> + Sync);
+/// A cache lookup: answers with what was measured last time, or nothing.
+pub type SkipHook<'a> = &'a (dyn Fn(&DirIdentity) -> Option<DirRecord> + Sync);
 
 /// What the scan cache keys a directory by (`docs/implementation-plan.md` §3.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,18 +55,24 @@ pub struct DirNode {
     pub size_bytes: u64,
     /// Allocated bytes of the same entries.
     pub allocated_bytes: u64,
-    /// Non-directory entries in the subtree.
+    /// Non-directory entries in the subtree, cloud placeholders included.
     pub file_count: u64,
     /// Directories in the subtree, excluding this one.
     pub dir_count: u64,
+    /// Cloud placeholders in the subtree, whose bytes are not on this disk.
+    pub dataless_count: u64,
+    /// Biggest single reportable thing inside: the largest file, or the largest
+    /// descendant directory's subtree.
+    pub largest_item_bytes: u64,
     /// Device id (`st_dev`).
     pub device: u64,
     /// Inode number (`st_ino`).
     pub inode: u64,
     /// Last modification time.
     pub mtime: Option<Timestamp>,
-    /// `true` when some child was not reported: depth limit, cache hit, exclusion,
-    /// another device, or an unreadable entry.
+    /// `true` when some child was not reported: depth limit, exclusion, another
+    /// device, a cloud placeholder, or an unreadable entry. A subtree served
+    /// from the cache is **not** truncated — it was measured, just not again.
     pub children_truncated: bool,
 }
 
@@ -73,6 +85,8 @@ impl DirNode {
             allocated_bytes: totals.allocated_bytes,
             file_count: totals.file_count,
             dir_count: totals.dir_count,
+            dataless_count: totals.dataless_count,
+            largest_item_bytes: totals.largest_item_bytes,
             device: identity.device,
             inode: identity.inode,
             mtime: identity.mtime,
@@ -110,11 +124,16 @@ pub struct WalkOptions<'a> {
     pub same_device_only: bool,
     /// Path prefixes that are not visited at all.
     pub exclude: Vec<PathBuf>,
-    /// Cache lookup: when it answers with a size, the subtree is not walked.
+    /// Cache lookup: when it answers, the subtree is not walked again.
     pub skip_hook: Option<SkipHook<'a>>,
-    /// Collect files at least this big into [`WalkResult::files`]; `None` collects
-    /// none, which is what keeps a walk of a million files bounded in memory.
+    /// Shallowest depth the cache may answer at; never below [`MIN_CACHE_DEPTH`].
+    pub cache_from_depth: usize,
+    /// Collect files at least this big into [`WalkResult::files`]; `None`
+    /// collects none.
     pub report_files_min_size: Option<u64>,
+    /// How many files to keep at most, so a walk of a million of them stays
+    /// bounded in memory.
+    pub report_files_top: usize,
     /// Where progress updates go.
     pub progress: Option<&'a ProgressReporter<'a>>,
 }
@@ -126,9 +145,18 @@ impl Default for WalkOptions<'_> {
             same_device_only: true,
             exclude: Vec::new(),
             skip_hook: None,
+            cache_from_depth: MIN_CACHE_DEPTH,
             report_files_min_size: None,
+            report_files_top: 0,
             progress: None,
         }
+    }
+}
+
+impl WalkOptions<'_> {
+    /// `true` when the cache may answer for a directory at `depth`.
+    pub(super) fn cache_answers_at(&self, depth: usize) -> bool {
+        depth >= self.cache_from_depth.max(MIN_CACHE_DEPTH)
     }
 }
 
@@ -138,7 +166,9 @@ impl std::fmt::Debug for WalkOptions<'_> {
             .field("max_depth", &self.max_depth)
             .field("same_device_only", &self.same_device_only)
             .field("exclude", &self.exclude)
+            .field("cache_from_depth", &self.cache_from_depth)
             .field("report_files_min_size", &self.report_files_min_size)
+            .field("report_files_top", &self.report_files_top)
             .finish_non_exhaustive()
     }
 }
@@ -148,7 +178,7 @@ impl std::fmt::Debug for WalkOptions<'_> {
 pub struct WalkResult {
     /// One node per reported directory, sorted by path.
     pub nodes: Vec<DirNode>,
-    /// Files above the reporting threshold, sorted by path.
+    /// The biggest files above the reporting threshold, sorted by path.
     pub files: Vec<FileEntry>,
     /// Warnings about what could not be read, sorted by path.
     pub errors: Vec<Diagnostic>,

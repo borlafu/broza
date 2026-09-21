@@ -20,7 +20,7 @@
 pub mod bar;
 pub mod tree;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub use bar::usage_bar;
 pub use tree::{TreeNode, TreeView, tree};
@@ -32,11 +32,11 @@ use crate::scan::walker::WalkResult;
 /// reported as well, expressed as the divisor of that ancestor's size.
 const DOMINANT_SHARE_DIVISOR: u64 = 2;
 
-/// One entry competing for a place in the list.
-#[derive(Debug, Clone)]
-struct Candidate {
+/// One entry competing for a place in the list, borrowed from the walk.
+#[derive(Debug, Clone, Copy)]
+struct Candidate<'a> {
     /// Absolute path.
-    path: PathBuf,
+    path: &'a Path,
     /// Apparent size in bytes.
     size_bytes: u64,
     /// File or directory.
@@ -47,17 +47,20 @@ struct Candidate {
 ///
 /// Directories and files compete in the same list; the suppression rule of the
 /// module documentation decides which descendants survive. Items smaller than
-/// `min_size` never appear. Ties are broken by path, so two runs of the same scan
-/// produce the same list.
+/// `min_size` never appear, and neither do cloud placeholders: the walk does not
+/// collect them, because none of their bytes are on this disk. Ties are broken
+/// by path, so two runs of the same scan produce the same list.
+///
+/// Nothing is copied until the list is decided: the candidates borrow from the
+/// walk, and only the survivors — at most `top` of them — become owned items.
 pub fn largest_items(walk: &WalkResult, top: usize, min_size: u64, volume_id: &VolumeId) -> Vec<LargestItem> {
     let root = walk.root().map(|node| node.path.as_path());
-    let candidates = ranked_candidates(walk, min_size, root);
-    candidates
+    ranked_candidates(walk, min_size, root)
         .into_iter()
         .fold(Vec::new(), |accepted, candidate| accept(accepted, candidate, top))
         .into_iter()
         .map(|candidate| LargestItem {
-            path: candidate.path,
+            path: candidate.path.to_path_buf(),
             size_bytes: candidate.size_bytes,
             kind: candidate.kind,
             volume_id: volume_id.clone(),
@@ -66,25 +69,25 @@ pub fn largest_items(walk: &WalkResult, top: usize, min_size: u64, volume_id: &V
 }
 
 /// Every item above `min_size`, largest first and then by path.
-fn ranked_candidates(walk: &WalkResult, min_size: u64, root: Option<&Path>) -> Vec<Candidate> {
+fn ranked_candidates<'a>(walk: &'a WalkResult, min_size: u64, root: Option<&Path>) -> Vec<Candidate<'a>> {
     let dirs = walk.nodes.iter().filter(|node| Some(node.path.as_path()) != root).map(|node| Candidate {
-        path: node.path.clone(),
+        path: node.path.as_path(),
         size_bytes: node.size_bytes,
         kind: ItemKind::Directory,
     });
     let files = walk.files.iter().map(|file| Candidate {
-        path: file.path.clone(),
+        path: file.path.as_path(),
         size_bytes: file.size_bytes,
         kind: ItemKind::File,
     });
-    let mut candidates: Vec<Candidate> =
+    let mut candidates: Vec<Candidate<'a>> =
         dirs.chain(files).filter(|candidate| candidate.size_bytes >= min_size).collect();
-    candidates.sort_by(|left, right| right.size_bytes.cmp(&left.size_bytes).then(left.path.cmp(&right.path)));
+    candidates.sort_by(|left, right| right.size_bytes.cmp(&left.size_bytes).then(left.path.cmp(right.path)));
     candidates
 }
 
 /// Add `candidate` to the list when the suppression rule allows it.
-fn accept(accepted: Vec<Candidate>, candidate: Candidate, top: usize) -> Vec<Candidate> {
+fn accept<'a>(accepted: Vec<Candidate<'a>>, candidate: Candidate<'a>, top: usize) -> Vec<Candidate<'a>> {
     if accepted.len() >= top || !is_worth_reporting(&accepted, &candidate) {
         return accepted;
     }
@@ -94,16 +97,16 @@ fn accept(accepted: Vec<Candidate>, candidate: Candidate, top: usize) -> Vec<Can
 }
 
 /// `true` when no reported ancestor already speaks for this entry.
-fn is_worth_reporting(accepted: &[Candidate], candidate: &Candidate) -> bool {
-    nearest_ancestor(accepted, &candidate.path)
+fn is_worth_reporting(accepted: &[Candidate<'_>], candidate: &Candidate<'_>) -> bool {
+    nearest_ancestor(accepted, candidate.path)
         .is_none_or(|ancestor| candidate.size_bytes >= ancestor.size_bytes / DOMINANT_SHARE_DIVISOR)
 }
 
 /// The deepest already reported directory that contains `path`.
-fn nearest_ancestor<'a>(accepted: &'a [Candidate], path: &Path) -> Option<&'a Candidate> {
+fn nearest_ancestor<'a, 'b>(accepted: &'a [Candidate<'b>], path: &Path) -> Option<&'a Candidate<'b>> {
     accepted
         .iter()
-        .filter(|other| other.kind == ItemKind::Directory && path.starts_with(&other.path))
+        .filter(|other| other.kind == ItemKind::Directory && path.starts_with(other.path))
         .filter(|other| other.path != path)
         .max_by_key(|other| other.path.components().count())
 }
@@ -123,6 +126,8 @@ mod tests {
             allocated_bytes: size_bytes,
             file_count: 1,
             dir_count: 0,
+            dataless_count: 0,
+            largest_item_bytes: size_bytes,
             device: 1,
             inode: 7,
             mtime: None,

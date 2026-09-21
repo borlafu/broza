@@ -8,9 +8,10 @@ pub const BAR_EMPTY: &str = "░";
 /// Draw `used` out of `total` as a bar `width` cells wide.
 ///
 /// Pure and total: an unknown total (`0`) draws an empty bar rather than dividing
-/// by zero, and more used than there is draws a full one. Any non-zero usage keeps
-/// at least one filled cell, because a bar that looks empty while the disk is not
-/// is a lie the user acts on.
+/// by zero, and more used than there is draws a full one. In between, the bar is
+/// never empty and never full: a sliver of usage keeps one cell, and a nearly
+/// full disk keeps one free cell. Both roundings would otherwise be a lie the
+/// user acts on.
 pub fn usage_bar(used: u64, total: u64, width: usize) -> String {
     let filled = filled_cells(used, total, width);
     format!("{}{}", BAR_FILLED.repeat(filled), BAR_EMPTY.repeat(width.saturating_sub(filled)))
@@ -26,7 +27,8 @@ fn filled_cells(used: u64, total: u64, width: usize) -> usize {
     }
     let cells = u128::from(used) * width as u128;
     let rounded = (cells + u128::from(total) / 2) / u128::from(total);
-    usize::try_from(rounded).unwrap_or(width).clamp(1, width)
+    let last_partial_cell = width.saturating_sub(1).max(1);
+    usize::try_from(rounded).unwrap_or(width).clamp(1, last_partial_cell)
 }
 
 #[cfg(test)]
@@ -63,6 +65,18 @@ mod tests {
         // 3 of 10 over 4 cells is 1.2 cells, and 7 of 10 is 2.8.
         assert_eq!(bar(3, 10, 4), format!("{BAR_FILLED}{}", BAR_EMPTY.repeat(3)));
         assert_eq!(bar(7, 10, 4), format!("{}{BAR_EMPTY}", BAR_FILLED.repeat(3)));
+    }
+
+    #[test]
+    fn a_nearly_full_disk_still_shows_one_free_cell() {
+        assert_eq!(bar(999_999, 1_000_000, 20), format!("{}{BAR_EMPTY}", BAR_FILLED.repeat(19)));
+    }
+
+    #[test]
+    fn a_one_cell_bar_is_either_empty_or_full() {
+        assert_eq!(bar(1, 1_000_000, 1), BAR_FILLED);
+        assert_eq!(bar(1_000_000, 1_000_000, 1), BAR_FILLED);
+        assert_eq!(bar(0, 1_000_000, 1), BAR_EMPTY);
     }
 
     #[test]

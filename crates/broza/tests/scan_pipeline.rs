@@ -10,7 +10,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use broza::model::ItemKind;
+use broza::model::Volume;
 use broza::ports::{FileOps, Ports};
+use broza::scan::{MountEntry, MountTable};
 use broza::scan::{ScanProgress, ScanRequest, VolumeScan, scan_all, scan_volume};
 use broza::testing::{FakeFileOps, Handles, fake_ports, mac_mount_table};
 use broza::{BrozaError, ExitCode};
@@ -26,7 +28,7 @@ const EXTERNAL_DEVICE: u64 = 6;
 /// Where the CLI would put the cache.
 const CACHE_ROOT: &str = "/Users/dana/.cache/broza";
 /// Store of the Data volume inside that cache root.
-const DATA_STORE: &str = "/Users/dana/.cache/broza/v1/disk3s5/dirs.bin";
+const DATA_STORE: &str = "/Users/dana/.cache/broza/v1/22222222-2222-4222-8222-222222222222/dirs.bin";
 
 /// A request that reports everything, with the cache under [`CACHE_ROOT`].
 fn request() -> ScanRequest {
@@ -57,7 +59,7 @@ fn ports() -> (Ports, Handles) {
 }
 
 fn scan_data(ports: &Ports, request: &ScanRequest) -> VolumeScan {
-    scan_volume(&request.for_volume("disk3s5"), ports, &mac_mount_table())
+    scan_volume(&request.for_volume("disk3s5"), ports, &mac_mount_table(), None)
         .unwrap_or_else(|error| panic!("{error}"))
 }
 
@@ -87,7 +89,7 @@ fn the_tree_view_stops_at_the_requested_depth() {
 
     let scan = scan_data(&ports, &ScanRequest { depth: 1, ..request() });
 
-    let root = scan.tree.root.unwrap_or_else(|| panic!("no tree"));
+    let root = scan.tree.root;
     assert_eq!(root.name, DATA);
     assert_eq!(root.children.iter().map(|child| child.name.clone()).collect::<Vec<_>>(), vec!["Users"]);
     assert!(root.children[0].children.is_empty(), "depth 1 stops below the first level");
@@ -98,9 +100,9 @@ fn scanning_one_volume_needs_that_volume_to_exist_and_to_be_writable() {
     let (ports, _handles) = ports();
     let mounts = mac_mount_table();
 
-    let no_volume = scan_volume(&request(), &ports, &mounts).err();
-    let sealed = scan_volume(&request().for_volume("disk3s1"), &ports, &mounts).err();
-    let unknown = scan_volume(&request().for_volume("disk9s9"), &ports, &mounts).err();
+    let no_volume = scan_volume(&request(), &ports, &mounts, None).err();
+    let sealed = scan_volume(&request().for_volume("disk3s1"), &ports, &mounts, None).err();
+    let unknown = scan_volume(&request().for_volume("disk9s9"), &ports, &mounts, None).err();
 
     assert!(matches!(no_volume, Some(BrozaError::Usage(_))), "{no_volume:?}");
     assert!(matches!(sealed, Some(BrozaError::TargetNotFound(_))), "{sealed:?}");
@@ -108,20 +110,51 @@ fn scanning_one_volume_needs_that_volume_to_exist_and_to_be_writable() {
 }
 
 #[test]
-fn a_warm_scan_is_served_from_the_cache_and_no_cache_walks_again() {
+fn a_warm_scan_reports_exactly_what_the_cold_one_did() {
     let (ports, handles) = ports();
-    let request = request();
+    // With this threshold, `Documents` holds nothing that could be listed on
+    // its own, so a warm scan may take it from the cache; `Movies` holds a file
+    // that could be, so it is walked again.
+    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
 
     let cold = scan_data(&ports, &request);
-    // The file grows in place: the directory's mtime does not change, which is
-    // exactly the staleness the TTL bounds (`docs/implementation-plan.md` §3.4).
-    handles.fs.set_size("/System/Volumes/Data/Users/dana/Movies/film.mov", 9000);
+    let warm = scan_data(&ports, &request);
+
+    assert_eq!(warm, cold, "a warm scan is the same scan, only faster");
+    assert!(!warm.largest.is_empty());
+    assert_eq!(warm.root.file_count, cold.root.file_count);
+    assert_eq!(warm.tree, cold.tree);
+    assert!(handles.fs.exists(Path::new(DATA_STORE)));
+}
+
+#[test]
+fn a_subtree_the_cache_answered_for_is_not_walked_again() {
+    let (ports, handles) = ports();
+    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+
+    let cold = scan_data(&ports, &request);
+    // The file grows in place: its directory's mtime does not change, which is
+    // the staleness the TTL bounds (`docs/implementation-plan.md` §3.4).
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1500);
     let warm = scan_data(&ports, &request);
     let forced = scan_data(&ports, &ScanRequest { no_cache: true, ..request });
 
-    assert_eq!(cold.root.size_bytes, 8000);
-    assert_eq!(warm.root.size_bytes, 8000, "the unchanged subtree came from the cache");
-    assert_eq!(forced.root.size_bytes, 12_000, "--no-cache measures the disk again");
+    assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "the cached subtree was reused");
+    assert_eq!(forced.root.size_bytes, cold.root.size_bytes + 500, "--no-cache measures again");
+}
+
+#[test]
+fn a_subtree_holding_something_reportable_is_never_taken_from_the_cache() {
+    let (ports, handles) = ports();
+    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+
+    let cold = scan_data(&ports, &request);
+    // `film.mov` is above the threshold, so `Movies` must be walked again and
+    // the growth must show up.
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/Movies/film.mov", 6000);
+    let warm = scan_data(&ports, &request);
+
+    assert_eq!(warm.root.size_bytes, cold.root.size_bytes + 1000);
 }
 
 #[test]
@@ -154,11 +187,56 @@ fn a_scan_without_a_cache_root_writes_nothing_and_still_reports() {
 }
 
 #[test]
+fn a_volume_with_no_uuid_says_its_cache_is_filed_under_a_disk_slot() {
+    let (ports, _handles) = ports();
+    let mounts = MountTable::new(
+        mac_mount_table()
+            .entries()
+            .iter()
+            .cloned()
+            .map(|entry| MountEntry { volume: Volume { uuid: None, ..entry.volume }, ..entry })
+            .collect(),
+    );
+
+    let scan = scan_volume(&request().for_volume("disk3s5"), &ports, &mounts, None)
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    let codes: Vec<&str> = scan.warnings.iter().map(|warning| warning.code.as_str()).collect();
+    assert_eq!(codes, vec!["cache_keyed_by_bsd_id"], "{:?}", scan.warnings);
+}
+
+#[test]
+fn a_volume_with_a_uuid_files_its_cache_under_it() {
+    let (ports, handles) = ports();
+
+    let scan = scan_data(&ports, &request());
+
+    assert!(handles.fs.exists(Path::new(DATA_STORE)), "{:?}", handles.fs.paths());
+    assert!(scan.warnings.is_empty(), "{:?}", scan.warnings);
+}
+
+#[test]
+fn scanning_one_volume_reports_progress_when_asked_to() {
+    let (ports, _handles) = ports();
+    let seen: Mutex<Vec<ScanProgress>> = Mutex::new(Vec::new());
+    let sink = |progress: ScanProgress| {
+        seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(progress);
+    };
+
+    let scan = scan_volume(&request().for_volume("disk3s5"), &ports, &mac_mount_table(), Some(&sink))
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    let seen = seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let last = seen.last().unwrap_or_else(|| panic!("no progress at all"));
+    assert_eq!(last.bytes_scanned, scan.root.size_bytes);
+}
+
+#[test]
 fn a_corrupt_cache_stops_the_scan_with_exit_nine() {
     let (ports, handles) = ports();
     handles.fs.add_file(DATA_STORE, b"BRZC\x07nonsense");
 
-    let error = scan_volume(&request().for_volume("disk3s5"), &ports, &mac_mount_table()).err();
+    let error = scan_volume(&request().for_volume("disk3s5"), &ports, &mac_mount_table(), None).err();
 
     let Some(error @ BrozaError::Cache(_)) = error else { panic!("{error:?}") };
     assert_eq!(ExitCode::from(&error), ExitCode::CacheError);

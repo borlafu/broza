@@ -76,6 +76,7 @@ pub fn run(context: &ScanContext<'_>) -> Result<Outcome, BrozaError> {
     let output = ScanOutput {
         data: ScanReport { disks, largest_items: walked.largest },
         trees: walked.trees,
+        upper_bounds: warnings.iter().any(|w| w.code == broza::scan::OVERCOUNT_CODE),
         tree_view: context.args.tree,
         home: context.folders.home.clone(),
         host: context.host.clone(),
@@ -95,6 +96,8 @@ pub struct ScanOutput {
     pub data: ScanReport,
     /// One tree per walked volume, for the human rendering.
     pub trees: Vec<VolumeTree>,
+    /// A `size_exceeds_volume` warning was raised: sizes are upper bounds.
+    pub upper_bounds: bool,
     /// `--tree`: draw the trees instead of the consumers list.
     pub tree_view: bool,
     /// Home directory, so paths under it print as `~/…`.
@@ -133,9 +136,12 @@ impl Renderer for ScanOutput {
     fn to_human(&self) -> String {
         human_scan::render_with_folders(
             &self.data,
-            &self.trees,
-            self.tree_view,
-            self.home.as_deref(),
+            &human_scan::Folders {
+                trees: &self.trees,
+                tree_view: self.tree_view,
+                upper_bounds: self.upper_bounds,
+                home: self.home.as_deref(),
+            },
             self.policy,
         )
     }

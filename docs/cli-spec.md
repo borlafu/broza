@@ -179,9 +179,9 @@ Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
    └ VM                   VM          3.0 GB   swap
 
 Largest consumers on Macintosh HD - Data:
-  312.4 GB  ~/Library/Developer            (Xcode)
-   84.1 GB  ~/Library/Caches
-   61.7 GB  ~/Documents
+  312.4 GB  ~/Library/Developer/Xcode/DerivedData/
+   84.1 GB  ~/Library/Caches/
+   61.7 GB  ~/Documents/
 ```
 
 A disk macOS does not report as internal is marked `(external)` after its size; a partition
@@ -601,7 +601,7 @@ Every `--json` output shares this structure:
       }]
     }],
     "largest_items": [{
-      "path": "/Users/x/Library/Developer",
+      "path": "/Users/x/Library/Developer/Xcode/DerivedData",
       "size_bytes": 312400000000,
       "kind": "directory",
       "volume_id": "disk3s5"

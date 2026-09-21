@@ -43,16 +43,16 @@ const DOMINANT_SHARE_DIVISOR: u64 = 2;
 struct Candidate<'a> {
     /// Absolute path.
     path: &'a Path,
-    /// Apparent size in bytes; drives the drill-down rule.
-    size_bytes: u64,
-    /// Allocated size in bytes; what the report prints, because it is what
-    /// deleting the item would free (`AGENTS.md` §2.7).
+    /// Allocated size in bytes: what the report prints and what every rule
+    /// here compares, because it is what deleting the item would free
+    /// (`AGENTS.md` §2.7). Apparent lengths never enter this module.
     allocated_bytes: u64,
     /// File or directory.
     kind: ItemKind,
-    /// Largest single item inside a directory (`0` for a file). Equal to the
-    /// largest direct child, so it decides dominance even when the children
-    /// themselves are not in the walk — a subtree served from the cache.
+    /// Largest single item inside a directory, in allocated bytes (`0` for a
+    /// file). Equal to the largest direct child, so it decides dominance even
+    /// when the children themselves are not in the walk — a subtree served
+    /// from the cache.
     largest_inside: u64,
 }
 
@@ -66,14 +66,12 @@ impl<'a> Children<'a> {
         let mut by_parent: HashMap<&'a Path, Vec<Candidate<'a>>> = HashMap::new();
         let dirs = walk.nodes.iter().map(|node| Candidate {
             path: node.path.as_path(),
-            size_bytes: node.size_bytes,
             allocated_bytes: node.allocated_bytes,
             kind: ItemKind::Directory,
             largest_inside: node.largest_item_bytes,
         });
         let files = walk.files.iter().map(|file| Candidate {
             path: file.path.as_path(),
-            size_bytes: file.size_bytes,
             allocated_bytes: file.allocated_bytes,
             kind: ItemKind::File,
             largest_inside: 0,
@@ -127,7 +125,7 @@ pub fn largest_items(walk: &WalkResult, top: usize, min_size: u64, volume_id: &V
 
 /// Report `entry` itself, or drill into it when one child dominates it.
 fn report<'a>(entry: Candidate<'a>, children: &Children<'a>, min_size: u64, out: &mut Vec<Candidate<'a>>) {
-    if entry.size_bytes < min_size {
+    if entry.allocated_bytes < min_size {
         return;
     }
     if entry.kind == ItemKind::File {
@@ -152,7 +150,8 @@ fn report<'a>(entry: Candidate<'a>, children: &Children<'a>, min_size: u64, out:
 /// saw, collected or not, so this answer is the same for a directory walked
 /// this run and for one served from the cache.
 fn is_dominated(entry: &Candidate<'_>) -> bool {
-    entry.size_bytes > 0 && entry.largest_inside.saturating_mul(DOMINANT_SHARE_DIVISOR) >= entry.size_bytes
+    entry.allocated_bytes > 0
+        && entry.largest_inside.saturating_mul(DOMINANT_SHARE_DIVISOR) >= entry.allocated_bytes
 }
 
 #[cfg(test)]

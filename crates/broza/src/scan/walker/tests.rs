@@ -195,8 +195,11 @@ fn a_depth_limit_hides_deep_nodes_without_losing_their_bytes() {
 
 #[test]
 fn files_are_collected_only_above_the_reporting_threshold() {
+    // The threshold is in allocated bytes, like every size the report prints;
+    // the fake allocates in 4 KiB units, so only the 5000-byte file (8192
+    // allocated) clears a 5000-byte threshold.
     let options = WalkOptions {
-        report_files_min_size: Some(2500),
+        report_files_min_size: Some(5000),
         report_files_top: KEEP_FILES,
         ..WalkOptions::default()
     };
@@ -204,7 +207,7 @@ fn files_are_collected_only_above_the_reporting_threshold() {
     let result = walk_sample(&sample(), &options);
 
     let collected: Vec<_> = result.files.iter().map(|file| (file.path.clone(), file.size_bytes)).collect();
-    assert_eq!(collected, vec![(PathBuf::from("/vol/a/sub/f3"), 3000), (PathBuf::from("/vol/b/big"), 5000)]);
+    assert_eq!(collected, vec![(PathBuf::from("/vol/b/big"), 5000)]);
 }
 
 #[test]
@@ -313,13 +316,15 @@ fn two_names_of_one_file_always_credit_the_same_directory() {
 }
 
 #[test]
-fn a_root_that_is_itself_excluded_reports_nothing() {
+fn a_root_that_is_itself_excluded_is_still_walked_when_named() {
+    // Naming an excluded folder is how the user asks to see inside it; the
+    // exclusion applies to what is met *below* a root, never to the root.
     let options = WalkOptions { exclude: vec![PathBuf::from("/vol")], ..WalkOptions::default() };
 
     let result = walk_sample(&sample(), &options);
 
-    assert!(result.nodes.is_empty(), "{:?}", result.paths());
-    assert!(result.files.is_empty());
+    assert!(!result.nodes.is_empty(), "the named root is walked");
+    assert_eq!(node(&result, "/vol").size_bytes, 11_000);
     assert!(result.errors.is_empty(), "an exclusion is a choice, not a failure");
 }
 

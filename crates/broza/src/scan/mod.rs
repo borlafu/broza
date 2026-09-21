@@ -34,7 +34,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::BrozaError;
 use crate::model::{Diagnostic, Volume};
-use crate::ports::Ports;
+use crate::ports::{FileOps, Ports};
 
 /// Where progress updates go while a scan runs.
 pub type ProgressSink<'a> = &'a (dyn Fn(ScanProgress) + Sync);
@@ -127,7 +127,7 @@ pub fn scan_paths(
 ) -> Result<Vec<VolumeScan>, BrozaError> {
     let targets = roots
         .iter()
-        .map(|root| resolve_root(root, mounts).map(|entry| (entry, root.as_path())))
+        .map(|root| resolve_root(root, mounts, ports.fs.as_ref()).map(|entry| (entry, root.as_path())))
         .collect::<Result<Vec<_>, BrozaError>>()?;
     let Some(sink) = progress else {
         return scan_each_root(&targets, request, ports, None);
@@ -139,9 +139,16 @@ pub fn scan_paths(
 }
 
 /// The mount entry a scan root belongs to, when Broza may walk it at all.
-fn resolve_root<'a>(root: &Path, mounts: &'a MountTable) -> Result<&'a MountEntry, BrozaError> {
+fn resolve_root<'a>(
+    root: &Path,
+    mounts: &'a MountTable,
+    fs: &dyn FileOps,
+) -> Result<&'a MountEntry, BrozaError> {
     if !root.is_absolute() {
         return Err(BrozaError::Usage(format!("{}: a scan path must be absolute", root.display())));
+    }
+    if !fs.exists(root) {
+        return Err(BrozaError::TargetNotFound(format!("{} does not exist", root.display())));
     }
     let entry = mounts
         .volume_for(root)
@@ -185,7 +192,7 @@ fn scan_rooted(
     let walked = walk_volume(root_path, request, ports, &store, reporter);
     save_store(store, store_path.as_deref(), &walked, ports)?;
     let root = walked.root().cloned().unwrap_or_else(|| unreadable_root(entry, root_path));
-    let mut warnings = walked.errors.clone();
+    let mut warnings = collapse_permission_warnings(walked.errors.clone(), request.verbose_warnings);
     warnings.extend(cache_key_warning(request, &entry.volume));
     warnings.extend(overcount_warning(&root, entry));
     Ok(VolumeScan {
@@ -219,6 +226,41 @@ fn cache_key_warning(request: &ScanRequest, volume: &Volume) -> Option<Diagnosti
     Some(Diagnostic { code: cache::BSD_ID_KEY_CODE.to_owned(), message, path: volume.mount_point.clone() })
 }
 
+/// How many refused paths a collapsed warning still names.
+const PERMISSION_EXAMPLES: usize = 5;
+/// Stable code of the one warning that stands in for many refused paths.
+pub const PERMISSION_SUMMARY_CODE: &str = "permission_denied_summary";
+
+/// Fold a flood of `permission_denied` warnings into one that counts them.
+///
+/// A Mac without Full Disk Access refuses hundreds of paths in one scan; one
+/// line per path buries every other warning. The summary keeps the first few
+/// paths as examples; `verbose` keeps them all.
+fn collapse_permission_warnings(warnings: Vec<Diagnostic>, verbose: bool) -> Vec<Diagnostic> {
+    let refused = warnings.iter().filter(|w| w.code == walker::PERMISSION_DENIED_CODE).count();
+    if verbose || refused <= PERMISSION_EXAMPLES {
+        return warnings;
+    }
+    let examples: Vec<String> = warnings
+        .iter()
+        .filter(|w| w.code == walker::PERMISSION_DENIED_CODE)
+        .take(PERMISSION_EXAMPLES)
+        .filter_map(|w| w.path.as_ref().map(|p| p.display().to_string()))
+        .collect();
+    let summary = Diagnostic {
+        code: PERMISSION_SUMMARY_CODE.to_owned(),
+        message: format!(
+            "{refused} locations could not be read (for example {}); their sizes are missing from \
+             the totals. Grant Full Disk Access to include them, or pass -v to list every path.",
+            examples.join(", ")
+        ),
+        path: None,
+    };
+    std::iter::once(summary)
+        .chain(warnings.into_iter().filter(|w| w.code != walker::PERMISSION_DENIED_CODE))
+        .collect()
+}
+
 /// Stable code of the warning raised when a walk measures more than the volume holds.
 pub const OVERCOUNT_CODE: &str = "size_exceeds_volume";
 
@@ -238,8 +280,9 @@ fn overcount_warning(root: &DirNode, entry: &MountEntry) -> Option<Diagnostic> {
     Some(Diagnostic {
         code: OVERCOUNT_CODE.to_owned(),
         message: format!(
-            "{} measures {} bytes but the volume reports {} in use: APFS clones are counted once \
-             per copy, so sizes inside are upper bounds until clone accounting lands",
+            "{} measures {} bytes but macOS reports {} in use on the volume. Each APFS clone is \
+             counted separately, so the sizes listed are upper bounds until clone accounting \
+             lands; the volume figure also includes snapshots and metadata a walk never sees.",
             entry.volume.name, root.allocated_bytes, used
         ),
         path: Some(entry.mount_point.clone()),

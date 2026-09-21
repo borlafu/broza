@@ -124,14 +124,16 @@ fn an_unreadable_directory_is_a_warning_and_the_rest_is_still_reported() {
 #[test]
 fn files_above_the_threshold_come_back_with_their_real_sizes() {
     let dir = sample_tree();
+    // The threshold is allocated bytes; APFS allocates 4 KiB blocks, so a
+    // 3000-byte file occupies 4096 and a 5000-byte one 8192.
     let options =
-        WalkOptions { report_files_min_size: Some(2500), report_files_top: 10, ..WalkOptions::default() };
+        WalkOptions { report_files_min_size: Some(5000), report_files_top: 10, ..WalkOptions::default() };
 
     let result = walk(dir.path(), &options, &StdFileOps);
 
     let collected: Vec<(PathBuf, u64)> =
         result.files.iter().map(|file| (file.path.clone(), file.size_bytes)).collect();
-    assert_eq!(collected, vec![(dir.path().join("a/sub/f3"), 3000), (dir.path().join("b/big"), 5000)]);
+    assert_eq!(collected, vec![(dir.path().join("b/big"), 5000)]);
 }
 
 #[test]

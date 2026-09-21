@@ -1,9 +1,11 @@
 //! What a scan was asked for, and what one volume's scan produced.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::model::{Diagnostic, LargestItem, VolumeId};
+use crate::safety::firmlink::firmlink_spellings;
 use crate::scan::aggregate::TreeView;
 use crate::scan::walker::DirNode;
 
@@ -28,7 +30,14 @@ pub const CLOUD_ROOTS: [&str; 2] = ["Library/Mobile Documents", "Library/CloudSt
 ///
 /// Naming one of them explicitly still scans it: this is a default, not a refusal.
 pub fn default_excludes(home: &Path) -> Vec<PathBuf> {
-    CLOUD_ROOTS.iter().map(|relative| home.join(relative)).collect()
+    // A whole-volume walk roots at `/System/Volumes/Data`, so the same folder
+    // is met in that spelling: exclude both, or the exclusion never fires.
+    CLOUD_ROOTS
+        .iter()
+        .flat_map(|relative| firmlink_spellings(&home.join(relative)))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// A `scan` as the caller asked for it.
@@ -55,6 +64,8 @@ pub struct ScanRequest {
     pub cache_root: Option<PathBuf>,
     /// How long a cached record stays usable.
     pub cache_ttl: Duration,
+    /// Keep every `permission_denied` warning instead of one counted summary (`-v`).
+    pub verbose_warnings: bool,
 }
 
 impl Default for ScanRequest {
@@ -69,6 +80,7 @@ impl Default for ScanRequest {
             no_cache: false,
             cache_root: None,
             cache_ttl: DEFAULT_CACHE_TTL,
+            verbose_warnings: false,
         }
     }
 }
@@ -126,13 +138,16 @@ mod tests {
     fn a_request_for_a_home_stays_out_of_the_cloud_providers_roots() {
         let request = ScanRequest::for_home(Path::new("/Users/dana"));
 
-        assert_eq!(
-            request.exclude,
-            vec![
-                PathBuf::from("/Users/dana/Library/Mobile Documents"),
-                PathBuf::from("/Users/dana/Library/CloudStorage"),
-            ]
-        );
+        // Both firmlink spellings: a whole-volume walk meets the folder as
+        // `/System/Volumes/Data/Users/...`, an explicit path as `/Users/...`.
+        for spelling in [
+            "/Users/dana/Library/Mobile Documents",
+            "/Users/dana/Library/CloudStorage",
+            "/System/Volumes/Data/Users/dana/Library/Mobile Documents",
+            "/System/Volumes/Data/Users/dana/Library/CloudStorage",
+        ] {
+            assert!(request.exclude.contains(&PathBuf::from(spelling)), "{spelling}: {:?}", request.exclude);
+        }
         assert_eq!(request.depth, ScanRequest::default().depth, "nothing else changes");
     }
 
@@ -141,9 +156,9 @@ mod tests {
         let mine = default_excludes(Path::new("/Users/dana"));
         let yours = default_excludes(Path::new("/Users/sam"));
 
-        assert!(mine.iter().all(|path| path.starts_with("/Users/dana")));
-        assert!(yours.iter().all(|path| path.starts_with("/Users/sam")));
-        assert_eq!(mine.len(), CLOUD_ROOTS.len());
+        assert!(mine.iter().all(|path| path.to_string_lossy().contains("/Users/dana/")));
+        assert!(yours.iter().all(|path| path.to_string_lossy().contains("/Users/sam/")));
+        assert_eq!(mine.len(), CLOUD_ROOTS.len() * 2, "two spellings each");
     }
 
     #[test]

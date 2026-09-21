@@ -87,6 +87,13 @@ pub fn dispatch(
                     && !inputs.runtime.ci
                     && !cli.global.quiet
                     && inputs.format == OutputFormat::Human,
+                verbose: cli.global.verbose > 0,
+                own_stores: inputs
+                    .runtime
+                    .home
+                    .as_deref()
+                    .map(|home| vec![home.join(".cache/broza"), inputs.effective.quarantine_dir(home)])
+                    .unwrap_or_default(),
             },
         }),
         Command::Explain(args) => commands::explain::run(&ExplainContext {

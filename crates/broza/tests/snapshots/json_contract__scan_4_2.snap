@@ -36,7 +36,7 @@ expression: value
     "largest_items": [
       {
         "kind": "directory",
-        "path": "/Users/x/Library/Developer",
+        "path": "/Users/x/Library/Developer/Xcode/DerivedData",
         "size_bytes": 312400000000,
         "volume_id": "disk3s5"
       }

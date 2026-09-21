@@ -1,8 +1,7 @@
 //! The in-memory tree behind [`FakeFileOps`](super::FakeFileOps).
 //!
-//! Paths are stored verbatim: the tree resolves no `.`, `..`, or trailing slash, so a
-//! test must use the same spelling it asked about. Canonicalization is the safety
-//! kernel's job, not the filesystem's.
+//! Paths are stored verbatim (no `.`, `..` or trailing-slash resolution): a test
+//! uses the spelling it asked about. Canonicalization is the safety kernel's job.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -38,6 +37,8 @@ pub(crate) struct Node {
     pub inode: u64,
     /// Apparent size, when the test wants one that does not match the contents.
     pub size_override: Option<u64>,
+    /// Allocated size a test pinned (sparse files), overriding the block arithmetic.
+    pub allocated_override: Option<u64>,
     /// Last modification time.
     pub modified: Option<Timestamp>,
     /// Last access time.
@@ -61,6 +62,9 @@ impl Node {
 
     /// Allocated size in bytes: whole allocation units for files, nothing else.
     pub fn allocated_bytes(&self) -> u64 {
+        if let Some(allocated) = self.allocated_override {
+            return allocated;
+        }
         match self.kind {
             NodeKind::File(_) => self.size_bytes().div_ceil(ALLOCATION_UNIT_BYTES) * ALLOCATION_UNIT_BYTES,
             NodeKind::Dir | NodeKind::Symlink(_) => 0,
@@ -155,8 +159,15 @@ impl Tree {
             |node| node.inode,
         );
         let now = default_time();
-        let node =
-            Node { kind, inode, size_override: None, modified: now, accessed: now, is_dataless: false };
+        let node = Node {
+            kind,
+            inode,
+            size_override: None,
+            allocated_override: None,
+            modified: now,
+            accessed: now,
+            is_dataless: false,
+        };
         self.nodes.insert(path.to_path_buf(), node);
     }
 
@@ -205,6 +216,13 @@ impl Tree {
     pub fn set_size(&mut self, path: &Path, size_bytes: u64) {
         if let Some(node) = self.nodes.get_mut(path) {
             node.size_override = Some(size_bytes);
+        }
+    }
+
+    /// Pin the allocated size of an existing entry (a sparse or cloned file).
+    pub fn set_allocated(&mut self, path: &Path, allocated_bytes: u64) {
+        if let Some(node) = self.nodes.get_mut(path) {
+            node.allocated_override = Some(allocated_bytes);
         }
     }
 

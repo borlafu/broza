@@ -63,6 +63,8 @@ fn no_folders() -> FolderSettings {
         cache_ttl: std::time::Duration::from_secs(60),
         no_cache: true,
         show_progress: false,
+        verbose: false,
+        own_stores: Vec::new(),
     }
 }
 
@@ -70,6 +72,7 @@ fn output(disks: Vec<Disk>) -> ScanOutput {
     ScanOutput {
         data: ScanReport { disks, largest_items: Vec::new() },
         trees: Vec::new(),
+        upper_bounds: false,
         tree_view: false,
         home: None,
         host: Host { macos_version: "26.1".into(), arch: "arm64".into() },
@@ -169,6 +172,8 @@ fn a_run_walks_the_writable_volumes_and_lists_their_largest_items() {
             cache_ttl: std::time::Duration::from_secs(60),
             no_cache: true,
             show_progress: false,
+            verbose: false,
+            own_stores: Vec::new(),
         },
     })
     .unwrap_or_else(|e| panic!("{e}"));

@@ -21,6 +21,9 @@ pub(super) struct Context<'a> {
     pub options: &'a WalkOptions<'a>,
     /// Device of the root; the walk never leaves it unless asked to.
     pub root_device: u64,
+    /// The exclusions that apply below the root: a prefix that covers the root
+    /// itself is dropped, because naming the root was asking to see inside it.
+    pub exclude: Vec<PathBuf>,
 }
 
 impl Context<'_> {
@@ -33,7 +36,7 @@ impl Context<'_> {
 
     /// `true` when `path` is under one of the excluded prefixes.
     pub fn is_excluded(&self, path: &Path) -> bool {
-        self.options.exclude.iter().any(|prefix| path.starts_with(prefix))
+        self.exclude.iter().any(|prefix| path.starts_with(prefix))
     }
 
     /// `true` when following this entry would leave the root's device.
@@ -80,6 +83,10 @@ pub(super) struct Totals {
     /// descendant directory's subtree. The cache uses it to know whether
     /// skipping this subtree could hide an entry the report would have shown.
     pub largest_item_bytes: u64,
+    /// Biggest file *directly* in this directory, allocated bytes. Children add
+    /// nothing here; it is what lets the largest item be recomputed once hard
+    /// links are settled, without knowing every file.
+    pub largest_direct_file_bytes: u64,
     /// `true` when something inside was not walked: an unreadable directory, a
     /// cloud placeholder, another device, an exclusion, a depth limit.
     ///
@@ -102,7 +109,8 @@ impl Totals {
             file_count: 1,
             dir_count: 0,
             dataless_count: 0,
-            largest_item_bytes: meta.size_bytes,
+            largest_item_bytes: meta.allocated_bytes,
+            largest_direct_file_bytes: meta.allocated_bytes,
             has_truncation: false,
         }
     }
@@ -116,6 +124,7 @@ impl Totals {
             dir_count: self.dir_count.saturating_add(other.dir_count),
             dataless_count: self.dataless_count.saturating_add(other.dataless_count),
             largest_item_bytes: self.largest_item_bytes.max(other.largest_item_bytes),
+            largest_direct_file_bytes: self.largest_direct_file_bytes.max(other.largest_direct_file_bytes),
             has_truncation: self.has_truncation || other.has_truncation,
         }
     }
@@ -138,7 +147,12 @@ impl Totals {
     /// whose child was about to be listed, and a warm scan would quietly lose
     /// that line.
     pub fn as_child(self) -> Self {
-        Self { largest_item_bytes: self.largest_item_bytes.max(self.size_bytes), ..self }
+        Self {
+            largest_item_bytes: self.largest_item_bytes.max(self.allocated_bytes),
+            // A child's files are not the parent's direct files.
+            largest_direct_file_bytes: 0,
+            ..self
+        }
     }
 }
 
@@ -155,6 +169,9 @@ pub(super) struct Partial {
     pub errors: Vec<Diagnostic>,
     /// Aggregate of the subtree.
     pub totals: Totals,
+    /// Per reported directory, the biggest file directly inside it: what the
+    /// largest item is recomputed from once hard links are settled.
+    pub direct_maxima: Vec<(PathBuf, u64)>,
 }
 
 impl Partial {
@@ -166,6 +183,7 @@ impl Partial {
             links: Vec::new(),
             errors: Vec::new(),
             totals: Totals::default(),
+            direct_maxima: Vec::new(),
         }
     }
 
@@ -174,12 +192,14 @@ impl Partial {
         self.nodes.append(&mut other.nodes);
         self.links.append(&mut other.links);
         self.errors.append(&mut other.errors);
+        self.direct_maxima.append(&mut other.direct_maxima);
         Self {
             files: self.files.merge(other.files),
             totals: self.totals.merge(other.totals),
             nodes: self.nodes,
             links: self.links,
             errors: self.errors,
+            direct_maxima: self.direct_maxima,
         }
     }
 }
@@ -224,7 +244,7 @@ impl Leaves {
                 allocated_bytes: meta.allocated_bytes,
             });
         }
-        if context.options.report_files_min_size.is_some_and(|min| meta.size_bytes >= min) {
+        if context.options.report_files_min_size.is_some_and(|min| meta.allocated_bytes >= min) {
             self.files = self.files.with(FileEntry {
                 path: path.to_path_buf(),
                 size_bytes: meta.size_bytes,

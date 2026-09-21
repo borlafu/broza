@@ -42,7 +42,8 @@ mod parts;
 mod top_files;
 mod types;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -61,18 +62,17 @@ use parts::{Children, Context, Leaves, Partial, Totals};
 /// Never fails: a root that cannot be read comes back as a single warning in
 /// [`WalkResult::errors`], and so does every unreadable subtree found on the way.
 pub fn walk(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -> WalkResult {
-    if options.exclude.iter().any(|prefix| root.starts_with(prefix)) {
-        // Being asked to walk what one was told to leave out is not an error;
-        // there is simply nothing to report.
-        return WalkResult::default();
-    }
+    // The root is never subject to the exclusions: naming an excluded folder
+    // explicitly is how the user asks to see inside it (`docs/cli-spec.md` §7).
+    // Exclusions apply to what is *met* below the root.
     let meta = match fs.metadata(root) {
         Ok(meta) => meta,
         Err(error) => {
             return WalkResult { errors: vec![parts::diagnostic(root, &error)], ..WalkResult::default() };
         }
     };
-    let context = Context { fs, options, root_device: meta.device };
+    let exclude = options.exclude.iter().filter(|prefix| !root.starts_with(prefix)).cloned().collect();
+    let context = Context { fs, options, root_device: meta.device, exclude };
     let partial = if meta.is_dir && !meta.is_symlink && !meta.is_dataless {
         walk_dir(root, &meta, 0, &context)
     } else {
@@ -112,12 +112,15 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     links.extend(below.links);
     let mut all_errors = errors;
     all_errors.extend(below.errors);
+    let mut direct_maxima = below.direct_maxima;
+    direct_maxima.push((identity.path.clone(), totals.largest_direct_file_bytes));
     Partial {
         nodes,
         files: leaves.files.merge(below.files),
         links,
         errors: all_errors,
         totals: totals.as_child(),
+        direct_maxima,
     }
 }
 
@@ -138,6 +141,7 @@ fn cached_dir(identity: &DirIdentity, record: &DirRecord, context: &Context<'_>)
         dir_count: record.dir_count,
         dataless_count: record.dataless_count,
         largest_item_bytes: record.largest_item_bytes,
+        largest_direct_file_bytes: 0,
         has_truncation: record.has_truncation,
     };
     context.report(record.file_count.saturating_add(record.dir_count).saturating_add(1), record.size_bytes);
@@ -168,21 +172,44 @@ fn walk_leaf_root(root: &Path, meta: &EntryMetadata, context: &Context<'_>) -> P
     Partial { files: leaves.files, totals: leaves.totals, ..Partial::empty(cap) }
 }
 
+/// Recompute every directory's largest item from what the settled tree holds.
+///
+/// The walk measures the largest item before hard links are settled, so a file
+/// counted under several names could leave an ancestor claiming more than it
+/// holds — and a warm scan, working from the settled records, would disagree
+/// with the cold one that produced them. Bottom-up, each directory's largest
+/// item becomes the biggest of its own files and of its children (a child's
+/// whole subtree is an item), never more than the directory itself. Directories
+/// served from the cache keep the value their record carries and only feed
+/// their parents.
+fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u64)]) -> Vec<DirNode> {
+    let direct: HashMap<&Path, u64> =
+        direct_maxima.iter().map(|(path, max)| (path.as_path(), *max)).collect();
+    let mut from_children: HashMap<PathBuf, u64> = HashMap::new();
+    nodes.sort_by_key(|node| std::cmp::Reverse(node.path.components().count()));
+    for node in &mut nodes {
+        if !node.from_cache {
+            let own = direct.get(node.path.as_path()).copied().unwrap_or(0);
+            let below = from_children.get(&node.path).copied().unwrap_or(0);
+            node.largest_item_bytes = own.max(below).min(node.allocated_bytes);
+        }
+        if let Some(parent) = node.path.parent() {
+            let as_item = node.largest_item_bytes.max(node.allocated_bytes);
+            let entry = from_children.entry(parent.to_path_buf()).or_insert(0);
+            *entry = (*entry).max(as_item);
+        }
+    }
+    nodes
+}
+
 /// Settle the hard links and put everything in a deterministic order.
 ///
 /// Parallel walks finish in whatever order the threads happen to take, and a report
 /// that changes between two identical scans is a report nobody can diff.
 fn sorted(partial: Partial) -> WalkResult {
-    let Partial { nodes, files, links, mut errors, .. } = partial;
-    let (mut nodes, mut files) = dedupe::settle_hard_links(nodes, files.into_vec(), links);
-    for node in &mut nodes {
-        // Nothing inside a subtree can be bigger than the subtree. The walk
-        // measures the largest item before hard links are settled, so a file
-        // counted under several names could leave a directory claiming more
-        // than it holds — and a warm scan, working from the settled record,
-        // would then disagree with the cold one that produced it.
-        node.largest_item_bytes = node.largest_item_bytes.min(node.size_bytes);
-    }
+    let Partial { nodes, files, links, mut errors, direct_maxima, .. } = partial;
+    let (nodes, mut files) = dedupe::settle_hard_links(nodes, files.into_vec(), links);
+    let mut nodes = recompute_largest_items(nodes, &direct_maxima);
     nodes.sort_by(|left, right| left.path.cmp(&right.path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));

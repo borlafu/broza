@@ -103,6 +103,11 @@ impl FakeFileOps {
         lock(&self.tree).set_size(path.as_ref(), size_bytes);
     }
 
+    /// Pin the allocated size of an existing entry, as a sparse file would report.
+    pub fn set_allocated(&self, path: impl AsRef<Path>, allocated_bytes: u64) {
+        lock(&self.tree).set_allocated(path.as_ref(), allocated_bytes);
+    }
+
     /// Refuse every access to `path` and everything below it.
     ///
     /// This is how a test reproduces a volume Broza has no Full Disk Access to:

@@ -24,7 +24,7 @@
       }]
     }],
     "largest_items": [{
-      "path": "/Users/x/Library/Developer",
+      "path": "/Users/x/Library/Developer/Xcode/DerivedData",
       "size_bytes": 312400000000,
       "kind": "directory",
       "volume_id": "disk3s5"

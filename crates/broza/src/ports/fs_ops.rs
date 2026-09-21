@@ -13,12 +13,18 @@
 //! ```
 //!
 //! Only `clean::executor` and `quarantine::{mover,restore,expiry}` may call those
-//! four methods, and only while holding an
+//! four methods **on the user's data**, and only while holding an
 //! [`Approved`](crate::safety::guard::Approved) token whose
 //! [`ApprovedItem`](crate::safety::guard::ApprovedItem) covers the path — after
 //! re-`lstat`ing it and comparing `(device, inode)`. Any other call site is a bug,
 //! and review rejects it; the trait is deliberately not split, because splitting it
 //! would only move the obligation somewhere less visible.
+//!
+//! One exception exists, and it is not about user data: `scan::cache::store` calls
+//! `create_dir_all` and `write_atomic` on Broza's own cache file under
+//! `~/.cache/broza/v1/` (`docs/cli-spec.md` §7). It never touches a path the user
+//! asked about, never deletes anything, and a lost cache costs one slow scan — so
+//! it needs no `Approved` token. Any *other* writer outside the list above is a bug.
 
 use std::path::{Path, PathBuf};
 

@@ -4,5 +4,9 @@
 //! `#[non_exhaustive]` and consumers ignore unknown fields.
 
 pub mod envelope;
+pub mod ids;
+pub mod units;
 
 pub use envelope::{Envelope, ErrorEntry, Host, Warning};
+pub use ids::{FindingId, SessionId, VolumeId};
+pub use units::{ByteSize, DurationSpec, DurationUnit};

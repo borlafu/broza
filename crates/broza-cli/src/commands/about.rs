@@ -102,7 +102,13 @@ mod tests {
     #[test]
     fn human_output_matches_the_specification_sketch() {
         let text = about().to_human();
-        assert!(text.starts_with("Broza 0.1.0  ·  MIT License  ·  JSON schema 1.1"), "{text}");
+        assert!(
+            text.starts_with(&format!(
+                "Broza {}  ·  MIT License  ·  JSON schema 1.1",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{text}"
+        );
         assert!(text.contains(HOMEPAGE), "{text}");
         assert!(text.contains(DONATE_URL), "{text}");
         assert_eq!(text.lines().count(), 4, "{text}");

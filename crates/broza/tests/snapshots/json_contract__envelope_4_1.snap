@@ -3,7 +3,7 @@ source: crates/broza/tests/json_contract.rs
 expression: value
 ---
 {
-  "broza_version": "0.1.0",
+  "broza_version": "0.2.0",
   "command": "suggest",
   "data": {},
   "errors": [],

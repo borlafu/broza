@@ -244,7 +244,9 @@ M3 progress:
 - [x] Donation gate (RF-17): `Outcome::reclaimed` marks an applied cleanup, `donate_display`
       gathers the six conditions, prints the two lines on stderr and rewrites the marker file
       (`~/.local/share/broza/state/donate_last_shown`); a marker that cannot be written is a `-v` note.
-- [ ] Release 0.2: README status, `cargo-dist` config, tag.
+- [x] Release 0.2: version 0.2.0, `CHANGELOG.md`, `dist-workspace.toml` (Apple Silicon only,
+      shell + Homebrew installers, tap `borlafu/homebrew-broza`), `.github/workflows/release.yml`.
+      Tag and publish when a remote exists.
 
 ### M3 — Green detectors and quarantine (release 0.2)
 

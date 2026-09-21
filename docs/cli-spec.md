@@ -470,7 +470,7 @@ Prints version, license, JSON schema version, platform support and the support l
 
 ```
 $ broza about
-Broza 0.1.0  ·  MIT License  ·  JSON schema 1.1
+Broza 0.2.0  ·  MIT License  ·  JSON schema 1.1
 Safe disk cleanup for macOS 26/27 on Apple Silicon.
 Source:   https://github.com/borlafu/broza
 Support:  https://ko-fi.com/broza  (donation, nothing in return)
@@ -529,7 +529,7 @@ Every `--json` output shares this structure:
 ```json
 {
   "schema_version": "1.1",
-  "broza_version": "0.1.0",
+  "broza_version": "0.2.0",
   "generated_at": "2026-09-21T10:36:08Z",
   "command": "suggest",
   "host": {

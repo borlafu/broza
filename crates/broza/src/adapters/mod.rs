@@ -81,9 +81,11 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use super::system_ports;
-    use crate::ports::Answer;
-    use crate::testing::{FakeDisks, FakePrompter, FakeSnapshots, FakeSpace};
+    use super::diskutil::DISKUTIL;
+    use super::{system_disk_ports, system_ports, system_ports_with_disks};
+    use crate::model::VolumeId;
+    use crate::ports::{Answer, ProcessOutput};
+    use crate::testing::{FakeDisks, FakePrompter, FakeRunner, FakeSnapshots, FakeSpace};
 
     #[test]
     fn the_bundle_runs_real_commands_and_reads_the_real_filesystem() {
@@ -102,5 +104,45 @@ mod tests {
         assert_eq!(out.stdout_text(), "wired\n");
         assert!(ports.fs.exists(Path::new("/usr/bin")));
         assert!(ports.clock.now() > jiff::Timestamp::UNIX_EPOCH);
+    }
+
+    /// The smallest machine `diskutil` can describe: one disk, no containers.
+    const EMPTY_LIST: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>AllDisksAndPartitions</key><array/></dict></plist>"#;
+    /// An `apfs list` output without a single container.
+    const NO_CONTAINERS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Containers</key><array/></dict></plist>"#;
+    /// A volume without snapshots.
+    const NO_SNAPSHOTS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Snapshots</key><array/></dict></plist>"#;
+
+    fn ok(stdout: &[u8]) -> ProcessOutput {
+        ProcessOutput { success: true, code: Some(0), stdout: stdout.to_vec(), stderr: Vec::new() }
+    }
+
+    #[test]
+    fn the_disk_ports_run_every_command_through_the_one_runner_they_were_given() {
+        let runner = Arc::new(
+            FakeRunner::new()
+                .with_output(DISKUTIL, &["list", "-plist"], ok(EMPTY_LIST))
+                .with_output(DISKUTIL, &["apfs", "list", "-plist"], ok(NO_CONTAINERS))
+                .with_output(DISKUTIL, &["apfs", "listSnapshots", "-plist", "disk3s5"], ok(NO_SNAPSHOTS)),
+        );
+        let volume: VolumeId = "disk3s5".parse().unwrap_or_else(|e| panic!("{e}"));
+
+        let (disks, space, snapshots) = system_disk_ports(Arc::clone(&runner));
+
+        assert!(disks.enumerate().unwrap_or_else(|e| panic!("{e}")).is_empty());
+        assert!(snapshots.list(&volume).unwrap_or_else(|e| panic!("{e}")).is_empty());
+        assert_eq!(runner.calls().len(), 3, "both adapters recorded on the same runner");
+        assert!(space.purgeable_bytes(Path::new("/nowhere/at/all")).is_err());
+    }
+
+    #[test]
+    fn the_full_bundle_needs_nothing_but_a_prompter() {
+        let ports = system_ports_with_disks(Arc::new(FakePrompter::always(Answer::No)));
+
+        assert!(ports.fs.exists(Path::new("/usr/bin")));
+        assert_eq!(format!("{ports:?}"), "Ports { .. }");
     }
 }

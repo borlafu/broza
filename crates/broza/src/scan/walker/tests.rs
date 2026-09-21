@@ -4,7 +4,6 @@
 //! grew past what one file should hold.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use jiff::Timestamp;
 
@@ -17,7 +16,7 @@ use crate::testing::{FakeFileOps, FixedClock};
 const KEEP_FILES: usize = 10;
 
 /// A cache record standing for a subtree of `size_bytes`.
-fn record(identity: &DirIdentity, size_bytes: u64) -> DirRecord {
+pub(super) fn record(identity: &DirIdentity, size_bytes: u64) -> DirRecord {
     DirRecord {
         key: CacheKey::of(identity).unwrap_or_else(|| panic!("no key for {identity:?}")),
         size_bytes,
@@ -34,13 +33,13 @@ fn record(identity: &DirIdentity, size_bytes: u64) -> DirRecord {
 const SAMPLE: [(&str, u64); 4] =
     [("/vol/a/f1", 1000), ("/vol/a/f2", 2000), ("/vol/a/sub/f3", 3000), ("/vol/b/big", 5000)];
 
-fn sample() -> FakeFileOps {
+pub(super) fn sample() -> FakeFileOps {
     SAMPLE
         .iter()
         .fold(FakeFileOps::new().with_root("/vol", 1), |fs, (path, size)| fs.with_sized_file(path, *size))
 }
 
-fn node<'a>(result: &'a WalkResult, path: &str) -> &'a DirNode {
+pub(super) fn node<'a>(result: &'a WalkResult, path: &str) -> &'a DirNode {
     result
         .nodes
         .iter()
@@ -48,7 +47,7 @@ fn node<'a>(result: &'a WalkResult, path: &str) -> &'a DirNode {
         .unwrap_or_else(|| panic!("no node for {path} in {:?}", result.paths()))
 }
 
-fn walk_sample(fs: &FakeFileOps, options: &WalkOptions<'_>) -> WalkResult {
+pub(super) fn walk_sample(fs: &FakeFileOps, options: &WalkOptions<'_>) -> WalkResult {
     walk(Path::new("/vol"), options, fs)
 }
 
@@ -190,66 +189,6 @@ fn a_depth_limit_hides_deep_nodes_without_losing_their_bytes() {
     assert_eq!(node(&result, "/vol/a").size_bytes, 6000);
     assert!(node(&result, "/vol/a").children_truncated);
     assert!(!node(&result, "/vol").children_truncated);
-}
-
-#[test]
-fn a_cache_hit_reuses_the_whole_aggregate_and_does_not_descend() {
-    let seen: Mutex<Vec<DirIdentity>> = Mutex::new(Vec::new());
-    let hook = |identity: &DirIdentity| {
-        seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(identity.clone());
-        (identity.path == Path::new("/vol/a")).then(|| record(identity, 777))
-    };
-    let options = WalkOptions { skip_hook: Some(&hook), ..WalkOptions::default() };
-
-    let result = walk_sample(&sample(), &options);
-
-    assert_eq!(result.paths(), vec![PathBuf::from("/vol"), PathBuf::from("/vol/a"), PathBuf::from("/vol/b")]);
-    let cached = node(&result, "/vol/a");
-    assert_eq!(cached.size_bytes, 777);
-    assert_eq!(cached.allocated_bytes, 1554);
-    assert_eq!(cached.file_count, 3);
-    assert_eq!(cached.dir_count, 1);
-    assert!(!cached.children_truncated, "a cached subtree was measured, not truncated");
-    let root = node(&result, "/vol");
-    assert_eq!(root.size_bytes, 5777);
-    assert_eq!(root.file_count, 4, "three cached files plus the one under /vol/b");
-    assert_eq!(root.dir_count, 3, "a and b, plus the one inside a");
-    let asked = seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    assert!(asked.iter().all(|identity| identity.device == 1));
-    assert!(asked.iter().any(|identity| identity.path == Path::new("/vol/a")));
-}
-
-#[test]
-fn the_cache_is_never_asked_about_the_root_itself() {
-    let hook = |identity: &DirIdentity| Some(record(identity, 1));
-    let options = WalkOptions { skip_hook: Some(&hook), ..WalkOptions::default() };
-
-    let result = walk_sample(&sample(), &options);
-
-    // Answering at the root would report a volume with no contents at all.
-    assert_eq!(node(&result, "/vol").size_bytes, 2, "both children came from the cache");
-    assert_eq!(result.paths().len(), 3);
-}
-
-#[test]
-fn the_cache_can_be_held_off_until_a_deeper_level() {
-    let hook = |identity: &DirIdentity| Some(record(identity, 1));
-    let options = WalkOptions { skip_hook: Some(&hook), cache_from_depth: 2, ..WalkOptions::default() };
-
-    let result = walk_sample(&sample(), &options);
-
-    assert_eq!(
-        result.paths(),
-        vec![
-            PathBuf::from("/vol"),
-            PathBuf::from("/vol/a"),
-            PathBuf::from("/vol/a/sub"),
-            PathBuf::from("/vol/b"),
-        ],
-        "the first two levels are walked whatever the cache says"
-    );
-    assert_eq!(node(&result, "/vol/a/sub").size_bytes, 1, "the third level is cached");
-    assert_eq!(node(&result, "/vol/a").size_bytes, 3001, "its own files, plus the cached subtree");
 }
 
 #[test]

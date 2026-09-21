@@ -41,13 +41,13 @@ const BENCH_DEPTH: usize = 2;
 /// arrives. A hundredth of the disk is noise; more would mean the warm walk
 /// measured something else.
 const DRIFT_DIVISOR: u64 = 100;
-/// Entries per second a cold walk must manage.
+/// Entries per second a cold walk must manage (`docs/cli-spec.md` §7).
 ///
-/// The budget of `docs/cli-spec.md` §7 is under ten seconds for the boot disk.
-/// A Data volume of a few hundred gigabytes runs to a few million entries, so
-/// this is the rate that makes that budget reachable — stated as a rate so the
-/// assertion means the same thing on a bigger or smaller home directory.
-const MIN_ENTRIES_PER_SECOND: f64 = 40_000.0;
+/// The budget is a rate rather than a wall clock because every entry costs at
+/// least one `stat`-equivalent: ten seconds is only a target once you say for
+/// how many entries. A hundred thousand a second is ten seconds for a
+/// one-million-entry Data volume ([ADR 0006](../../../docs/adr/0006-scan-performance-budget.md)).
+const MIN_ENTRIES_PER_SECOND: f64 = 100_000.0;
 /// Separator of the `BENCH_EXCLUDE` list.
 const EXCLUDE_SEPARATOR: char = ':';
 

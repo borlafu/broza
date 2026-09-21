@@ -178,4 +178,6 @@ fn sorted(partial: Partial) -> WalkResult {
 }
 
 #[cfg(test)]
+mod cache_tests;
+#[cfg(test)]
 mod tests;

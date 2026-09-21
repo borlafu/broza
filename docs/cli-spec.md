@@ -913,10 +913,18 @@ If `tmutil` refuses a snapshot deletion for lack of privileges, the item is mark
 
 | Scenario | Target |
 |---|---|
-| `scan` of the boot disk, cold cache | < 10 s |
+| `scan` of the boot disk, cold cache | ≥ 100 000 entries/s (≈ 10 s for a 1 M-entry Data volume) |
 | `scan` with warm cache | < 1 s |
 | Full `suggest` | < 15 s |
 | First visible result on screen | < 500 ms |
+
+The cold budget is a rate because "ten seconds" says nothing without a disk
+size: every entry costs at least one `stat`-equivalent, and a 3.7 M-entry home
+directory cannot fit into ten seconds on any hardware Broza supports. A hundred
+thousand entries per second is the rate that makes the original ten-second
+figure true for the volume it was written for
+([ADR 0006](adr/0006-scan-performance-budget.md)); `scripts/bench-scan.sh`
+measures it.
 
 Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<volume_uuid>/`, one store per volume, keyed by `(dev, inode, mtime)` of each directory and expired by the configured `cache-ttl`. A directory whose key is unchanged is served from cache and its subtree is skipped. The store carries a versioned magic header; any decode error is reported as exit `9` (`CACHE_ERROR`) with the hint to retry with `--no-cache`, and Broza never attempts to "repair" a corrupt cache silently. `--no-cache` bypasses reads but still writes a fresh cache. A volume with no UUID falls back to its BSD name, with a `cache_keyed_by_bsd_id` warning. A subtree is only served from the cache when nothing inside it reaches `--min-size` — so a warm scan reports exactly what a cold one would, and `--min-size 0` disables the reuse entirely.
 
@@ -993,3 +1001,5 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
   `--min-size`, `--tree`) are accepted and raise the warning `folder_scan_pending`, which
   disappears once the walker is wired.
 - §4.2 and §7 (M2 scanner, unreleased, so no bump): APFS clone accounting stated as best-effort and deferred to post-1.0 (PRD RF-02), cloud placeholders (`SF_DATALESS`) documented as 0 bytes and never listed; new optional `volumes[].uuid`, which the scan cache is filed under, with a `cache_keyed_by_bsd_id` warning when it is missing; cloud-provider roots excluded from the walk by default; §7 states that a subtree is only reused from the cache when nothing in it reaches `--min-size`, which `--min-size 0` therefore disables.
+- §7 (M2, unreleased): the cold-scan budget is restated as a throughput — at least 100 000 entries per second, which is the ten seconds the table always named, for a one-million-entry volume ([ADR 0006](adr/0006-scan-performance-budget.md)). The warm and first-result budgets are unchanged.
+- §3.1 (M2, unreleased): the usage bar never rounds a container that is in use down to an empty bar, nor one with room left up to a full one; a 99.8% full container keeps its last free cell.

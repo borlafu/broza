@@ -1,0 +1,69 @@
+---
+source: crates/broza-cli/tests/help_snapshots.rs
+expression: help_for(args)
+---
+Execute the cleanup. Dry run by default
+
+Usage: broza clean [OPTIONS]
+
+Options:
+      --apply
+          Required to modify the disk. Without it, only simulates
+
+      --category <ID>
+          Categories to clean. Repeatable or comma-separated. Mandatory unless --risk is used
+
+      --risk <LEVEL>
+          Clean everything at this risk level or lower
+
+          Possible values:
+          - green: Safe to reclaim
+          - amber: Review before reclaiming
+          - red:   Information only; Broza never deletes these
+
+      --purge
+          Irreversible deletion, bypassing quarantine. Requires typing PURGE
+
+  -y, --yes
+          Assume "yes" on confirmations. Never allowed together with --purge
+
+      --max-size <SIZE>
+          Safety cap: abort if more than this amount would be removed
+
+      --exclude <GLOB>
+          Glob patterns to exclude. Repeatable; merged with `exclude` from the configuration
+
+      --unused-after <DURATION>
+          Threshold for unused-apps
+          
+          [default: 1y]
+
+      --json
+          JSON output on stdout. Disables color, progress and interactivity
+
+      --csv
+          Flat CSV output on stdout. Only on tabular commands
+
+  -o, --output <FILE>
+          Write output to a file instead of stdout
+
+      --no-color
+          Disable ANSI color. Automatic without a TTY or with `NO_COLOR` set
+
+  -q, --quiet
+          Errors only. Silences progress and non-critical warnings
+
+  -v, --verbose...
+          More diagnostic detail on stderr. Repeatable
+
+      --config <FILE>
+          Alternative configuration file [default: ~/.config/broza/config.toml]
+
+      --profile <NAME>
+          Configuration profile to apply
+
+      --no-cache
+          Ignore the scan cache and force a full analysis
+
+  -h, --help
+          Print help (see a summary with '-h')

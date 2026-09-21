@@ -222,10 +222,25 @@ impl Tree {
         }
     }
 
-    /// Link count: the unix convention for directories, one for everything else.
+    /// Add `link` as another name for the entry at `existing`.
+    ///
+    /// Both names share one inode, as `link(2)` does. Directories cannot be hard
+    /// linked, and a missing source is a no-op; both report `false`.
+    pub fn link(&mut self, existing: &Path, link: &Path) -> bool {
+        let Some(node) = self.nodes.get(existing).cloned() else { return false };
+        if matches!(node.kind, NodeKind::Dir) {
+            return false;
+        }
+        self.nodes.insert(link.to_path_buf(), node);
+        true
+    }
+
+    /// Link count: the unix convention for directories, names sharing an inode
+    /// for everything else.
     pub fn link_count(&self, path: &Path) -> u64 {
         if !self.is_dir(path) {
-            return 1;
+            let Some(node) = self.get(path) else { return 1 };
+            return self.nodes.values().filter(|other| other.inode == node.inode).count() as u64;
         }
         let subdirectories = self.children(path).iter().filter(|child| self.is_dir(child)).count() as u64;
         EMPTY_DIR_LINK_COUNT + subdirectories

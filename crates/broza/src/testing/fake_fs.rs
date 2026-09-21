@@ -74,6 +74,33 @@ impl FakeFileOps {
         self.add_node(path.as_ref(), NodeKind::Symlink(target.as_ref().to_path_buf()));
     }
 
+    /// Add `link` as a second name for the file at `existing`, sharing its inode.
+    ///
+    /// # Panics
+    ///
+    /// When `existing` is missing or is a directory, as the builders do for every
+    /// tree the real filesystem could not hold.
+    pub fn add_hard_link(&self, existing: impl AsRef<Path>, link: impl AsRef<Path>) {
+        let (existing, link) = (existing.as_ref(), link.as_ref());
+        let mut tree = lock(&self.tree);
+        if let Some(parent) = link.parent() {
+            expect_buildable(parent, tree.create_dir_all(parent));
+        }
+        assert!(
+            tree.link(existing, link),
+            "cannot hard link {} to {}: not an existing non-directory entry",
+            link.display(),
+            existing.display()
+        );
+    }
+
+    /// Builder form of [`FakeFileOps::add_hard_link`].
+    #[must_use]
+    pub fn with_hard_link(self, existing: impl AsRef<Path>, link: impl AsRef<Path>) -> Self {
+        self.add_hard_link(existing, link);
+        self
+    }
+
     /// Add a directory and every missing parent.
     pub fn add_dir(&self, path: impl AsRef<Path>) {
         let path = path.as_ref();
@@ -366,6 +393,25 @@ mod tests {
         assert!(matches!(fs.remove_tree(Path::new("/a/secret/f")), Err(BrozaError::PermissionDenied { .. })));
         assert!(!fs.exists(Path::new("/a/secret/f")));
         assert!(fs.exists(Path::new("/a")));
+    }
+
+    #[test]
+    fn a_hard_link_is_a_second_name_for_one_inode() {
+        let fs =
+            FakeFileOps::new().with_root("/a", 1).with_file("/a/f", b"1234").with_hard_link("/a/f", "/a/g");
+
+        let original = fs.metadata(Path::new("/a/f")).unwrap_or_else(|e| panic!("{e}"));
+        let link = fs.metadata(Path::new("/a/g")).unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(original.inode, link.inode);
+        assert_eq!(original.link_count, 2);
+        assert_eq!(link.size_bytes, 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot hard link")]
+    fn the_builder_refuses_to_hard_link_a_directory() {
+        let _ = FakeFileOps::new().with_root("/a", 1).with_dir("/a/d").with_hard_link("/a/d", "/a/e");
     }
 
     #[test]

@@ -49,6 +49,9 @@ pub const EXDEV: i32 = 18;
 /// Creates a symlink at the first path pointing at the second.
 type SymlinkFn = Box<dyn Fn(&Path, &Path)>;
 
+/// Creates a hard link at the second path for the entry at the first.
+type HardLinkFn = Box<dyn Fn(&Path, &Path)>;
+
 /// One implementation under test, rooted in its own scratch tree.
 pub struct Subject {
     /// Name reported when an assertion fails.
@@ -59,6 +62,8 @@ pub struct Subject {
     pub root: PathBuf,
     /// Creates a symlink, which [`FileOps`] deliberately cannot do.
     symlink: SymlinkFn,
+    /// Creates a hard link, which [`FileOps`] deliberately cannot do.
+    hard_link: HardLinkFn,
     /// Kept alive so the temporary directory outlives the test.
     _tempdir: Option<TempDir>,
 }
@@ -79,6 +84,11 @@ impl Subject {
     /// Create a symlink at `relative` pointing at `target`.
     pub fn symlink(&self, relative: &str, target: &str) {
         (self.symlink)(&self.path(relative), Path::new(target));
+    }
+
+    /// Give the entry at `relative` a second name at `link`.
+    pub fn hard_link(&self, relative: &str, link: &str) {
+        (self.hard_link)(&self.path(relative), &self.path(link));
     }
 
     /// Fail the test unless `result` is the errno the real filesystem returns.
@@ -131,11 +141,13 @@ pub fn fake_subject() -> Subject {
         FakeFileOps::new().with_root(FAKE_ROOT, FAKE_DEVICE).with_root(FAKE_OTHER_ROOT, FAKE_OTHER_DEVICE),
     );
     let for_symlink = Arc::clone(&fake);
+    let for_link = Arc::clone(&fake);
     Subject {
         name: "FakeFileOps",
         fs: Arc::clone(&fake) as Arc<dyn FileOps>,
         root: PathBuf::from(FAKE_ROOT),
         symlink: Box::new(move |path, target| for_symlink.add_symlink(path, target)),
+        hard_link: Box::new(move |existing, link| for_link.add_hard_link(existing, link)),
         _tempdir: None,
     }
 }
@@ -151,6 +163,10 @@ pub fn std_subject() -> Subject {
         symlink: Box::new(|path, target| {
             std::os::unix::fs::symlink(target, path)
                 .unwrap_or_else(|e| panic!("symlink {}: {e}", path.display()));
+        }),
+        hard_link: Box::new(|existing, link| {
+            std::fs::hard_link(existing, link)
+                .unwrap_or_else(|e| panic!("hard link {}: {e}", link.display()));
         }),
         _tempdir: Some(tempdir),
     }

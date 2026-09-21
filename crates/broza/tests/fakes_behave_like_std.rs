@@ -35,6 +35,21 @@ fn metadata_of_a_file_reports_a_plain_regular_file() {
 }
 
 #[test]
+fn a_hard_link_shares_the_inode_and_raises_the_link_count() {
+    for subject in subjects() {
+        subject.hard_link(FILE, "second-name");
+
+        let original = subject.metadata(FILE);
+        let link = subject.metadata("second-name");
+
+        assert_eq!(original.inode, link.inode, "{}", subject.name);
+        assert_eq!(original.link_count, 2, "{}", subject.name);
+        assert_eq!(link.link_count, 2, "{}", subject.name);
+        assert_eq!(link.size_bytes, original.size_bytes, "{}", subject.name);
+    }
+}
+
+#[test]
 fn metadata_of_a_directory_reports_a_directory() {
     for subject in subjects() {
         let meta = subject.metadata("dir");

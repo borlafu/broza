@@ -13,12 +13,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use broza::BrozaError;
-use broza::model::{ExpiredSession, ItemStatus, Risk, SessionId, Warning};
-use broza::ports::{Answer, ConfirmationRequest, Ports};
+use broza::model::{ExpiredSession, ItemStatus, SessionId, Warning};
+use broza::ports::{Answer, Ports};
 use broza::quarantine::{expire, expired_sessions};
 use broza::scan::MountTable;
 
-use crate::commands::store::{session_dirs_token, session_sizes};
+use crate::commands::store::{removal_request, session_dirs_token, session_sizes};
 
 /// Warning code: sessions are past their retention and a dry run left them.
 pub const EXPIRY_PENDING_CODE: &str = "expiry_pending";
@@ -90,7 +90,7 @@ pub fn expire_due(
     if due.is_empty() {
         return Ok(Expiry::default());
     }
-    if !yes && ports.prompter.confirm(&expiry_request(&due)) != Answer::Yes {
+    if !yes && ports.prompter.confirm(&removal_request(&due, "expire")) != Answer::Yes {
         return Ok(Expiry { warnings: vec![declined(&due, root)], ..Expiry::default() });
     }
     let ids: Vec<SessionId> = due.iter().map(|(id, _)| id.clone()).collect();
@@ -122,17 +122,6 @@ pub fn expire_due(
 fn sessions_due(ports: &Ports, root: &Path, ttl: Duration) -> Result<Vec<(SessionId, u64)>, BrozaError> {
     let ids = expired_sessions(root, ports.fs.as_ref(), ports.clock.as_ref(), ttl)?;
     session_sizes(ports, root, &ids)
-}
-
-/// The green-level prompt for the expiry step.
-fn expiry_request(due: &[(SessionId, u64)]) -> ConfirmationRequest {
-    ConfirmationRequest {
-        max_risk: Risk::Green,
-        item_count: due.len(),
-        total_bytes: due.iter().map(|(_, bytes)| *bytes).fold(0, u64::saturating_add),
-        irreversible: true,
-        preview: due.iter().map(|(id, _)| format!("expire quarantine session {id}")).collect(),
-    }
 }
 
 fn declined(due: &[(SessionId, u64)], root: &Path) -> Warning {

@@ -225,15 +225,10 @@ pub(crate) fn item_errors(plan: &CleanPlan) -> Vec<Warning> {
         .filter(|item| item.status.is_unsuccessful())
         .map(|item| Warning {
             code: item.error.as_ref().map_or_else(|| "item_not_moved".to_owned(), ToString::to_string),
-            message: format!("{} was not moved ({})", item.path.display(), status_token(&item.status)),
+            message: format!("{} was not moved ({})", item.path.display(), item.status.as_str()),
             path: Some(item.path.clone()),
         })
         .collect()
-}
-
-/// The contract's spelling of a status (`skipped`, `failed`), never the Rust one.
-fn status_token(status: &broza::model::ItemStatus) -> String {
-    serde_json::to_value(status).ok().and_then(|v| v.as_str().map(ToOwned::to_owned)).unwrap_or_default()
 }
 
 /// The `broza clean …` line that reproduces this run's selection, for the
@@ -287,5 +282,8 @@ pub(crate) fn render(
         policy: context.policy,
     };
     let outcome = Outcome::ok(output.render(context.format)?).with_warnings(warnings).with_code(code);
-    Ok(reclaimed.map_or_else(|| outcome.clone(), |figures| outcome.clone().with_reclaimed(figures)))
+    Ok(match reclaimed {
+        Some(figures) => outcome.with_reclaimed(figures),
+        None => outcome,
+    })
 }

@@ -96,6 +96,7 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
         &donate_display::Run { outcome: &outcome, global: &cli.global, runtime, donate_prompt, format },
         fs.as_ref(),
         clock.as_ref(),
+        &mut std::io::stderr(),
     );
     Ok(outcome.code)
 }

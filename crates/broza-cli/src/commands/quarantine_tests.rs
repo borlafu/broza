@@ -241,3 +241,92 @@ fn purge_needs_the_typed_word_refuses_unknown_sessions_and_then_removes_them() {
             .is_some_and(Vec::is_empty)
     );
 }
+
+#[test]
+fn purge_without_a_terminal_exits_seven_and_removes_nothing() {
+    let (ports, handles) = world();
+    let session = cleaned(&ports);
+    let config = Config::default();
+    handles.prompter.queue(&[Answer::NoTty]);
+
+    let error = quarantine(
+        &QuarantineCommand::Purge { sessions: vec![session.clone()], all: false, yes: false },
+        &store_context(&ports, &config, OutputFormat::Human),
+    )
+    .expect_err("no terminal");
+
+    assert_eq!(ExitCode::from(&error), ExitCode::ConfirmationRequired);
+    let listed = json(&list(&ports, OutputFormat::Json).unwrap_or_else(|e| panic!("{e}")));
+    assert_eq!(listed["data"]["sessions"][0]["id"], session.as_str(), "still there");
+}
+
+#[test]
+fn a_restore_naming_an_unknown_session_beside_a_known_one_writes_nothing_and_exits_four() {
+    let (ports, handles) = world();
+    let session = cleaned(&ports);
+    let config = Config::default();
+
+    let error = restore(
+        &restore_args(&[&session, "cln_20200101000000_zzzz"]),
+        &store_context(&ports, &config, OutputFormat::Json),
+    )
+    .expect_err("unknown session");
+
+    assert_eq!(ExitCode::from(&error), ExitCode::TargetNotFound);
+    assert!(!handles.fs.exists(Path::new(CACHE_FILE)), "the known session was not restored either");
+}
+
+#[test]
+fn a_restore_naming_an_item_the_session_does_not_hold_exits_four() {
+    let (ports, handles) = world();
+    let session = cleaned(&ports);
+    let config = Config::default();
+
+    let error = restore(
+        &restore_args(&[&format!("{session}/9999")]),
+        &store_context(&ports, &config, OutputFormat::Json),
+    )
+    .expect_err("unknown item");
+
+    assert_eq!(ExitCode::from(&error), ExitCode::TargetNotFound);
+    assert!(error.to_string().contains("9999"), "{error}");
+    assert!(!handles.fs.exists(Path::new(CACHE_FILE)));
+}
+
+#[test]
+fn restore_all_reports_a_session_it_cannot_read_and_still_restores_the_rest() {
+    let (ports, handles) = world();
+    cleaned(&ports);
+    let config = Config::default();
+    let corrupt = format!("{}/cln_20200101000000_bbbb", crate::commands::test_world::STORE);
+    handles.fs.add_file(format!("{corrupt}/manifest.json"), b"{ not json");
+
+    let outcome = restore(
+        &RestoreArgs { all: true, ..restore_args(&[]) },
+        &store_context(&ports, &config, OutputFormat::Json),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    let value = json(&outcome);
+    assert_eq!(outcome.code, ExitCode::PartialFailure, "{value}");
+    assert!(value["errors"].as_array().is_some_and(|errors| !errors.is_empty()), "{value}");
+    assert_eq!(
+        handles.fs.read(Path::new(CACHE_FILE)).ok().as_deref(),
+        Some(CACHE_CONTENTS),
+        "the good session came back"
+    );
+}
+
+#[test]
+fn restore_all_on_an_empty_store_says_so() {
+    let (ports, _) = world();
+
+    let outcome = restore(
+        &RestoreArgs { all: true, ..restore_args(&[]) },
+        &store_context(&ports, &Config::default(), OutputFormat::Human),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+
+    assert_eq!(outcome.rendered, "Quarantine is empty.");
+    assert_eq!(outcome.code, ExitCode::Ok);
+}

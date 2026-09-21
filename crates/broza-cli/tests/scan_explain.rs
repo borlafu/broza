@@ -306,13 +306,15 @@ fn quarantine_list_json_matches_its_snapshot() {
 }
 
 #[test]
-fn restoring_an_unknown_session_exits_four_and_purging_without_a_terminal_exits_seven() {
+fn restoring_an_unknown_session_exits_four_and_purging_an_empty_store_is_not_an_error() {
     let (restore_code, restore_err) = failure_of(&["restore", "--session", "cln_20200101000000_zzzz"]);
     let (purge_code, purge_err) = failure_of(&["quarantine", "purge", "--all"]);
+    let (mixed_code, mixed_err) = failure_of(&["restore", "cln_20200101000000_zzzz", "--all"]);
 
     assert_eq!(restore_code, Some(4), "{restore_err}");
     // An empty store has nothing to purge, which is not an error.
     assert_eq!(purge_code, Some(0), "{purge_err}");
+    assert_eq!(mixed_code, Some(2), "{mixed_err}");
 }
 
 #[test]

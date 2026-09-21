@@ -58,7 +58,7 @@ pub fn restore_session(
     fs: &dyn FileOps,
     to: Option<&Path>,
 ) -> Result<Reported<RestoreReport>, BrozaError> {
-    restore_all(sources, targets, &[Wanted::whole(session)], root, fs, to)
+    restore_wanted(sources, targets, &[Wanted::whole(session)], root, fs, to)
 }
 
 /// Restore the named items, which may belong to several sessions.
@@ -75,7 +75,7 @@ pub fn restore_entries(
     fs: &dyn FileOps,
     to: Option<&Path>,
 ) -> Result<Reported<RestoreReport>, BrozaError> {
-    restore_all(sources, targets, &group_by_session(ids)?, root, fs, to)
+    restore_wanted(sources, targets, &group_by_session(ids)?, root, fs, to)
 }
 
 /// What restoring one session produced.
@@ -92,7 +92,15 @@ struct Restored {
 }
 
 /// Restore each wanted session in turn and merge the reports.
-fn restore_all(
+///
+/// A session that cannot be read or is busy is an `errors[]` line and the run
+/// goes on; the caller is expected to have resolved unknown identifiers before
+/// anything is written (`docs/cli-spec.md` §3.5).
+///
+/// # Errors
+///
+/// See [`restore_session`].
+pub fn restore_wanted(
     sources: &Approved<QuarantineWrite>,
     targets: &Approved<RestoreWrite>,
     wanted: &[Wanted],

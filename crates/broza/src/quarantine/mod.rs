@@ -68,6 +68,6 @@ pub use measure::measure_dir_bytes;
 pub use mover::{MoveOutcome, MoveRequest, quarantine_items};
 pub use reconcile::{Reconciled, reconcile, stored_items};
 pub use report::Reported;
-pub use restore::{restore_entries, restore_session};
-pub use selection::{entry_destinations, session_destinations};
+pub use restore::{restore_entries, restore_session, restore_wanted};
+pub use selection::{Wanted, destinations, entry_destinations, group_by_session, session_destinations};
 pub use store::{StoreContents, StoredSession};

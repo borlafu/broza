@@ -2,9 +2,7 @@
 
 use std::fmt::Write as _;
 
-use broza::model::{
-    ItemStatus, OperationKind, QuarantineList, QuarantineSession, ReclaimReport, SessionState, Warning,
-};
+use broza::model::{ItemStatus, OperationKind, QuarantineList, QuarantineSession, ReclaimReport, Warning};
 use jiff::Timestamp;
 
 use crate::output::format_bytes;
@@ -26,7 +24,7 @@ pub fn render_list(list: &QuarantineList) -> String {
         return "Quarantine is empty.".to_owned();
     }
     let mut text = format!(
-        "{:<SESSION_WIDTH$}{:<DATE_WIDTH$}{:<DATE_WIDTH$}{:>SIZE_WIDTH$}  {:>ITEMS_WIDTH$}  State",
+        "{:<SESSION_WIDTH$}{:<DATE_WIDTH$}{:<DATE_WIDTH$}{:<SIZE_WIDTH$} {:<ITEMS_WIDTH$}State",
         "Session", "Created", "Expires", "Size", "Items"
     );
     for session in &list.sessions {
@@ -43,13 +41,13 @@ pub fn render_list(list: &QuarantineList) -> String {
 fn render_session(text: &mut String, session: &QuarantineSession) {
     let _ignored = write!(
         text,
-        "\n{:<SESSION_WIDTH$}{:<DATE_WIDTH$}{:<DATE_WIDTH$}{:>SIZE_WIDTH$}  {:>ITEMS_WIDTH$}  {}",
+        "\n{:<SESSION_WIDTH$}{:<DATE_WIDTH$}{:<DATE_WIDTH$}{:<SIZE_WIDTH$} {:<ITEMS_WIDTH$}{}",
         session.id.to_string(),
         date(session.created_at),
         date(session.expires_at),
         format_bytes(session.total_bytes),
         session.item_count,
-        state_word(&session.state)
+        session.state.as_str()
     );
 }
 
@@ -58,17 +56,7 @@ fn date(at: Timestamp) -> String {
     at.strftime(DATE_LAYOUT).to_string()
 }
 
-fn state_word(state: &SessionState) -> &'static str {
-    match state {
-        SessionState::InProgress => "in_progress",
-        SessionState::Complete => "complete",
-        SessionState::Restoring => "restoring",
-        SessionState::Expired => "expired",
-        _ => "unknown",
-    }
-}
-
-/// `quarantine expire|purge`: what was removed and what was not.
+/// `quarantine expire|purge`: what was removed and what was not (`docs/cli-spec.md` §3.8).
 pub fn render_reclaim(report: &ReclaimReport, errors: &[Warning]) -> String {
     let verb = match report.operation {
         OperationKind::Expire => "expire",
@@ -77,12 +65,7 @@ pub fn render_reclaim(report: &ReclaimReport, errors: &[Warning]) -> String {
     if report.sessions.is_empty() {
         return format!("Nothing to {verb}.");
     }
-    let removed = report.sessions.iter().filter(|s| s.status == ItemStatus::Purged).count();
-    let mut text = format!(
-        "{}d {removed} session(s): {} freed.",
-        capitalise(verb),
-        format_bytes(report.reclaimed_bytes)
-    );
+    let mut text = format!("Freed {}.", format_bytes(report.reclaimed_bytes));
     for session in &report.sessions {
         let _ignored = write!(
             text,
@@ -106,11 +89,6 @@ fn status_word(status: &ItemStatus) -> &'static str {
         ItemStatus::Failed => "failed",
         _ => "other",
     }
-}
-
-fn capitalise(word: &str) -> String {
-    let mut chars = word.chars();
-    chars.next().map_or_else(String::new, |first| first.to_uppercase().collect::<String>() + chars.as_str())
 }
 
 #[cfg(test)]
@@ -139,8 +117,7 @@ mod tests {
         let text = render_list(&list);
 
         assert!(text.starts_with("Session                    Created              Expires"), "{text}");
-        assert!(text.contains("cln_20260917103608_a1b2    2026-09-17 10:36     2026-10-17 10:36"), "{text}");
-        assert!(text.contains("138.2 GB     1284  complete"), "{text}");
+        assert!(text.contains("cln_20260917103608_a1b2    2026-09-17 10:36     2026-10-17 10:36     138.2 GB   1284   complete"), "{text}");
         assert!(
             text.ends_with(
                 "Pending in quarantine:  150.6 GB   (12.4 GB past TTL — run: broza quarantine expire)"
@@ -162,7 +139,7 @@ mod tests {
 
         assert_eq!(render_reclaim(&empty, &[]), "Nothing to expire.");
         let text = render_reclaim(&full, &[]);
-        assert!(text.starts_with("Purged 1 session(s): 138.2 GB freed."), "{text}");
+        assert!(text.starts_with("Freed 138.2 GB."), "{text}");
         assert!(text.contains("removed       138.2 GB  cln_20260917103608_a1b2  (1284 item(s))"), "{text}");
     }
 }

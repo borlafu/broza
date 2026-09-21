@@ -13,7 +13,6 @@ use jiff::Timestamp;
 
 use crate::commands::scan::folders::FolderSettings;
 use crate::commands::store::StoreContext;
-use crate::output::ColorPolicy;
 
 /// The home of the fake machine, in the Data-volume spelling.
 pub const HOME: &str = "/System/Volumes/Data/Users/dana";
@@ -112,7 +111,6 @@ pub fn store_context<'a>(
         host: host(),
         generated_at: now(),
         warnings: Vec::new(),
-        policy: ColorPolicy::Never,
         format,
         home: Some(PathBuf::from(HOME)),
         uid_temp_dirs: Vec::new(),

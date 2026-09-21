@@ -45,7 +45,7 @@ fn list(context: &StoreContext<'_>) -> Result<Outcome, BrozaError> {
     let rows = listed.data.sessions.iter().map(list_row);
     let table = std::iter::once(csv::row(&LIST_CSV_HEADER)).chain(rows).collect::<Vec<_>>().join("\n");
     finish(
-        context,
+        context.format,
         &StoreOutput {
             command: "quarantine list",
             human: human::render_list(&listed.data),
@@ -67,13 +67,8 @@ fn list_row(session: &broza::model::QuarantineSession) -> String {
         session.expires_at.to_string(),
         session.total_bytes.to_string(),
         session.item_count.to_string(),
-        state_token(&session.state),
+        session.state.as_str().to_owned(),
     ])
-}
-
-/// The serde token of a session state.
-fn state_token(state: &broza::model::SessionState) -> String {
-    serde_json::to_value(state).ok().and_then(|v| v.as_str().map(ToOwned::to_owned)).unwrap_or_default()
 }
 
 /// `quarantine expire [--yes]`: remove what is past its retention.
@@ -127,7 +122,7 @@ fn reclaimed(
 ) -> Result<Outcome, BrozaError> {
     let freed = Reclaimed { quarantined_bytes: 0, freed_bytes: data.reclaimed_bytes };
     let outcome = finish(
-        context,
+        context.format,
         &StoreOutput {
             command: match data.operation {
                 OperationKind::Expire => "quarantine expire",

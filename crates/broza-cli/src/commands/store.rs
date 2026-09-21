@@ -2,10 +2,10 @@
 //! store is, the mount table the guard needs, the tokens that authorise writing
 //! inside the store, and the two prompts (`y/N`, typed `PURGE`).
 //!
-//! Every write inside the store goes through an
+//! Every removal inside the store goes through an
 //! [`Approved<QuarantineWrite>`](broza::safety::guard::QuarantineWrite) issued
-//! here from the paths the manifests name; nothing in the CLI builds one any
-//! other way.
+//! here over the session directories; `restore` builds its own over exactly the
+//! stored items it puts back. Nothing in the CLI builds one any other way.
 
 use std::path::{Path, PathBuf};
 
@@ -30,27 +30,6 @@ pub fn mounts(ports: &Ports) -> Result<(MountTable, Vec<Warning>), BrozaError> {
     Ok((mount.table, [enumeration.warnings, mount.warnings].concat()))
 }
 
-/// A token covering every stored item of `ids` and their session directories.
-///
-/// # Errors
-///
-/// [`BrozaError::TargetNotFound`] (exit `4`) for a session the store does not
-/// hold, plus whatever the guard refuses about the store.
-pub fn session_write_token(
-    ports: &Ports,
-    root: &Path,
-    mounts: &MountTable,
-    ids: &[SessionId],
-) -> Result<Approved<QuarantineWrite>, BrozaError> {
-    let mut paths = Vec::new();
-    for id in ids {
-        let found = store::read_one(ports.fs.as_ref(), root, id)?;
-        paths.extend(found.session().entries.iter().filter_map(|entry| entry.stored_path.clone()));
-        paths.push(layout::session_dir(root, id));
-    }
-    Ok(approve_quarantine_write(&paths, root, mounts, ports.fs.as_ref())?)
-}
-
 /// A token covering only the session directories of `ids`, for removing them.
 ///
 /// `expire` and `purge` re-check the session directory before `remove_tree`
@@ -60,7 +39,7 @@ pub fn session_write_token(
 ///
 /// # Errors
 ///
-/// See [`session_write_token`].
+/// Whatever the guard refuses about the store or a session directory.
 pub fn session_dirs_token(
     ports: &Ports,
     root: &Path,
@@ -127,7 +106,8 @@ fn answer_to_result(answer: Answer) -> Result<(), BrozaError> {
 }
 
 /// The prompt for removing sessions: green-level words, irreversible flag set.
-fn removal_request(sessions: &[(SessionId, u64)], what: &str) -> ConfirmationRequest {
+/// Shared with the expiry step of `clean` so the two prompts cannot drift.
+pub(crate) fn removal_request(sessions: &[(SessionId, u64)], what: &str) -> ConfirmationRequest {
     ConfirmationRequest {
         max_risk: Risk::Green,
         item_count: sessions.len(),
@@ -165,8 +145,6 @@ pub struct StoreContext<'a> {
     pub generated_at: jiff::Timestamp,
     /// Warnings raised before the command ran.
     pub warnings: Vec<Warning>,
-    /// Whether the human rendering may use colour.
-    pub policy: crate::output::ColorPolicy,
     /// Format the caller asked for.
     pub format: crate::output::OutputFormat,
     /// The user's home, for the store location and the restore allowlist.
@@ -243,11 +221,11 @@ impl<T: serde::Serialize + Clone> crate::output::Renderer for StoreOutput<T> {
 ///
 /// When the payload cannot be serialised.
 pub fn finish<T: serde::Serialize + Clone>(
-    context: &StoreContext<'_>,
+    format: crate::output::OutputFormat,
     output: &StoreOutput<T>,
 ) -> Result<crate::commands::Outcome, BrozaError> {
     use crate::output::Renderer as _;
     let code = if output.errors.is_empty() { broza::ExitCode::Ok } else { broza::ExitCode::PartialFailure };
     let warnings = output.warnings.clone();
-    Ok(crate::commands::Outcome::ok(output.render(context.format)?).with_warnings(warnings).with_code(code))
+    Ok(crate::commands::Outcome::ok(output.render(format)?).with_warnings(warnings).with_code(code))
 }

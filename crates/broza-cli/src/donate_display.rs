@@ -5,7 +5,6 @@
 //! the two lines on stderr and rewrites the marker. A marker that cannot be
 //! written is mentioned at `-v` and never changes the exit code.
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use broza::ports::{Clock, FileOps};
@@ -31,8 +30,10 @@ pub struct Run<'a> {
     pub format: OutputFormat,
 }
 
-/// Show the message when every condition holds, and remember having done so.
-pub fn maybe_show(run: &Run<'_>, fs: &dyn FileOps, clock: &dyn Clock) {
+/// Show the message on `stderr` when every condition holds, and remember
+/// having done so. The writer is a parameter so tests can assert the lines
+/// themselves, not only the marker.
+pub fn maybe_show(run: &Run<'_>, fs: &dyn FileOps, clock: &dyn Clock, stderr: &mut dyn std::io::Write) {
     let Some(reclaimed) = run.outcome.reclaimed.as_ref() else { return };
     let Some(home) = run.runtime.home.as_deref() else { return };
     let marker = marker_path(home);
@@ -54,7 +55,6 @@ pub fn maybe_show(run: &Run<'_>, fs: &dyn FileOps, clock: &dyn Clock) {
     if !should_show_donation(&input) {
         return;
     }
-    let mut stderr = std::io::stderr();
     for line in message(reclaimed) {
         let _ignored = writeln!(stderr, "{line}");
     }
@@ -65,7 +65,8 @@ pub fn maybe_show(run: &Run<'_>, fs: &dyn FileOps, clock: &dyn Clock) {
     }
 }
 
-/// The two lines of §5, with a zero figure's parenthesis left out.
+/// The two lines of §5. Pending and freed bytes are named apart; a figure that
+/// is zero is left out of the parenthesis, never the other one with it.
 pub fn message(reclaimed: &Reclaimed) -> [String; 2] {
     let parts: Vec<String> =
         [(reclaimed.quarantined_bytes, "in quarantine"), (reclaimed.freed_bytes, "freed")]
@@ -73,7 +74,7 @@ pub fn message(reclaimed: &Reclaimed) -> [String; 2] {
             .filter(|(bytes, _)| *bytes > 0)
             .map(|(bytes, what)| format!("{} {what}", format_bytes(bytes)))
             .collect();
-    let detail = if parts.len() == 2 { format!(" ({})", parts.join(", ")) } else { String::new() };
+    let detail = if parts.is_empty() { String::new() } else { format!(" ({})", parts.join(", ")) };
     [
         format!(
             "  Broza made {} reclaimable{detail}. It is free and open source software.",
@@ -118,6 +119,7 @@ mod tests {
     fn the_message_reports_pending_and_freed_bytes_separately_and_drops_a_zero() {
         let both = message(&reclaimed(121_400_000_000, 16_800_000_000));
         let pending_only = message(&reclaimed(94_200_000_000, 0));
+        let freed_only = message(&reclaimed(0, 12_400_000_000));
 
         assert_eq!(
             both[0],
@@ -127,7 +129,14 @@ mod tests {
             both[1],
             "  If it helped you: https://ko-fi.com/broza   ·   Silence this: broza config set donate-prompt false"
         );
-        assert_eq!(pending_only[0], "  Broza made 94.2 GB reclaimable. It is free and open source software.");
+        assert_eq!(
+            pending_only[0],
+            "  Broza made 94.2 GB reclaimable (94.2 GB in quarantine). It is free and open source software."
+        );
+        assert_eq!(
+            freed_only[0],
+            "  Broza made 12.4 GB reclaimable (12.4 GB freed). It is free and open source software."
+        );
     }
 
     fn interactive(home: &str) -> RuntimeEnv {
@@ -167,14 +176,18 @@ mod tests {
             format: OutputFormat::Human,
         };
 
-        maybe_show(&run, &fs, &clock);
+        let mut shown = Vec::new();
+        maybe_show(&run, &fs, &clock, &mut shown);
         let marker = marker_path(Path::new("/Users/dana"));
         let first = fs.read(&marker).unwrap();
         clock.advance(std::time::Duration::from_secs(3600));
-        maybe_show(&run, &fs, &clock);
+        let mut again = Vec::new();
+        maybe_show(&run, &fs, &clock, &mut again);
 
         assert_eq!(String::from_utf8(first.clone()).unwrap(), "2026-09-21T10:36:08Z");
         assert_eq!(fs.read(&marker).unwrap(), first, "shown once, remembered once");
+        assert_eq!(String::from_utf8(shown).unwrap().lines().count(), 2, "exactly the two lines of §5");
+        assert!(again.is_empty(), "nothing within the cooldown");
     }
 
     #[test]
@@ -185,6 +198,7 @@ mod tests {
         let quiet_env = RuntimeEnv::for_tests(PathBuf::from("/Users/dana"));
         let applied = Outcome::ok(String::new()).with_reclaimed(reclaimed(10, 0));
         let interactive_env = interactive("/Users/dana");
+        let mut out = Vec::new();
 
         maybe_show(
             &Run {
@@ -196,6 +210,7 @@ mod tests {
             },
             &fs,
             &clock,
+            &mut out,
         );
         maybe_show(
             &Run {
@@ -207,6 +222,7 @@ mod tests {
             },
             &fs,
             &clock,
+            &mut out,
         );
         maybe_show(
             &Run {
@@ -218,8 +234,10 @@ mod tests {
             },
             &fs,
             &clock,
+            &mut out,
         );
 
+        assert!(out.is_empty(), "no line for a dry run, a non-interactive run or --json: {out:?}");
         assert!(!fs.exists(&marker_path(Path::new("/Users/dana"))));
     }
 }

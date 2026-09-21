@@ -137,7 +137,6 @@ fn store_context<'a>(inputs: &'a Inputs<'a>, generated_at: jiff::Timestamp) -> S
         host: inputs.host.clone(),
         generated_at,
         warnings: inputs.warnings.clone(),
-        policy: inputs.policy,
         format: inputs.format,
         home: walked_home(inputs.runtime),
         uid_temp_dirs: inputs.runtime.uid_temp_dirs(),

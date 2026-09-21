@@ -16,11 +16,11 @@ pub struct RestoreArgs {
     pub list: bool,
 
     /// Restore everything currently in quarantine.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["ids", "session"])]
     pub all: bool,
 
     /// Restore one complete cleanup session.
-    #[arg(long, value_name = "ID")]
+    #[arg(long, value_name = "ID", conflicts_with = "ids")]
     pub session: Option<String>,
 
     /// Restore to an alternative location instead of the original path.

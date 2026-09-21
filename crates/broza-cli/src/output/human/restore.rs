@@ -41,6 +41,9 @@ pub fn render_list(report: &RestoreReport, home: &Path) -> String {
 
 /// `restore`: what went back, what did not and why.
 pub fn render_restore(report: &RestoreReport, errors: &[Warning], home: &Path) -> String {
+    if report.sessions.is_empty() && errors.is_empty() {
+        return "Quarantine is empty.".to_owned();
+    }
     let restored = report
         .sessions
         .iter()

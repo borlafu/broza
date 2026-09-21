@@ -58,6 +58,21 @@ pub struct DirRecord {
 }
 
 impl DirRecord {
+    /// `true` when both records say the same thing about the same directory.
+    ///
+    /// Everything but *when* it was measured: two walks of an unchanged
+    /// directory agree on every number, and a store whose records only differ
+    /// in their timestamp is not worth rewriting.
+    pub fn measures_the_same_as(&self, other: &Self) -> bool {
+        self.key == other.key
+            && self.size_bytes == other.size_bytes
+            && self.allocated_bytes == other.allocated_bytes
+            && self.file_count == other.file_count
+            && self.dir_count == other.dir_count
+            && self.dataless_count == other.dataless_count
+            && self.largest_item_bytes == other.largest_item_bytes
+    }
+
     /// Record of a freshly walked directory.
     ///
     /// `None` for a node that must not be cached: one with no usable

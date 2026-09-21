@@ -18,7 +18,11 @@ pub const NO_CACHE_HINT: &str = "retry with --no-cache";
 const HEADER_LEN: usize = MAGIC.len() + 1;
 
 /// Encode `records` into the bytes of a store file.
-pub fn encode(records: &[DirRecord]) -> Result<Vec<u8>, BrozaError> {
+///
+/// Takes references so the caller does not have to copy a whole store's worth
+/// of records to hand them over; `postcard` writes a `&T` exactly as it writes
+/// a `T`, so the file is the same either way.
+pub fn encode(records: &[&DirRecord]) -> Result<Vec<u8>, BrozaError> {
     let body = postcard::to_stdvec(records).map_err(|error| cache_error(&format!("encode: {error}")))?;
     let mut bytes = Vec::with_capacity(HEADER_LEN + body.len());
     bytes.extend_from_slice(MAGIC);
@@ -98,7 +102,8 @@ mod tests {
     fn records_survive_a_round_trip() {
         let records = vec![record(1), record(2)];
 
-        let encoded = ok(encode(&records));
+        let borrowed: Vec<&DirRecord> = records.iter().collect();
+        let encoded = ok(encode(&borrowed));
         let decoded = ok(decode(&encoded));
 
         assert_eq!(decoded, records);
@@ -106,7 +111,7 @@ mod tests {
 
     #[test]
     fn the_file_starts_with_the_magic_and_the_version() {
-        let encoded = ok(encode(&[record(1)]));
+        let encoded = ok(encode(&[&record(1)]));
 
         assert_eq!(&encoded[..MAGIC.len()], MAGIC);
         assert_eq!(encoded[MAGIC.len()], STORE_VERSION);
@@ -129,7 +134,7 @@ mod tests {
 
     #[test]
     fn a_version_from_the_future_is_refused() {
-        let mut bytes = ok(encode(&[record(1)]));
+        let mut bytes = ok(encode(&[&record(1)]));
         bytes[MAGIC.len()] = STORE_VERSION + 1;
 
         let message = expect_cache_error(&bytes);
@@ -139,7 +144,7 @@ mod tests {
 
     #[test]
     fn a_truncated_file_is_refused() {
-        let bytes = ok(encode(&[record(1), record(2)]));
+        let bytes = ok(encode(&[&record(1), &record(2)]));
 
         let message = expect_cache_error(&bytes[..bytes.len() - 3]);
 
@@ -154,7 +159,7 @@ mod tests {
 
     #[test]
     fn trailing_rubbish_after_the_records_is_refused() {
-        let mut bytes = ok(encode(&[record(1)]));
+        let mut bytes = ok(encode(&[&record(1)]));
         bytes.extend_from_slice(b"and then some");
 
         let _ = expect_cache_error(&bytes);

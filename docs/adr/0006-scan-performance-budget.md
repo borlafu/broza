@@ -20,7 +20,18 @@ because they block on the network rather than on the disk):
 | cold, one `getattrlistbulk` per directory | 3 668 920 | 23.7 s | ≈ 155 000 entries/s |
 | cold, same build, second machine state | 3 668 544 | 26.5 s | ≈ 138 000 entries/s |
 | cold, as measured in review | ≈ 3.7 M | ≈ 29 s | ≈ 127 000 entries/s |
-| warm (cache), same tree | 3 668 920 | 0.23 s | — |
+| warm (cache), same tree | 3 694 333 | 0.54 s | — |
+
+The store itself is not where the warm time goes: 14.9 MB holding 270 220
+records takes **0.08 s to encode and write and 0.06 s to read back and decode**.
+An earlier report of a 2.9 s warm scan blamed that decode; re-measuring on an
+idle machine showed the slow runs were contaminated by a concurrent build, and
+the real cost is the walk of the directories the cache may not answer for.
+Indexing the store or sharding it per top-level directory would therefore buy
+about a tenth of a second, and is not planned. What a warm scan still pays for
+is walking every directory above `--depth` and every subtree holding something
+large enough to be listed; that set, not the codec, is the thing to shrink if
+the warm budget is ever missed.
 
 That home directory is 648 GB and 3.7 million entries: several times the size
 of the "512 GB Data volume" the milestone had in mind, and no amount of
@@ -50,3 +61,7 @@ assumption about disk size.
 - If Apple ever exposes a cheaper bulk interface, or if Broza learns to skip
   whole subtrees from volume metadata, the rate is the number to revisit — not
   the ten seconds.
+- A store is only rewritten when a record was added, changed or expired: a warm
+  scan that measures the same numbers again leaves the file alone, which also
+  means a reused measurement expires when the TTL says rather than being
+  renewed by every scan that read it.

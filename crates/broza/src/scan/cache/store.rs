@@ -35,7 +35,7 @@ pub fn store_path(cache_root: &Path, volume: &str) -> PathBuf {
 }
 
 /// The cached directory aggregates of one volume.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct CacheStore {
     /// Records by key.
     records: HashMap<CacheKey, DirRecord>,
@@ -43,6 +43,23 @@ pub struct CacheStore {
     opened_at: Timestamp,
     /// How long a record stays usable.
     ttl: SignedDuration,
+    /// Whether anything worth writing has happened since it was loaded.
+    ///
+    /// A warm scan re-measures directories and gets the same numbers back; the
+    /// only difference is the instant of the measurement, and rewriting
+    /// fifteen megabytes to record that would cost more than the walk it just
+    /// saved. So a record that measures the same is left alone, timestamp and
+    /// all — which also means a reused measurement expires on the schedule the
+    /// TTL promises rather than being renewed for ever.
+    changed: bool,
+}
+
+/// Two stores are the same when they hold the same records under the same
+/// clock. Whether one of them still has to be written is not part of that.
+impl PartialEq for CacheStore {
+    fn eq(&self, other: &Self) -> bool {
+        self.records == other.records && self.opened_at == other.opened_at && self.ttl == other.ttl
+    }
 }
 
 impl CacheStore {
@@ -64,7 +81,10 @@ impl CacheStore {
             Err(error) => return Err(BrozaError::Cache(format!("{error}; {NO_CACHE_HINT}"))),
         };
         let records = decode(&bytes)?;
-        Ok(Self { records: records.into_iter().map(|record| (record.key, record)).collect(), ..empty })
+        // Anything already expired has to go the next time this is written.
+        let expired = records.iter().any(|record| !empty.is_fresh(record));
+        let records = records.into_iter().map(|record| (record.key, record)).collect();
+        Ok(Self { records, changed: expired, ..empty })
     }
 
     /// An empty store that answers against `clock` and `ttl`.
@@ -73,6 +93,7 @@ impl CacheStore {
             records: HashMap::new(),
             opened_at: clock.now(),
             ttl: SignedDuration::try_from(ttl).unwrap_or(SignedDuration::MAX),
+            changed: false,
         }
     }
 
@@ -85,11 +106,23 @@ impl CacheStore {
     }
 
     /// A copy of the store with `record` added, replacing any record of its key.
+    ///
+    /// A record that measures exactly what the stored one measures changes
+    /// nothing, and is dropped rather than kept: see
+    /// [`CacheStore::has_changes`] and [`CacheStore::save`].
     #[must_use]
     pub fn with_record(self, record: DirRecord) -> Self {
+        if self.records.get(&record.key).is_some_and(|stored| stored.measures_the_same_as(&record)) {
+            return self;
+        }
         let mut records = self.records;
         records.insert(record.key, record);
-        Self { records, ..self }
+        Self { records, changed: true, ..self }
+    }
+
+    /// `true` when this store holds something the file on disk does not.
+    pub fn has_changes(&self) -> bool {
+        self.changed
     }
 
     /// A copy of the store with every record of `records` added.
@@ -124,11 +157,14 @@ impl CacheStore {
 
     /// Every record still worth keeping, in a stable order.
     ///
-    /// Expired records are dropped here rather than lived with: a store that
-    /// only ever grew would keep every directory the disk has ever had.
-    fn sorted_records(&self) -> Vec<DirRecord> {
-        let mut records: Vec<DirRecord> =
-            self.records.values().filter(|record| self.is_fresh(record)).cloned().collect();
+    /// Borrowed, not cloned: a large volume has hundreds of thousands of them,
+    /// and they are about to be serialised once and dropped.
+    ///
+    /// Expired records are left out rather than lived with: a store that only
+    /// ever grew would keep every directory the disk has ever had.
+    fn sorted_records(&self) -> Vec<&DirRecord> {
+        let mut records: Vec<&DirRecord> =
+            self.records.values().filter(|record| self.is_fresh(record)).collect();
         records.sort_by_key(|record| (record.key.device, record.key.inode, record.key.mtime_ns));
         records
     }
@@ -216,6 +252,60 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
 
         assert!(fs.exists(&path()));
+    }
+
+    #[test]
+    fn a_store_nothing_happened_to_is_not_written_again() {
+        let fs = fs();
+        let clock = FixedClock::default();
+        let saved = load(&fs, &clock).with_record(record(1, clock.now()));
+        saved.save(&path(), &fs).unwrap_or_else(|e| panic!("{e}"));
+        let written = fs.read(&path()).unwrap_or_else(|e| panic!("{e}"));
+
+        // A second scan measures the same directory again: same numbers, a
+        // later instant. Rewriting tens of megabytes for that is the slowest
+        // part of a warm scan and buys nothing.
+        clock.advance(Duration::from_secs(60));
+        let reloaded = load(&fs, &clock).with_record(record(1, clock.now()));
+
+        assert!(!reloaded.has_changes(), "nothing worth writing happened");
+        reloaded.save(&path(), &fs).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(fs.read(&path()).unwrap_or_else(|e| panic!("{e}")), written, "the file is untouched");
+    }
+
+    #[test]
+    fn a_directory_that_really_changed_is_written() {
+        let fs = fs();
+        let clock = FixedClock::default();
+        load(&fs, &clock)
+            .with_record(record(1, clock.now()))
+            .save(&path(), &fs)
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let grown = DirRecord { size_bytes: 9999, ..record(1, clock.now()) };
+        let reloaded = load(&fs, &clock).with_record(grown);
+
+        assert!(reloaded.has_changes());
+        reloaded.save(&path(), &fs).unwrap_or_else(|e| panic!("{e}"));
+        let after = load(&fs, &clock);
+        assert_eq!(after.lookup(&key(1)).map(|record| record.size_bytes), Some(9999));
+    }
+
+    #[test]
+    fn a_store_holding_something_expired_is_written_even_if_nothing_else_happened() {
+        let fs = fs();
+        let clock = FixedClock::at(at("2026-01-01T00:00:00Z"));
+        load(&fs, &clock)
+            .with_record(record(1, clock.now()))
+            .save(&path(), &fs)
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        clock.set(at("2026-01-03T00:00:00Z"));
+        let stale = load(&fs, &clock);
+
+        assert!(stale.has_changes(), "the expired record has to be dropped from the file");
+        stale.save(&path(), &fs).unwrap_or_else(|e| panic!("{e}"));
+        assert!(load(&fs, &clock).is_empty());
     }
 
     #[test]

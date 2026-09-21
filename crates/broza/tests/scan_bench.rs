@@ -122,14 +122,26 @@ fn bench_home_walk() {
     let now = clock.now();
     let records = cold_result.nodes.iter().filter_map(|node| DirRecord::of(node, now));
     let saved = CacheStore::empty(&clock, BENCH_TTL).with_records(records);
+    let started = Instant::now();
     saved.save(&store_path, &StdFileOps).unwrap_or_else(|e| panic!("save: {e}"));
+    let encode = started.elapsed();
     let store_bytes = std::fs::metadata(&store_path).map_or_else(|e| panic!("stat: {e}"), |meta| meta.len());
 
+    // Reading the store back is its own cost, and on a big volume it is the
+    // slowest part of a warm scan: it is timed on its own so that the walk and
+    // the cache can be told apart.
+    let started = Instant::now();
     let loaded =
         CacheStore::load(&store_path, &StdFileOps, &clock, BENCH_TTL).unwrap_or_else(|e| panic!("load: {e}"));
+    let decode = started.elapsed();
     let (warm_result, warm) = timed_walk(&home, &loaded);
     report("warm", &warm_result, warm);
-    println!("store: {store_bytes} bytes for {} records", loaded.len());
+    println!(
+        "store: {store_bytes} bytes for {} records, {:.2} s to write, {:.2} s to read back",
+        loaded.len(),
+        encode.as_secs_f64(),
+        decode.as_secs_f64()
+    );
 
     assert!(cold_result.root().is_some(), "the walk found nothing at {}", home.display());
     let (cold_bytes, warm_bytes) = (root_bytes(&cold_result), root_bytes(&warm_result));

@@ -6,12 +6,15 @@
 //!
 //! Safety invariants are documented in `AGENTS.md` §2 and `docs/prd.md` §7.3.
 
+pub mod adapters;
 pub mod config;
 pub mod error;
 pub mod model;
 pub mod ports;
 pub mod safety;
 pub mod scan;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 pub mod units;
 
 pub use error::BrozaError;

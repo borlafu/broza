@@ -33,6 +33,22 @@ pub struct EntryMetadata {
 }
 
 /// Filesystem reads and writes.
+///
+/// # Every answer is already out of date
+///
+/// This port is path-based, so every call is a fresh lookup and nothing here is
+/// atomic with anything else. Between a [`FileOps::metadata`] that says "a regular
+/// file on device 2" and the [`FileOps::rename`] acting on it, the path can become a
+/// symlink pointing anywhere, or a different file altogether. Checking first and
+/// acting later is a time-of-check to time-of-use gap, and for a tool that deletes
+/// things that gap is the whole attack.
+///
+/// Reading is allowed to live with it. Mutating is not: the quarantine mover (M3)
+/// must re-verify the `(device, inode)` pair it recorded **after** the rename and
+/// roll back when it does not match, rather than trusting the metadata it read
+/// while planning. A future revision may add handle-based operations
+/// (`openat`/`renameat`) to close the gap for good; until then the re-check is the
+/// contract.
 pub trait FileOps: Send + Sync {
     /// `lstat`: metadata without following the final symlink.
     fn metadata(&self, path: &Path) -> Result<EntryMetadata, BrozaError>;

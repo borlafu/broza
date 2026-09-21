@@ -40,11 +40,16 @@ impl MountTable {
     }
 
     /// Volume that contains `path`, by longest matching mount point or firmlink.
+    ///
+    /// Ties are broken deterministically, which matters because the answer decides
+    /// whether a path may be written to (`AGENTS.md` §2.3): the longest prefix wins,
+    /// then a real mount point beats a firmlink, then the order the enumerator
+    /// reported. Never the iteration order of a map.
     pub fn volume_for(&self, path: &Path) -> Option<&MountEntry> {
         self.entries
             .iter()
-            .filter_map(|entry| Self::match_len(entry, path).map(|len| (len, entry)))
-            .max_by_key(|(len, _)| *len)
+            .filter_map(|entry| Self::match_rank(entry, path).map(|rank| (rank, entry)))
+            .reduce(|best, candidate| if candidate.0 > best.0 { candidate } else { best })
             .map(|(_, entry)| entry)
     }
 
@@ -58,12 +63,18 @@ impl MountTable {
         self.entries.iter().find(|entry| entry.device == device)
     }
 
-    fn match_len(entry: &MountEntry, path: &Path) -> Option<usize> {
-        std::iter::once(&entry.mount_point)
-            .chain(entry.firmlinks.iter())
+    /// How well `entry` matches `path`: prefix length first, mount point over firmlink second.
+    fn match_rank(entry: &MountEntry, path: &Path) -> Option<(usize, bool)> {
+        let mount_point = Some(&entry.mount_point)
             .filter(|prefix| path.starts_with(prefix))
-            .map(|prefix| prefix.components().count())
-            .max()
+            .map(|prefix| (prefix.components().count(), true));
+        let firmlink = entry
+            .firmlinks
+            .iter()
+            .filter(|prefix| path.starts_with(prefix))
+            .map(|prefix| (prefix.components().count(), false))
+            .max();
+        mount_point.into_iter().chain(firmlink).max()
     }
 }
 
@@ -130,6 +141,46 @@ mod tests {
     #[test]
     fn relative_paths_do_not_resolve() {
         assert!(table().volume_for(Path::new("Users/dana")).is_none());
+    }
+
+    #[test]
+    fn a_real_mount_point_wins_over_a_firmlink_of_the_same_length() {
+        // Two volumes claim `/Volumes/Clone`: one is mounted there, the other only
+        // firmlinks to it. Whoever is really mounted owns the path.
+        let table = MountTable::new(vec![
+            MountEntry {
+                mount_point: PathBuf::from("/System/Volumes/Data"),
+                device: 2,
+                volume: volume("disk3s5", VolumeRole::Data, "/System/Volumes/Data"),
+                firmlinks: vec![PathBuf::from("/Volumes/Clone")],
+            },
+            MountEntry {
+                mount_point: PathBuf::from("/Volumes/Clone"),
+                device: 9,
+                volume: volume("disk9s1", VolumeRole::Data, "/Volumes/Clone"),
+                firmlinks: vec![],
+            },
+        ]);
+
+        assert_eq!(table.volume_for(Path::new("/Volumes/Clone/a")).map(|e| e.device), Some(9));
+    }
+
+    #[test]
+    fn the_first_entry_wins_when_two_volumes_match_equally_well() {
+        let entry = |device: u64| MountEntry {
+            mount_point: PathBuf::from("/Volumes/Twin"),
+            device,
+            volume: volume("disk8s1", VolumeRole::Data, "/Volumes/Twin"),
+            firmlinks: vec![],
+        };
+        let table = MountTable::new(vec![entry(4), entry(5)]);
+
+        assert_eq!(table.volume_for(Path::new("/Volumes/Twin/a")).map(|e| e.device), Some(4));
+    }
+
+    #[test]
+    fn a_longer_firmlink_still_beats_a_shorter_mount_point() {
+        assert_eq!(table().role_for(Path::new("/Users/dana")), Some(VolumeRole::Data));
     }
 
     #[test]

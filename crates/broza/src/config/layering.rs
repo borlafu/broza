@@ -20,6 +20,7 @@ use std::path::PathBuf;
 
 use crate::BrozaError;
 use crate::config::schema::{ColorChoice, Config, Profile};
+use crate::units::{ByteSize, DurationSpec};
 
 /// Values that command-line flags may override. `None` means "flag absent".
 ///
@@ -29,9 +30,9 @@ use crate::config::schema::{ColorChoice, Config, Profile};
 #[non_exhaustive]
 pub struct CliOverrides {
     /// `--unused-after`.
-    pub unused_after: Option<String>,
+    pub unused_after: Option<DurationSpec>,
     /// `--min-size`.
-    pub min_size: Option<String>,
+    pub min_size: Option<ByteSize>,
     /// `--no-color`, mapped to [`ColorChoice::Never`].
     pub no_color: bool,
     /// Extra `--exclude` globs, merged after the configured ones.
@@ -43,13 +44,13 @@ pub struct CliOverrides {
 impl CliOverrides {
     /// Set `--unused-after`.
     #[must_use]
-    pub fn with_unused_after(self, value: Option<String>) -> Self {
+    pub fn with_unused_after(self, value: Option<DurationSpec>) -> Self {
         Self { unused_after: value, ..self }
     }
 
     /// Set `--min-size`.
     #[must_use]
-    pub fn with_min_size(self, value: Option<String>) -> Self {
+    pub fn with_min_size(self, value: Option<ByteSize>) -> Self {
         Self { min_size: value, ..self }
     }
 
@@ -167,14 +168,14 @@ pub const DEFAULT_PROFILE: &str = "default";
 
 fn merge_profile(base: &Config, overrides: &Profile) -> Config {
     Config {
-        unused_after: pick(&base.unused_after, overrides.unused_after.as_ref()),
-        quarantine_ttl: pick(&base.quarantine_ttl, overrides.quarantine_ttl.as_ref()),
+        unused_after: overrides.unused_after.unwrap_or(base.unused_after),
+        quarantine_ttl: overrides.quarantine_ttl.unwrap_or(base.quarantine_ttl),
         quarantine_path: pick(&base.quarantine_path, overrides.quarantine_path.as_ref()),
-        min_size: pick(&base.min_size, overrides.min_size.as_ref()),
+        min_size: overrides.min_size.unwrap_or(base.min_size),
         donate_prompt: overrides.donate_prompt.unwrap_or(base.donate_prompt),
         color: overrides.color.unwrap_or(base.color),
         exclude: overrides.exclude.clone().unwrap_or_else(|| base.exclude.clone()),
-        cache_ttl: pick(&base.cache_ttl, overrides.cache_ttl.as_ref()),
+        cache_ttl: overrides.cache_ttl.unwrap_or(base.cache_ttl),
         profiles: base.profiles.clone(),
         categories: overrides.categories.clone().or_else(|| base.categories.clone()),
     }
@@ -199,8 +200,8 @@ fn apply_cli(base: &Config, cli: &CliOverrides) -> Config {
         merged
     };
     Config {
-        unused_after: pick(&base.unused_after, cli.unused_after.as_ref()),
-        min_size: pick(&base.min_size, cli.min_size.as_ref()),
+        unused_after: cli.unused_after.unwrap_or(base.unused_after),
+        min_size: cli.min_size.unwrap_or(base.min_size),
         color: if cli.no_color { ColorChoice::Never } else { base.color },
         exclude,
         categories: cli.categories.clone().or_else(|| base.categories.clone()),
@@ -222,13 +223,17 @@ mod tests {
         EnvSnapshot::for_home(PathBuf::from("/Users/test"))
     }
 
+    fn size(raw: &str) -> ByteSize {
+        raw.parse().unwrap_or_else(|e| panic!("{raw}: {e}"))
+    }
+
     fn file_with_profile() -> Config {
         Config {
-            min_size: "500MB".into(),
+            min_size: size("500MB"),
             profiles: [(
                 "developer".to_owned(),
                 Profile {
-                    min_size: Some("1GB".into()),
+                    min_size: Some(size("1GB")),
                     categories: Some(vec!["build-cache".into()]),
                     ..Profile::default()
                 },
@@ -242,7 +247,7 @@ mod tests {
     #[test]
     fn without_profile_the_file_values_survive() {
         let merged = layer(&file_with_profile(), None, &env(), &CliOverrides::default()).unwrap();
-        assert_eq!(merged.min_size, "500MB");
+        assert_eq!(merged.min_size, size("500MB"));
         assert_eq!(merged.categories, None);
     }
 
@@ -250,7 +255,7 @@ mod tests {
     fn profile_overrides_the_file() {
         let merged =
             layer(&file_with_profile(), Some("developer"), &env(), &CliOverrides::default()).unwrap();
-        assert_eq!(merged.min_size, "1GB");
+        assert_eq!(merged.min_size, size("1GB"));
         assert_eq!(merged.categories, Some(vec!["build-cache".to_owned()]));
     }
 
@@ -286,12 +291,12 @@ mod tests {
     fn cli_flags_win_over_everything_else() {
         let snapshot = env().with_no_color(false);
         let overrides = CliOverrides::default()
-            .with_min_size(Some("2GB".into()))
-            .with_unused_after(Some("6m".into()))
+            .with_min_size(Some(size("2GB")))
+            .with_unused_after(Some("6m".parse().unwrap_or_default()))
             .with_no_color(true);
         let merged = layer(&file_with_profile(), Some("developer"), &snapshot, &overrides).unwrap();
-        assert_eq!(merged.min_size, "2GB");
-        assert_eq!(merged.unused_after, "6m");
+        assert_eq!(merged.min_size, size("2GB"));
+        assert_eq!(merged.unused_after.to_string(), "6m");
         assert_eq!(merged.color, ColorChoice::Never);
     }
 

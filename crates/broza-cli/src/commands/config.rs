@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use broza::BrozaError;
 use broza::config::{Config, ConfigValue, keys};
 use broza::model::{Envelope, Host, Warning};
+use jiff::Timestamp;
 use toml_edit::{Array, DocumentMut, Item, Value};
 
 use crate::args::ConfigCommand;
@@ -27,8 +28,8 @@ pub struct ConfigContext {
     pub effective: Config,
     /// Host block of the envelope.
     pub host: Host,
-    /// RFC 3339 UTC timestamp of this invocation.
-    pub generated_at: String,
+    /// Instant of this invocation; the core serialises it as RFC 3339 UTC.
+    pub generated_at: Timestamp,
     /// Whether Broza may ask a `y/N` question.
     pub interactive: bool,
     /// Warnings collected before the command ran.
@@ -40,7 +41,7 @@ pub struct ConfigContext {
 pub struct ConfigOutput {
     payload: Payload,
     host: Host,
-    generated_at: String,
+    generated_at: Timestamp,
     warnings: Vec<Warning>,
 }
 
@@ -77,7 +78,7 @@ pub fn run(command: &ConfigCommand, context: &ConfigContext) -> Result<ConfigOut
     Ok(ConfigOutput {
         payload,
         host: context.host.clone(),
-        generated_at: context.generated_at.clone(),
+        generated_at: context.generated_at,
         warnings: context.warnings.clone(),
     })
 }
@@ -188,7 +189,7 @@ impl Renderer for ConfigOutput {
             Payload::Path(path) => serde_json::json!({ "path": path }),
             Payload::Written(message) => serde_json::json!({ "message": message }),
         };
-        let envelope = Envelope::new("config", self.host.clone(), self.generated_at.clone(), data);
+        let envelope = Envelope::new("config", self.host.clone(), self.generated_at, data);
         let envelope = self.warnings.iter().cloned().fold(envelope, Envelope::with_warning);
         envelope_to_json(&envelope)
     }
@@ -198,6 +199,8 @@ impl Renderer for ConfigOutput {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use broza::units::ByteSize;
+
     use super::*;
 
     fn context(dir: &Path) -> ConfigContext {
@@ -206,7 +209,7 @@ mod tests {
             file: Config::default(),
             effective: Config::default(),
             host: Host { macos_version: "26.1".into(), arch: "arm64".into() },
-            generated_at: "2026-09-21T10:36:08Z".to_owned(),
+            generated_at: "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}")),
             interactive: false,
             warnings: Vec::new(),
         }
@@ -220,7 +223,7 @@ mod tests {
     fn get_reports_the_effective_value() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = ConfigContext {
-            effective: Config { min_size: "2GB".into(), ..Config::default() },
+            effective: Config { min_size: ByteSize::new(2_000_000_000), ..Config::default() },
             ..context(dir.path())
         };
         let out = run(&ConfigCommand::Get { key: "min-size".into() }, &ctx).unwrap();
@@ -308,7 +311,7 @@ mod tests {
     fn reset_of_one_key_needs_no_confirmation() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = ConfigContext {
-            file: Config { min_size: "2GB".into(), ..Config::default() },
+            file: Config { min_size: ByteSize::new(2_000_000_000), ..Config::default() },
             ..context(dir.path())
         };
         run(&ConfigCommand::Reset { key: Some("min-size".into()), yes: false }, &ctx).unwrap();
@@ -329,7 +332,7 @@ mod tests {
     fn reset_of_everything_with_yes_skips_the_prompt() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = ConfigContext {
-            file: Config { min_size: "2GB".into(), ..Config::default() },
+            file: Config { min_size: ByteSize::new(2_000_000_000), ..Config::default() },
             ..context(dir.path())
         };
         std::fs::write(&ctx.path, "# survivor\nmin-size = \"2GB\"\n").unwrap();

@@ -74,7 +74,7 @@ mod tests {
             envelope_to_json(&Envelope::new(
                 "about",
                 Host { macos_version: "26.1".into(), arch: "arm64".into() },
-                "2026-09-21T10:36:08Z",
+                "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}")),
                 serde_json::json!({ "ok": true }),
             ))
         }

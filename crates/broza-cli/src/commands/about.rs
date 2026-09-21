@@ -5,6 +5,7 @@
 
 use broza::BrozaError;
 use broza::model::{Envelope, Host, Warning};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::donate::DONATE_URL;
@@ -54,13 +55,14 @@ impl Default for AboutData {
 pub struct About {
     data: AboutData,
     host: Host,
-    generated_at: String,
+    generated_at: Timestamp,
     warnings: Vec<Warning>,
 }
 
 impl About {
-    /// Build the command result for `host` at `generated_at` (RFC 3339 UTC).
-    pub fn new(host: Host, generated_at: String, warnings: Vec<Warning>) -> Self {
+    /// Build the command result for `host` at `generated_at`; the core
+    /// serialises it as RFC 3339 UTC with whole seconds.
+    pub fn new(host: Host, generated_at: Timestamp, warnings: Vec<Warning>) -> Self {
         Self { data: AboutData::default(), host, generated_at, warnings }
     }
 }
@@ -77,8 +79,7 @@ impl Renderer for About {
     }
 
     fn to_json(&self) -> Result<String, BrozaError> {
-        let envelope =
-            Envelope::new("about", self.host.clone(), self.generated_at.clone(), self.data.clone());
+        let envelope = Envelope::new("about", self.host.clone(), self.generated_at, self.data.clone());
         let envelope = self.warnings.iter().cloned().fold(envelope, Envelope::with_warning);
         envelope_to_json(&envelope)
     }
@@ -90,12 +91,12 @@ mod tests {
 
     use super::*;
 
+    fn at() -> Timestamp {
+        "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}"))
+    }
+
     fn about() -> About {
-        About::new(
-            Host { macos_version: "26.1".into(), arch: "arm64".into() },
-            "2026-09-21T10:36:08Z".to_owned(),
-            Vec::new(),
-        )
+        About::new(Host { macos_version: "26.1".into(), arch: "arm64".into() }, at(), Vec::new())
     }
 
     #[test]
@@ -129,7 +130,7 @@ mod tests {
     fn a_host_warning_is_carried_into_the_envelope() {
         let with_warning = About::new(
             Host { macos_version: "unknown".into(), arch: "arm64".into() },
-            "2026-09-21T10:36:08Z".to_owned(),
+            at(),
             vec![Warning {
                 code: crate::host::WARNING_HOST_VERSION_UNKNOWN.into(),
                 message: "sw_vers failed".into(),

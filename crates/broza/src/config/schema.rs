@@ -1,28 +1,27 @@
 //! Configuration schema: the keys of `docs/cli-spec.md` §3.6 and the
 //! `[profiles.<name>]` overrides.
 //!
-//! Durations, sizes and the quarantine path are stored as validated `String`s
-//! so the TOML file round-trips exactly what the user wrote; the presentation
-//! and scanning layers parse them when they need numbers.
-//!
-// TODO(M0-A merge): switch `unused_after`, `quarantine_ttl`, `min_size` and
-// `cache_ttl` to `model::units::{DurationSpec, ByteSize}` once that module lands.
+//! Durations and sizes are [`DurationSpec`] and [`ByteSize`]: parsed once at the
+//! boundary, and serialised back as their canonical string form (`50MB`, `30d`),
+//! so an invalid value can never reach the rest of the program.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Default unused-app threshold.
-pub const DEFAULT_UNUSED_AFTER: &str = "1y";
-/// Default quarantine retention period.
-pub const DEFAULT_QUARANTINE_TTL: &str = "30d";
+use crate::units::{ByteSize, DurationSpec, DurationUnit};
+
+/// Default unused-app threshold, `1y`.
+pub const DEFAULT_UNUSED_AFTER: (u64, DurationUnit) = (1, DurationUnit::Years);
+/// Default quarantine retention period, `30d`.
+pub const DEFAULT_QUARANTINE_TTL: (u64, DurationUnit) = (30, DurationUnit::Days);
 /// Default quarantine location, relative to the user's home directory.
 pub const DEFAULT_QUARANTINE_PATH: &str = "~/.local/share/broza/quarantine";
-/// Default minimum size for findings.
-pub const DEFAULT_MIN_SIZE: &str = "50MB";
-/// Default validity of the scan cache.
-pub const DEFAULT_CACHE_TTL: &str = "24h";
+/// Default minimum size for findings, `50MB`.
+pub const DEFAULT_MIN_SIZE_BYTES: u64 = 50_000_000;
+/// Default validity of the scan cache, `24h`.
+pub const DEFAULT_CACHE_TTL: (u64, DurationUnit) = (24, DurationUnit::Hours);
 
 /// Color preference (`docs/cli-spec.md` §3.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -63,18 +62,18 @@ impl ColorChoice {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
-    /// Unused-app threshold (duration literal).
+    /// Unused-app threshold.
     #[serde(default = "default_unused_after")]
-    pub unused_after: String,
-    /// Retention period in quarantine (duration literal).
+    pub unused_after: DurationSpec,
+    /// Retention period in quarantine.
     #[serde(default = "default_quarantine_ttl")]
-    pub quarantine_ttl: String,
+    pub quarantine_ttl: DurationSpec,
     /// Quarantine location; a leading `~` is expanded against the home directory.
     #[serde(default = "default_quarantine_path")]
     pub quarantine_path: String,
-    /// Minimum size for findings (size literal).
+    /// Minimum size for findings.
     #[serde(default = "default_min_size")]
-    pub min_size: String,
+    pub min_size: ByteSize,
     /// Whether the Ko-fi support message may be shown (`docs/cli-spec.md` §5).
     #[serde(default = "default_donate_prompt")]
     pub donate_prompt: bool,
@@ -84,9 +83,9 @@ pub struct Config {
     /// Permanent exclusion globs.
     #[serde(default)]
     pub exclude: Vec<String>,
-    /// Validity of the scan cache (duration literal).
+    /// Validity of the scan cache.
     #[serde(default = "default_cache_ttl")]
-    pub cache_ttl: String,
+    pub cache_ttl: DurationSpec,
     /// Named profiles, applied with `--profile <name>`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub profiles: BTreeMap<String, Profile>,
@@ -101,16 +100,16 @@ pub struct Config {
 pub struct Profile {
     /// Override for `unused-after`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unused_after: Option<String>,
+    pub unused_after: Option<DurationSpec>,
     /// Override for `quarantine-ttl`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quarantine_ttl: Option<String>,
+    pub quarantine_ttl: Option<DurationSpec>,
     /// Override for `quarantine-path`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quarantine_path: Option<String>,
     /// Override for `min-size`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub min_size: Option<String>,
+    pub min_size: Option<ByteSize>,
     /// Override for `donate-prompt`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub donate_prompt: Option<bool>,
@@ -122,7 +121,7 @@ pub struct Profile {
     pub exclude: Option<Vec<String>>,
     /// Override for `cache-ttl`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_ttl: Option<String>,
+    pub cache_ttl: Option<DurationSpec>,
     /// Categories this profile restricts commands to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub categories: Option<Vec<String>>,
@@ -161,20 +160,27 @@ pub fn expand_home(raw: &str, home: &Path) -> PathBuf {
     }
 }
 
-fn default_unused_after() -> String {
-    DEFAULT_UNUSED_AFTER.to_owned()
+/// Build a fixed duration. The amounts above are small, so the overflow branch
+/// of [`DurationSpec::new`] is unreachable; `defaults_match_the_specification_table`
+/// proves the values that come out.
+fn fixed(spec: (u64, DurationUnit)) -> DurationSpec {
+    DurationSpec::new(spec.0, spec.1).unwrap_or_default()
 }
-fn default_quarantine_ttl() -> String {
-    DEFAULT_QUARANTINE_TTL.to_owned()
+
+fn default_unused_after() -> DurationSpec {
+    fixed(DEFAULT_UNUSED_AFTER)
+}
+fn default_quarantine_ttl() -> DurationSpec {
+    fixed(DEFAULT_QUARANTINE_TTL)
 }
 fn default_quarantine_path() -> String {
     DEFAULT_QUARANTINE_PATH.to_owned()
 }
-fn default_min_size() -> String {
-    DEFAULT_MIN_SIZE.to_owned()
+const fn default_min_size() -> ByteSize {
+    ByteSize::new(DEFAULT_MIN_SIZE_BYTES)
 }
-fn default_cache_ttl() -> String {
-    DEFAULT_CACHE_TTL.to_owned()
+fn default_cache_ttl() -> DurationSpec {
+    fixed(DEFAULT_CACHE_TTL)
 }
 const fn default_donate_prompt() -> bool {
     true
@@ -189,14 +195,15 @@ mod tests {
     #[test]
     fn defaults_match_the_specification_table() {
         let config = Config::default();
-        assert_eq!(config.unused_after, "1y");
-        assert_eq!(config.quarantine_ttl, "30d");
+        assert_eq!(config.unused_after.to_string(), "1y");
+        assert_eq!(config.quarantine_ttl.to_string(), "30d");
         assert_eq!(config.quarantine_path, "~/.local/share/broza/quarantine");
-        assert_eq!(config.min_size, "50MB");
+        assert_eq!(config.min_size.to_string(), "50MB");
+        assert_eq!(config.min_size.bytes(), 50_000_000);
         assert!(config.donate_prompt);
         assert_eq!(config.color, ColorChoice::Auto);
         assert!(config.exclude.is_empty());
-        assert_eq!(config.cache_ttl, "24h");
+        assert_eq!(config.cache_ttl.to_string(), "24h");
         assert!(config.profiles.is_empty());
     }
 

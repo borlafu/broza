@@ -8,11 +8,13 @@
 //! split on a separator, so patterns containing `,` — `~/p/**/*.{js,ts}` — round
 //! trip unchanged.
 
+use std::str::FromStr;
+
 use serde_json::Value as Json;
 
 use crate::BrozaError;
 use crate::config::schema::{ColorChoice, Config};
-use crate::config::values::{validate_bool, validate_duration, validate_size};
+use crate::units::{ByteSize, DurationSpec};
 
 /// Every recognised key, in the order of the specification table.
 pub const KEYS: [&str; 8] = [
@@ -68,14 +70,14 @@ impl ConfigValue {
 /// [`BrozaError::Usage`] when `key` is not one of [`KEYS`].
 pub fn get(config: &Config, key: &str) -> Result<ConfigValue, BrozaError> {
     match key {
-        "unused-after" => Ok(ConfigValue::Text(config.unused_after.clone())),
-        "quarantine-ttl" => Ok(ConfigValue::Text(config.quarantine_ttl.clone())),
+        "unused-after" => Ok(ConfigValue::Text(config.unused_after.to_string())),
+        "quarantine-ttl" => Ok(ConfigValue::Text(config.quarantine_ttl.to_string())),
         "quarantine-path" => Ok(ConfigValue::Text(config.quarantine_path.clone())),
-        "min-size" => Ok(ConfigValue::Text(config.min_size.clone())),
+        "min-size" => Ok(ConfigValue::Text(config.min_size.to_string())),
         "donate-prompt" => Ok(ConfigValue::Flag(config.donate_prompt)),
         "color" => Ok(ConfigValue::Text(config.color.as_str().to_owned())),
         "exclude" => Ok(ConfigValue::List(config.exclude.clone())),
-        "cache-ttl" => Ok(ConfigValue::Text(config.cache_ttl.clone())),
+        "cache-ttl" => Ok(ConfigValue::Text(config.cache_ttl.to_string())),
         other => Err(unknown_key(other)),
     }
 }
@@ -91,10 +93,10 @@ pub fn get(config: &Config, key: &str) -> Result<ConfigValue, BrozaError> {
 /// match its arity, or a value does not match its type.
 pub fn set(config: Config, key: &str, values: &[String]) -> Result<Config, BrozaError> {
     match key {
-        "unused-after" => Ok(Config { unused_after: validate_duration(scalar(key, values)?)?, ..config }),
-        "quarantine-ttl" => Ok(Config { quarantine_ttl: validate_duration(scalar(key, values)?)?, ..config }),
-        "cache-ttl" => Ok(Config { cache_ttl: validate_duration(scalar(key, values)?)?, ..config }),
-        "min-size" => Ok(Config { min_size: validate_size(scalar(key, values)?)?, ..config }),
+        "unused-after" => Ok(Config { unused_after: duration(key, values)?, ..config }),
+        "quarantine-ttl" => Ok(Config { quarantine_ttl: duration(key, values)?, ..config }),
+        "cache-ttl" => Ok(Config { cache_ttl: duration(key, values)?, ..config }),
+        "min-size" => Ok(Config { min_size: ByteSize::from_str(scalar(key, values)?)?, ..config }),
         "quarantine-path" => Ok(Config { quarantine_path: validate_path(scalar(key, values)?)?, ..config }),
         "donate-prompt" => Ok(Config { donate_prompt: validate_bool(scalar(key, values)?)?, ..config }),
         "color" => Ok(Config { color: validate_color(scalar(key, values)?)?, ..config }),
@@ -135,6 +137,20 @@ pub fn reset(config: Config, key: Option<&str>) -> Result<Config, BrozaError> {
 /// [`BrozaError::Usage`] if [`KEYS`] ever names a key [`get`] cannot read.
 pub fn list(config: &Config) -> Result<Vec<(String, ConfigValue)>, BrozaError> {
     KEYS.iter().map(|key| get(config, key).map(|value| ((*key).to_owned(), value))).collect()
+}
+
+/// Parse the single value of a duration-typed key.
+fn duration(key: &str, values: &[String]) -> Result<DurationSpec, BrozaError> {
+    DurationSpec::from_str(scalar(key, values)?)
+}
+
+/// Parse a boolean literal; `donate-prompt` is the only boolean key.
+fn validate_bool(raw: &str) -> Result<bool, BrozaError> {
+    match raw.trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(BrozaError::Usage(format!("expected `true` or `false`, got `{other}`"))),
+    }
 }
 
 /// Exactly one value, as scalar keys require.
@@ -233,8 +249,51 @@ mod tests {
     fn set_does_not_mutate_the_original() {
         let original = Config::default();
         let updated = set(original.clone(), "min-size", &one("2GB")).unwrap();
-        assert_eq!(original.min_size, "50MB");
-        assert_eq!(updated.min_size, "2GB");
+        assert_eq!(original.min_size.bytes(), 50_000_000);
+        assert_eq!(updated.min_size.bytes(), 2_000_000_000);
+    }
+
+    #[test]
+    fn values_are_stored_parsed_and_read_back_in_canonical_form() {
+        let updated = set(Config::default(), "min-size", &one("1.5GB")).unwrap();
+        assert_eq!(updated.min_size.bytes(), 1_500_000_000);
+        assert_eq!(get(&updated, "min-size").unwrap().to_human(), "1500MB");
+
+        let updated = set(Config::default(), "unused-after", &one(" 6m ")).unwrap();
+        assert_eq!(get(&updated, "unused-after").unwrap().to_human(), "6m");
+    }
+
+    #[test]
+    fn the_unit_parsers_reject_non_finite_and_exponent_mantissas() {
+        for literal in ["nanGB", "infGB", "infinityTB", "1e3MB", "1E3MB", "+1MB", "1.2.3GB", ".MB"] {
+            assert!(set(Config::default(), "min-size", &one(literal)).is_err(), "{literal}");
+        }
+    }
+
+    /// The units parser is *stricter* than the string validator it replaced:
+    /// a mantissa must have digits on both sides of the point.
+    #[test]
+    fn the_unit_parser_rejects_a_bare_leading_or_trailing_point() {
+        for literal in [".5GB", "5.GB"] {
+            assert!(set(Config::default(), "min-size", &one(literal)).is_err(), "{literal}");
+        }
+        assert!(set(Config::default(), "min-size", &one("0.5GB")).is_ok());
+    }
+
+    /// Sizes are stored parsed, so reading one back gives the canonical decimal
+    /// form rather than the literal the user typed.
+    #[test]
+    fn binary_units_are_accepted_and_reported_in_decimal_form() {
+        let updated = set(Config::default(), "min-size", &one("1GiB")).unwrap();
+        assert_eq!(updated.min_size.bytes(), 1_073_741_824);
+        assert_eq!(get(&updated, "min-size").unwrap().to_human(), "1073741824B");
+    }
+
+    #[test]
+    fn the_unit_parsers_reject_malformed_durations() {
+        for literal in ["3", "", "d", "1x", "1.5d", "-1d"] {
+            assert!(set(Config::default(), "unused-after", &one(literal)).is_err(), "{literal}");
+        }
     }
 
     #[test]
@@ -255,21 +314,25 @@ mod tests {
     #[test]
     fn reset_without_key_restores_defaults_but_keeps_profiles() {
         let config = Config {
-            min_size: "2GB".into(),
+            min_size: ByteSize::new(2_000_000_000),
             profiles: [("dev".to_owned(), crate::config::Profile::default())].into_iter().collect(),
             ..Config::default()
         };
         let reverted = reset(config, None).unwrap();
-        assert_eq!(reverted.min_size, "50MB");
+        assert_eq!(reverted.min_size.bytes(), 50_000_000);
         assert!(reverted.profiles.contains_key("dev"));
     }
 
     #[test]
     fn reset_with_key_only_touches_that_key() {
-        let config = Config { min_size: "2GB".into(), cache_ttl: "1h".into(), ..Config::default() };
+        let config = Config {
+            min_size: ByteSize::new(2_000_000_000),
+            cache_ttl: DurationSpec::from_str("1h").unwrap(),
+            ..Config::default()
+        };
         let reverted = reset(config, Some("min-size")).unwrap();
-        assert_eq!(reverted.min_size, "50MB");
-        assert_eq!(reverted.cache_ttl, "1h");
+        assert_eq!(reverted.min_size.bytes(), 50_000_000);
+        assert_eq!(reverted.cache_ttl.to_string(), "1h");
     }
 
     #[test]

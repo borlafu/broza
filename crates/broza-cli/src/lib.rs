@@ -17,6 +17,7 @@ use std::ffi::OsString;
 
 use broza::config::{CliOverrides, Config, EnvSnapshot};
 use broza::model::Warning;
+use broza::units::{ByteSize, DurationSpec};
 use broza::{BrozaError, ExitCode};
 use clap::Parser;
 use clap::error::ErrorKind;
@@ -92,7 +93,7 @@ fn resolve_config(cli: &Cli, core_env: &EnvSnapshot) -> Result<(Config, Config),
     } else {
         broza::config::load(path, core_env)?
     };
-    let effective = broza::config::layer(&file, cli.global.profile.as_deref(), core_env, &overrides(cli))?;
+    let effective = broza::config::layer(&file, cli.global.profile.as_deref(), core_env, &overrides(cli)?)?;
     Ok((file, effective))
 }
 
@@ -113,7 +114,7 @@ fn dispatch(
     core_env: &EnvSnapshot,
     inputs: Inputs<'_>,
 ) -> Result<String, BrozaError> {
-    let generated_at = now_rfc3339();
+    let generated_at = jiff::Timestamp::now();
     match command {
         Command::About => {
             commands::about::About::new(inputs.host, generated_at, inputs.warnings).render(inputs.format)
@@ -134,33 +135,37 @@ fn dispatch(
     }
 }
 
-/// Current time as an RFC 3339 UTC timestamp with whole-second precision
-/// (`docs/cli-spec.md` §4.1): sub-second digits would only churn snapshots.
-pub fn now_rfc3339() -> String {
-    let now = jiff::Timestamp::now();
-    now.round(jiff::Unit::Second).unwrap_or(now).to_string()
-}
-
 /// Values the flags contribute to the configuration layering.
 ///
 /// Only flags the user actually passed appear here: a clap `default_value`
 /// would otherwise silently outrank `config.toml` and the active profile.
 /// `scan --min-size` is deliberately absent — it has its own default
 /// (`args::scan::SCAN_DEFAULT_MIN_SIZE`) and never feeds the `min-size` key.
-fn overrides(cli: &Cli) -> CliOverrides {
+///
+/// # Errors
+///
+/// [`BrozaError::Usage`] when a size or duration flag does not parse; the
+/// message comes straight from the unit parser in `broza::units`.
+fn overrides(cli: &Cli) -> Result<CliOverrides, BrozaError> {
     let GlobalArgs { no_color, .. } = cli.global;
     let base = CliOverrides::default().with_no_color(no_color);
-    match cli.command.as_ref() {
+    let merged = match cli.command.as_ref() {
         Some(Command::Suggest(args)) => base
-            .with_unused_after(args.unused_after.clone())
-            .with_min_size(args.min_size.clone())
+            .with_unused_after(parse_opt::<DurationSpec>(args.unused_after.as_deref())?)
+            .with_min_size(parse_opt::<ByteSize>(args.min_size.as_deref())?)
             .with_categories(non_empty(split_categories(&args.categories))),
         Some(Command::Clean(args)) => base
-            .with_unused_after(args.unused_after.clone())
+            .with_unused_after(parse_opt::<DurationSpec>(args.unused_after.as_deref())?)
             .with_exclude(args.exclude.clone())
             .with_categories(non_empty(split_categories(&args.categories))),
         _ => base,
-    }
+    };
+    Ok(merged)
+}
+
+/// Parse a flag value that may be absent, keeping the parser's own message.
+fn parse_opt<T: std::str::FromStr<Err = BrozaError>>(raw: Option<&str>) -> Result<Option<T>, BrozaError> {
+    raw.map(str::parse).transpose()
 }
 
 fn non_empty(values: Vec<String>) -> Option<Vec<String>> {
@@ -273,24 +278,17 @@ mod tests {
     }
 
     #[test]
-    fn timestamps_have_whole_second_precision() {
-        let now = now_rfc3339();
-        assert!(now.ends_with('Z'), "{now}");
-        assert!(!now.contains('.'), "sub-second digits must be dropped: {now}");
-    }
-
-    #[test]
     fn suggest_flags_become_configuration_overrides() {
         let cli = parse(&["broza", "suggest", "--min-size", "2GB", "--category", "a,b"]);
-        let overrides = overrides(&cli);
-        assert_eq!(overrides.min_size, Some("2GB".to_owned()));
+        let overrides = overrides(&cli).unwrap();
+        assert_eq!(overrides.min_size.map(ByteSize::bytes), Some(2_000_000_000));
         assert_eq!(overrides.categories, Some(vec!["a".to_owned(), "b".to_owned()]));
         assert!(!overrides.no_color);
     }
 
     #[test]
     fn absent_flags_leave_the_configuration_alone() {
-        let overrides = overrides(&parse(&["broza", "suggest"]));
+        let overrides = overrides(&parse(&["broza", "suggest"])).unwrap();
         assert_eq!(overrides.min_size, None, "no flag must not shadow config.toml");
         assert_eq!(overrides.unused_after, None);
         assert_eq!(overrides.categories, None);
@@ -298,21 +296,21 @@ mod tests {
 
     #[test]
     fn scan_min_size_never_feeds_the_configuration_key() {
-        let overrides = overrides(&parse(&["broza", "scan", "--min-size", "1GB"]));
+        let overrides = overrides(&parse(&["broza", "scan", "--min-size", "1GB"])).unwrap();
         assert_eq!(overrides.min_size, None, "scan has its own default, see spec §3.1");
     }
 
     #[test]
     fn clean_exclusions_reach_the_layering() {
         let cli = parse(&["broza", "clean", "--exclude", "~/a/**", "--no-color"]);
-        let overrides = overrides(&cli);
+        let overrides = overrides(&cli).unwrap();
         assert_eq!(overrides.exclude, vec!["~/a/**".to_owned()]);
         assert!(overrides.no_color);
     }
 
     #[test]
     fn commands_without_tunable_flags_only_carry_no_color() {
-        let overrides = overrides(&parse(&["broza", "about", "--no-color"]));
+        let overrides = overrides(&parse(&["broza", "about", "--no-color"])).unwrap();
         assert_eq!(overrides, CliOverrides::default().with_no_color(true));
     }
 
@@ -329,7 +327,7 @@ mod tests {
             .map(ToString::to_string);
         let cli = Cli::try_parse_from(args).unwrap_or_else(|e| panic!("{e}"));
         let (_, effective) = resolve_config(&cli, &core_env).unwrap();
-        assert_eq!(effective.min_size, "500MB");
+        assert_eq!(effective.min_size.to_string(), "500MB");
     }
 
     #[test]
@@ -352,6 +350,6 @@ mod tests {
         .map(ToString::to_string);
         let cli = Cli::try_parse_from(args).unwrap_or_else(|e| panic!("{e}"));
         let (_, effective) = resolve_config(&cli, &core_env).unwrap();
-        assert_eq!(effective.min_size, "2GB");
+        assert_eq!(effective.min_size.to_string(), "2GB");
     }
 }

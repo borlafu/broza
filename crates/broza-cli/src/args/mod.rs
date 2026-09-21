@@ -79,10 +79,10 @@ mod tests {
     /// moment the core defaults move, so the two cannot drift apart silently.
     #[test]
     fn help_text_defaults_still_match_the_core() {
-        use broza::config::schema::{DEFAULT_MIN_SIZE, DEFAULT_UNUSED_AFTER};
+        let defaults = broza::config::Config::default();
 
-        assert_eq!(DEFAULT_MIN_SIZE, "50MB", "update the --min-size help text");
-        assert_eq!(DEFAULT_UNUSED_AFTER, "1y", "update the --unused-after help text");
+        assert_eq!(defaults.min_size.to_string(), "50MB", "update the --min-size help text");
+        assert_eq!(defaults.unused_after.to_string(), "1y", "update the --unused-after help text");
         assert_eq!(
             scan::SCAN_DEFAULT_MIN_SIZE,
             "100MB",
@@ -90,7 +90,7 @@ mod tests {
         );
         assert_ne!(
             scan::SCAN_DEFAULT_MIN_SIZE,
-            DEFAULT_MIN_SIZE,
+            defaults.min_size.to_string(),
             "the documented exception only exists while the two differ"
         );
     }

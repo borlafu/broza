@@ -4,6 +4,12 @@
 use std::path::{Path, PathBuf};
 
 use broza::config::{CliOverrides, ColorChoice, Config, ConfigValue, EnvSnapshot, keys, layering, load};
+use broza::units::ByteSize;
+
+/// Parse a size literal, failing the test on a typo in the fixture.
+fn size(raw: &str) -> ByteSize {
+    raw.parse().unwrap_or_else(|e| panic!("{raw}: {e}"))
+}
 
 fn env_with_home(home: &Path) -> EnvSnapshot {
     EnvSnapshot::for_home(home.to_path_buf())
@@ -44,7 +50,7 @@ categories = ["build-cache", "ios-simulators", "duplicates"]
     assert_eq!(loaded.exclude.len(), 2);
     assert!(loaded.profiles.contains_key("developer"));
     // Profile values are not applied until layering runs.
-    assert_eq!(loaded.min_size, "50MB");
+    assert_eq!(loaded.min_size, size("50MB"));
 }
 
 #[test]
@@ -73,14 +79,14 @@ fn explicit_path_beats_env_which_beats_default() {
     let explicit = write_config(tmp.path(), "min-size = \"2GB\"\n");
 
     let env = env_with_home(tmp.path()).with_broza_config(Some(from_env.clone()));
-    assert_eq!(load(None, &env).unwrap_or_else(|e| panic!("{e}")).min_size, "1GB");
-    assert_eq!(load(Some(&explicit), &env).unwrap_or_else(|e| panic!("{e}")).min_size, "2GB");
+    assert_eq!(load(None, &env).unwrap_or_else(|e| panic!("{e}")).min_size, size("1GB"));
+    assert_eq!(load(Some(&explicit), &env).unwrap_or_else(|e| panic!("{e}")).min_size, size("2GB"));
 }
 
 #[test]
 fn layering_applies_profile_then_env_then_flags() {
     let file = Config {
-        min_size: "500MB".into(),
+        min_size: size("500MB"),
         donate_prompt: true,
         color: ColorChoice::Always,
         ..Config::default()
@@ -88,7 +94,7 @@ fn layering_applies_profile_then_env_then_flags() {
     let file = Config {
         profiles: [(
             "developer".to_owned(),
-            broza::config::Profile { min_size: Some("1GB".into()), ..broza::config::Profile::default() },
+            broza::config::Profile { min_size: Some(size("1GB")), ..broza::config::Profile::default() },
         )]
         .into_iter()
         .collect(),
@@ -96,15 +102,15 @@ fn layering_applies_profile_then_env_then_flags() {
     };
     let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
     let env = env_with_home(tmp.path()).with_no_color(true).with_broza_no_donate(true);
-    let overrides = CliOverrides::default().with_min_size(Some("2GB".into()));
+    let overrides = CliOverrides::default().with_min_size(Some(size("2GB")));
 
     let merged =
         layering::layer(&file, Some("developer"), &env, &overrides).unwrap_or_else(|e| panic!("{e}"));
 
-    assert_eq!(merged.min_size, "2GB", "flags win over profile");
+    assert_eq!(merged.min_size, size("2GB"), "flags win over profile");
     assert_eq!(merged.color, ColorChoice::Never, "NO_COLOR forces never");
     assert!(!merged.donate_prompt, "BROZA_NO_DONATE forces false");
-    assert_eq!(file.min_size, "500MB", "inputs are never mutated");
+    assert_eq!(file.min_size, size("500MB"), "inputs are never mutated");
 }
 
 #[test]
@@ -128,7 +134,7 @@ fn keys_round_trip_through_set_and_get() {
     );
 
     let reset = keys::reset(updated, Some("min-size")).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(reset.min_size, "50MB");
+    assert_eq!(reset.min_size, size("50MB"));
 }
 
 #[test]

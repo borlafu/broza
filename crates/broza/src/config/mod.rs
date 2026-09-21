@@ -17,7 +17,6 @@
 pub mod keys;
 pub mod layering;
 pub mod schema;
-mod values;
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -211,7 +210,7 @@ mod tests {
         let present = dir.path().join("present.toml");
         std::fs::write(&present, "min-size = \"2GB\"\n").unwrap();
         let loaded = load_optional(Some(&present), &env(dir.path())).unwrap().unwrap();
-        assert_eq!(loaded.min_size, "2GB");
+        assert_eq!(loaded.min_size.bytes(), 2_000_000_000);
     }
 
     #[test]
@@ -237,7 +236,11 @@ mod tests {
 
     #[test]
     fn to_toml_round_trips_through_parse() {
-        let original = Config { min_size: "2GB".into(), exclude: vec!["~/a/**".into()], ..Config::default() };
+        let original = Config {
+            min_size: crate::units::ByteSize::new(2_000_000_000),
+            exclude: vec!["~/a/**".into()],
+            ..Config::default()
+        };
         let rendered = to_toml(&original).unwrap();
         let reparsed = parse(&rendered, Path::new("/tmp/x.toml")).unwrap();
         assert_eq!(reparsed, original);

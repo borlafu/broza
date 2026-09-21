@@ -26,6 +26,8 @@ libc.workspace = true
 plist.workspace = true
 objc2.workspace = true
 objc2-foundation.workspace = true
+rayon.workspace = true
+postcard.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

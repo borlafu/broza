@@ -22,8 +22,7 @@ use broza::quarantine::{codes, expiry, layout, list, manifest, quarantine_items,
 use broza::safety::guard::{RestoreRequest, approve_restore_targets};
 use broza::testing::{FakeFileOps, mac_mount_table};
 use quarantine_world::{
-    A_DAY, CACHE, HOME, NOW, ROOT, TTL, approved, clock, quarantine, real_mounts, restore_token, store_token,
-    tree,
+    A_DAY, CACHE, HOME, ROOT, TTL, approved, clock, quarantine, restore_token, store_token, tree,
 };
 
 /// Rewrite the manifest of `session` with `change` applied to it.
@@ -367,10 +366,7 @@ fn a_real_store_claims_its_session_name_exclusively() {
     let temp = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
     let base = std::fs::canonicalize(temp.path()).unwrap_or_else(|error| panic!("{error}"));
     let root = base.join("quarantine");
-    let id: SessionId = format!("cln_{}_0000", NOW.replace(['-', ':', 'T', 'Z'], ""))
-        .replace("103608", "103608")
-        .parse()
-        .unwrap_or_else(|error| panic!("{error}"));
+    let id: SessionId = "cln_20260921103608_0000".parse().unwrap_or_else(|error| panic!("{error}"));
     StdFileOps.create_dir_all(&root).unwrap_or_else(|error| panic!("{error}"));
     let dir = layout::session_dir(&root, &id);
 
@@ -380,5 +376,4 @@ fn a_real_store_claims_its_session_name_exclusively() {
 
     assert!(again.is_err_and(|error| already_exists(&error)));
     assert!(StdFileOps.create_dir_exclusive(&next).is_ok(), "the next name is free");
-    let _ = real_mounts(0);
 }

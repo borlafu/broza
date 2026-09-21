@@ -20,11 +20,11 @@ use broza::{BrozaError, ExitCode};
 use jiff::Timestamp;
 
 use crate::args::{CleanArgs, RiskLevel};
-use crate::commands::Outcome;
 use crate::commands::clean_expiry::{Expiry, due_sessions, expire_due};
 use crate::commands::clean_output::CleanOutput;
 use crate::commands::detection::{self, DetectionRequest};
 use crate::commands::scan::folders::FolderSettings;
+use crate::commands::{Outcome, Reclaimed};
 use crate::output::{ColorPolicy, OutputFormat, Renderer};
 
 /// Everything `run` needs beyond the arguments.
@@ -224,6 +224,10 @@ fn render(
 ) -> Result<Outcome, BrozaError> {
     let warnings = [context.warnings.clone(), detection_warnings, executed.warnings].concat();
     let code = if executed.errors.is_empty() { ExitCode::Ok } else { ExitCode::PartialFailure };
+    let reclaimed = (!executed.plan.is_dry_run()).then(|| Reclaimed {
+        quarantined_bytes: executed.plan.quarantined_bytes(),
+        freed_bytes: executed.plan.reclaimed_bytes(),
+    });
     let output = CleanOutput {
         plan: executed.plan,
         due: executed.due,
@@ -234,5 +238,6 @@ fn render(
         home: home.to_path_buf(),
         policy: context.policy,
     };
-    Ok(Outcome::ok(output.render(context.format)?).with_warnings(warnings).with_code(code))
+    let outcome = Outcome::ok(output.render(context.format)?).with_warnings(warnings).with_code(code);
+    Ok(reclaimed.map_or_else(|| outcome.clone(), |figures| outcome.clone().with_reclaimed(figures)))
 }

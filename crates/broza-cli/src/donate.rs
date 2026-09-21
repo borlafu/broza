@@ -2,7 +2,7 @@
 //!
 //! This module is a pure predicate: no I/O, no clock, no environment. The
 //! caller reads the marker file, the clock and the terminal state and passes
-//! the facts in. Display itself lands in a later milestone.
+//! the facts in; [`crate::donate_display`] does that and prints the message.
 
 use jiff::{SignedDuration, Timestamp};
 

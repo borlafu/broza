@@ -235,8 +235,16 @@ M3 progress:
       report; `--max-size`, `--exclude`, `--risk`/`--category` mandatory; inform-only findings inside
       an actionable category are skipped with a warning; the store is created on first `--apply`.
 - [ ] `clean --apply --purge` execution (needs the irreversible path in the mover; M4 with `trash`).
-- [ ] `restore`, `quarantine list | expire | purge` commands; donation gate (RF-17).
-- [ ] End-to-end: dry-run → `--apply -y` → `restore --session` byte-identical (needs `restore`).
+- [x] `restore` (`ID…`, `--session`, `--all`, `--to`, `--list` with `--csv`) and
+      `quarantine list | expire | purge` (`commands/{restore,quarantine,store}.rs`); every write inside
+      the store through `Approved<QuarantineWrite>` from the manifests' own paths; `purge` asks the
+      typed word after refusing unknown ids.
+- [x] End-to-end in process: `clean --apply -y` → `quarantine list` → `restore --session` puts the
+      bytes back unchanged and empties the store (`commands/quarantine_tests.rs`).
+- [x] Donation gate (RF-17): `Outcome::reclaimed` marks an applied cleanup, `donate_display`
+      gathers the six conditions, prints the two lines on stderr and rewrites the marker file
+      (`~/.local/share/broza/state/donate_last_shown`); a marker that cannot be written is a `-v` note.
+- [ ] Release 0.2: README status, `cargo-dist` config, tag.
 
 ### M3 — Green detectors and quarantine (release 0.2)
 

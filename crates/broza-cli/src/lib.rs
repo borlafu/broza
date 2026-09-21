@@ -13,6 +13,7 @@ pub mod cli;
 pub mod commands;
 pub mod dispatch;
 pub mod donate;
+pub mod donate_display;
 pub mod env;
 pub mod host;
 pub mod output;
@@ -81,6 +82,8 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     let format = OutputFormat::resolve(cli.global.json, cli.global.csv);
     let policy = ColorPolicy::resolve(cli.global.no_color, effective.color, runtime, format);
 
+    let donate_prompt = effective.donate_prompt;
+    let (fs, clock) = (Arc::clone(&ports.fs), Arc::clone(&ports.clock));
     let outcome = dispatch(
         command,
         cli,
@@ -89,6 +92,11 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     )?;
     sink.write(&outcome.rendered)?;
     report_warnings(&outcome.warnings, &cli.global, format);
+    donate_display::maybe_show(
+        &donate_display::Run { outcome: &outcome, global: &cli.global, runtime, donate_prompt, format },
+        fs.as_ref(),
+        clock.as_ref(),
+    );
     Ok(outcome.code)
 }
 

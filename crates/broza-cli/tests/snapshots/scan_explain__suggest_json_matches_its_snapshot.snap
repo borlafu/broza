@@ -7,7 +7,7 @@ expression: envelope
   "command": "suggest",
   "data": {
     "by_risk": {
-      "amber": 65800003584,
+      "amber": 27200000000,
       "green": 297700003840,
       "red": 0
     },
@@ -91,7 +91,7 @@ expression: envelope
             "size_bytes": 27200000000
           }
         ],
-        "reasoning": "`npm install` recreates them; a project that has not changed since --unused-after is unlikely to need them soon.",
+        "reasoning": "Without a package.json beside it nothing can use it; under a project that has not changed since --unused-after, `npm install` brings it back when work resumes.",
         "reclaimable_bytes": 27200000000,
         "risk": "amber",
         "title": "Orphan node_modules"
@@ -110,13 +110,14 @@ expression: envelope
             "size_bytes": 212400001024
           }
         ],
-        "reasoning": "Xcode DerivedData under /System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData is rebuilt by Xcode when needed.",
+        "reasoning": "Xcode rebuilds DerivedData from the sources the next time a project opens.",
         "reclaimable_bytes": 212400001024,
         "risk": "green",
         "title": "Xcode DerivedData"
       }
     ],
-    "total_reclaimable_bytes": 363500007424
+    "inform_only_bytes": 38600003584,
+    "total_reclaimable_bytes": 324900003840
   },
   "errors": [],
   "generated_at": "[timestamp]",

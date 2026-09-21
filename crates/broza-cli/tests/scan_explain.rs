@@ -213,8 +213,11 @@ fn suggest_lists_the_green_categories_of_the_recorded_home() {
     assert!(text.contains("build-cache"), "{text}");
     assert!(text.contains("Xcode DerivedData"), "{text}");
     assert!(text.contains("user-cache"), "{text}");
-    assert!(text.contains("Docker Desktop disk image"), "{text}");
-    assert!(text.contains("→ Broza does not delete this. See: broza explain build-cache"), "{text}");
+    assert!(
+        text.contains("Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache"),
+        "{text}"
+    );
+    assert!(text.contains("Reported, not reclaimable by Broza: 38.6 GB"), "{text}");
 }
 
 #[test]
@@ -233,7 +236,11 @@ fn suggest_csv_has_one_row_per_finding_in_contract_tokens() {
     let text = stdout_of(&["suggest", "--csv", "--category", "build-cache"]);
 
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines[0], "id,category,title,risk,action,actionable,reclaimable_bytes,item_count");
+    assert_eq!(
+        lines.first().copied(),
+        Some("id,category,title,risk,action,actionable,reclaimable_bytes,item_count"),
+        "{text}"
+    );
     assert!(lines.iter().skip(1).all(|l| l.starts_with("build-cache.")), "{text}");
     assert!(lines.iter().any(|l| l.contains(",inform_only,false,")), "{text}");
 }

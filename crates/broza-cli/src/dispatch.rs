@@ -118,8 +118,15 @@ fn walked_home(runtime: &RuntimeEnv) -> Option<PathBuf> {
 
 /// Home, cache and progress settings shared by every command that walks folders.
 fn folder_settings(cli: &Cli, inputs: &Inputs<'_>) -> FolderSettings {
+    // Both the home and the stores excluded under it come from the same
+    // spelling: an exclusion for a home that is not walked excludes nothing.
+    let home = walked_home(inputs.runtime);
     FolderSettings {
-        home: walked_home(inputs.runtime),
+        own_stores: home
+            .as_deref()
+            .map(|home| vec![home.join(".cache/broza"), inputs.effective.quarantine_dir(home)])
+            .unwrap_or_default(),
+        home,
         cache_ttl: inputs.effective.cache_ttl.to_duration(),
         no_cache: cli.global.no_cache,
         show_progress: inputs.runtime.stderr_is_tty
@@ -127,12 +134,6 @@ fn folder_settings(cli: &Cli, inputs: &Inputs<'_>) -> FolderSettings {
             && !cli.global.quiet
             && inputs.format == OutputFormat::Human,
         verbose: cli.global.verbose > 0,
-        own_stores: inputs
-            .runtime
-            .home
-            .as_deref()
-            .map(|home| vec![home.join(".cache/broza"), inputs.effective.quarantine_dir(home)])
-            .unwrap_or_default(),
     }
 }
 

@@ -221,7 +221,15 @@ M3 progress:
       (`xcode-deriveddata`, `xcode-archives`, `orphan-node-modules`, `pycache`, `gradle-caches`,
       `cargo-target`, `docker-raw` inform-only) detectors.
 - [x] `broza suggest`: human (risk groups, text labels), `--json`, `--csv`, `--category`, `--risk`,
-      `--min-size`, `--unused-after`, `--explain`; one home walk through `scan`'s cache.
+      `--min-size`, `--unused-after`, `--explain`; one home walk that refreshes `scan`'s cache.
+- [x] Review round on detectors + `suggest`: totals count actionable findings only
+      (`inform_only_bytes`), overlapping paths credited once, orphan `node_modules` rule narrowed
+      (tool-managed trees excluded, idleness from the project's entries), JetBrains `LocalHistory`
+      kept out of the green caches, an unreadable `~/Downloads` costs one finding not the category
+      (`location_unreadable`), registry tests, walk nodes moved not cloned.
+- [ ] Warm `suggest` (post-0.2): cache records that know whether a subtree holds any name a detector
+      looks for, so the cache may answer for the rest. Today `suggest` walks cold by design
+      (`docs/cli-spec.md` §7).
 - [ ] `clean --apply` executor: planner → guard → confirmation → quarantine mover → report.
 - [ ] `restore`, `quarantine list | expire | purge` commands; donation gate (RF-17).
 

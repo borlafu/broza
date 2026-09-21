@@ -253,7 +253,7 @@ broza suggest [OPTIONS]
 |---|---|---|---|
 | `--category <c>` | string[] | all | Restrict to specific categories. Repeatable or comma-separated. |
 | `--risk <level>` | enum | `all` | `green`, `amber`, `red`, `all`. Filter by risk. |
-| `--min-size <s>` | size | `50MB` | Omit smaller findings. |
+| `--min-size <s>` | size | `50MB` | Omit smaller **actionable** findings. Inform-only findings are kept whatever their size: they are facts the user asked for, not reclaimable space, and hiding them by size would make them appear and disappear between runs. |
 | `--unused-after <p>` | duration | `1y` | "Unused app" threshold. Accepts `6m`, `1y`, `2y`. |
 | `--explain` | bool | `false` | Include the reasoning behind each detection. |
 
@@ -264,7 +264,7 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 | ID | Description | Base risk | Action |
 |---|---|---|---|
 | `user-cache` | `~/Library/Caches`, logs, incomplete downloads | green | `quarantine` |
-| `build-cache` | DerivedData, Archives, orphan `node_modules`, `__pycache__`, `.gradle`, `target/`; `Docker.raw` as inform-only sub-finding | green / amber | `quarantine` (Docker.raw: `inform_only`) |
+| `build-cache` | DerivedData, Archives, orphan `node_modules`, `__pycache__`, `.gradle`, `target/`; `Docker.raw` as inform-only sub-finding | green / amber (per finding, see below) | `quarantine` (Docker.raw: `inform_only`) |
 | `ios-simulators` | Unused iOS simulator runtimes and devices | amber | `quarantine` |
 | `trash` | Trash folders on all volumes | amber | `purge` |
 | `snapshots` | APFS local snapshots (Time Machine) | amber | `tmutil_delete` |
@@ -278,7 +278,11 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 
 - `snapshots`: macOS does not expose per-snapshot sizes through any public interface. The finding MUST report `reclaimable_bytes: 0` with `reasoning` "size not reported by macOS", MUST list each snapshot name with its `purgeable` flag, and MUST NOT propose `com.apple.os.update-*` snapshots (they are not purgeable and are required for the pending update). Only `com.apple.TimeMachine.*` snapshots flagged purgeable are actionable.
 - `build-cache`: the Docker virtual disk (`Docker.raw`, or the `.raw` file under `~/Library/Containers/com.docker.docker/`) is reported as an inform-only sub-finding with its **allocated** size on disk. Broza never calls the Docker daemon; the `instructions` block points to `docker system prune` and Docker Desktop's disk settings.
-- `build-cache` / orphan `node_modules`: a `node_modules` directory is orphan when its parent has no `package.json`, or when the parent directory's mtime is older than `unused-after`. In monorepos only leaf `node_modules` are proposed.
+- `build-cache` risk per finding: `xcode-deriveddata` green, `xcode-archives` amber (a shipped build, nothing recreates it), `orphan-node-modules` amber, `pycache` green, `gradle-caches` green, `cargo-target` amber (rebuilding a large workspace costs time), `docker-raw` amber and inform-only.
+- `build-cache` / orphan `node_modules`: a leaf `node_modules` directory is orphan when it is not tool-managed and either its parent has no `package.json` (the project is gone) or its parent is a project none of whose entries other than `node_modules` changed for `unused-after` (the newest mtime among them; the parent directory's own mtime only records when an entry was added or removed, which is the install time of anything installed once and used daily). Tool-managed means under `~/Library` (package-manager stores such as pnpm's, application payloads), under a hidden directory (`~/.vscode/extensions`, `~/.npm/_npx`, `~/.cache`) or inside an `.app` bundle: installed software that `npm install` in a project does not bring back. In monorepos only leaf `node_modules` are proposed.
+- `user-cache` / `library-caches`: entries are listed one level below `~/Library/Caches`. An entry that holds a directory nothing regenerates — today `LocalHistory`, JetBrains' per-file undo history — is opened up instead: its children are listed without that directory (up to three levels), so every path under the green label is regenerable. `paths[].last_used` of a directory is its mtime: an approximation, stated as such in `--explain`.
+- Paths claimed by two findings are credited once: a path under another finding's path is dropped from its finding and that finding's `reclaimable_bytes` and `item_count` are recomputed (the ancestor wins; two findings naming the same path keep it in the first, in category-then-id order). A finding left with no path is omitted. `total_reclaimable_bytes` therefore never counts a byte twice.
+- A location one detector cannot read (typically `~/Downloads` without Full Disk Access) costs that finding and a `location_unreadable` warning naming it; the detector's other findings stand. A detector that fails outright becomes a `detector_failed` warning; the other detectors still report.
 - `duplicates`: candidates are grouped by size, then by the first 4 KiB, then confirmed by a full BLAKE3 hash. Only confirmed groups are reported.
 - `large-old-files` / `unused-apps`: `last_used` is `max(atime, kMDItemLastUsedDate)`. When Spotlight returns no value (typical for system apps) the finding's `reasoning` MUST state low confidence.
 - `cloud-synced`: always `risk: red`, `actionable: false`, `action: inform_only`. No flag changes this.
@@ -286,29 +290,30 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 **Human output (sketch):**
 
 ```
-Potentially reclaimable space:  246.8 GB
+Potentially reclaimable space:  234.3 GB
+Reported, not reclaimable by Broza: 51.1 GB
 
 SAFE (green) — 138.2 GB
-   build-cache      121.4 GB   Xcode DerivedData (94.2 GB), orphan node_modules (27.2 GB)
-                               Docker.raw: 38.6 GB allocated — inform only, see: broza explain build-cache
-   user-cache        16.8 GB   Regenerable application caches
+   build-cache      121.4 GB   Xcode DerivedData (94.2 GB), Python bytecode caches (27.2 GB)
+                               Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache
+   user-cache        16.8 GB   Application caches (16.8 GB)
 
 REVIEW (amber) — 96.1 GB
-   snapshots           0 B     4 Time Machine local snapshots (size not reported by macOS)
+   duplicates        52.3 GB   318 duplicate groups
    unused-apps       28.7 GB   6 apps not opened in more than 1 year
    old-backups       15.1 GB   2 iPhone backups from 2023
-   duplicates        52.3 GB   318 duplicate groups
+   snapshots           0 B     4 Time Machine local snapshots (size not reported by macOS)
 
-INFO ONLY (red) — 12.5 GB
-   cloud-synced      12.5 GB   Already backed up in iCloud Drive and Dropbox
-                               → Broza does not delete this. See: broza explain cloud-synced
+INFO ONLY (red) — 0 B
+   cloud-synced         0 B
+                               Already backed up in iCloud Drive: 12.5 GB — inform only, see: broza explain cloud-synced
 
 Next step:
   broza clean --risk green            (dry run, deletes nothing)
   broza clean --risk green --apply    (moves to quarantine; space is freed after expiry or purge)
 ```
 
-Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06).
+Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06). The headline and the per-group totals count only actionable findings; inform-only findings are named on their own line with their size and summed on the "Reported, not reclaimable" line, so the number at the top is space Broza can actually make reclaimable. Within a risk group categories are ordered by their actionable bytes, biggest first. The "Next step" footer names the safest risk level that has something actionable, and is omitted when nothing is.
 
 ---
 
@@ -559,6 +564,14 @@ Every `--json` output shares this structure:
 | `session_has_untracked_items` | `errors[]` | A restore emptied the manifest while the directory still holds files. The session is kept in `restoring` and reported; this is the corruption case. |
 | `exclusive_rename_unsupported` | `warnings[]` | The filesystem has no atomic exclusive rename (exFAT, some network volumes), so the destination was checked first. Nothing was replaced, but the move was not atomic. |
 
+**Envelope codes of detection** (`suggest`; stable):
+
+| Code | Where | Meaning |
+|---|---|---|
+| `detector_failed` | `warnings[]` | One detector could not run at all; its category is missing from `findings[]`. The other detectors' findings are complete. |
+| `location_unreadable` | `warnings[]` | One detector could not read one location it wanted (`path` names it), typically `~/Downloads` without Full Disk Access. The finding that needed it is missing; the detector's other findings stand. |
+| `finding_dropped` | `warnings[]` | A finding could not be rebuilt after a path it shared with another finding was credited to that one. Should not happen; reported rather than hidden. |
+
 **Stable enums** (consumers ignore unknown values; producers MUST NOT rename existing values without a major bump):
 
 | Enum | Values |
@@ -626,12 +639,13 @@ the volume.
 ```json
 {
   "data": {
-    "total_reclaimable_bytes": 246800000000,
+    "total_reclaimable_bytes": 234300000000,
     "by_risk": {
       "green": 138200000000,
       "amber": 96100000000,
-      "red": 12500000000
+      "red": 0
     },
+    "inform_only_bytes": 12500000000,
     "findings": [{
       "id": "build-cache.xcode-deriveddata",
       "category": "build-cache",
@@ -688,13 +702,16 @@ the volume.
 
 | Field | Contract |
 |---|---|
+| `total_reclaimable_bytes` | Sum of `reclaimable_bytes` over the **actionable** findings, no path counted twice. What Broza can make reclaimable. |
+| `by_risk` | The same sum split by risk level; `red` is `0` while every red finding is inform-only. |
+| `inform_only_bytes` | Sum of `reclaimable_bytes` over the inform-only findings. Reported, never added to the total: Broza does not touch them. |
 | `id` | Stable identifier `category.detector`. Usable as a key by the GUI. |
 | `risk` | `green` · `amber` · `red`. |
 | `actionable` | If `false`, Broza **cannot** remove it. The GUI MUST disable the control. |
 | `action` | `quarantine` · `purge` · `tmutil_delete` · `inform_only`. |
 | `instructions` | Present **exactly** when `action` is `inform_only`, and required there: a finding Broza refuses to act on MUST tell the user what to do instead. Contains the provider's official steps. |
 | `snapshots` | Present only for `category: snapshots`. Each entry has `name`, `purgeable` and an optional `uuid` (present when macOS reports one). |
-| `paths[].last_used` | Optional. Absent when neither `atime` nor Spotlight provides a value. |
+| `paths[].last_used` | Optional. Absent when neither `atime` nor Spotlight provides a value. For a directory reported by `user-cache` or `build-cache` it is the directory's mtime (when an entry was last added or removed), an approximation that `--explain` states. |
 
 ### 4.4 `clean`
 
@@ -955,6 +972,8 @@ measures it.
 
 Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<volume_uuid>/`, one store per volume, keyed by `(dev, inode, mtime)` of each directory and expired by the configured `cache-ttl`. A directory whose key is unchanged is served from cache and its subtree is skipped. The store carries a versioned magic header; any decode error is reported as exit `9` (`CACHE_ERROR`) with the hint to retry with `--no-cache`, and Broza never attempts to "repair" a corrupt cache silently. `--no-cache` bypasses reads but still writes a fresh cache. A volume with no UUID falls back to its BSD name, with a `cache_keyed_by_bsd_id` warning. A subtree is only served from the cache when nothing inside it reaches `--min-size` — so a warm scan reports exactly what a cold one would, and `--min-size 0` disables the reuse entirely.
 
+`suggest` walks the home with `--min-size 0` on purpose: a subtree served from the cache is one node, and the detectors need every directory under the home (a `node_modules` three levels into a project, a `__pycache__` beside a module). It therefore runs at the cold rate on every invocation and refreshes the store for `scan`; its budget is what the cold rate gives for the home's entry count. Letting the cache answer for subtrees that hold none of the names detectors look for is the planned way to bring `suggest` under the warm target.
+
 Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) are excluded from the walk by default: `lstat` on a file the provider has not downloaded blocks on that provider, and a scan that walks into them measures the network rather than the disk. They can be scanned explicitly by passing the path.
 
 ---
@@ -965,7 +984,7 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 
 | # | Question (draft 1.0 §8) | Resolution |
 |---|---|---|
-| 1 | Orphan `node_modules` criterion | A `node_modules` directory is orphan when its parent has no `package.json` **or** the parent directory's mtime is older than `unused-after`. In monorepos only leaf `node_modules` are proposed. Tunable in a later minor. |
+| 1 | Orphan `node_modules` criterion | A leaf `node_modules` that is not tool-managed (under `~/Library`, a hidden directory or an `.app` bundle) is orphan when its parent has no `package.json` **or** none of the parent's entries other than `node_modules` changed for `unused-after` (§3.3). In monorepos only leaf `node_modules` are proposed. Tunable in a later minor. |
 | 2 | Duplicate hashing | Three stages: group by size → compare the first 4 KiB → full BLAKE3 hash only on remaining candidates. |
 | 3 | `last_used` reliability | `max(atime, kMDItemLastUsedDate)`. When Spotlight returns null (system apps) the finding's `reasoning` states low confidence. Native MDItem bindings may replace `mdls` later without contract changes. |
 | 4 | Docker | v1 reports the allocated size of `Docker.raw` as an inform-only sub-finding of `build-cache`. No daemon or `docker` CLI calls. |
@@ -1045,3 +1064,4 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
   for its duration; a session another Broza holds is reported `session_busy` and left alone.
 - §4.1 (M3, unreleased): `lock_unreadable` store code; a lock Broza cannot open never aborts a multi-session run.
 - §3.1 and §4.2 (M2-D, unreleased): the folder walker is wired into `scan`. `largest_items` is populated (allocated sizes, drill-down rule), `--tree` draws the folder tree, `PATH` arguments scan from those paths on the volume they live on (exit `4` on a protected or unknown volume, `2` when relative), progress is drawn on stderr on a TTY, `size_exceeds_volume` warns about clone overcount. The `folder_scan_pending` warning is gone.
+- §3.3, §4.1 and §4.3 (M3, unreleased): `suggest` totals count actionable findings only; `inform_only_bytes` added; paths claimed by two findings are credited once; per-finding risk of `build-cache` listed; orphan `node_modules` criterion narrowed (tool-managed trees excluded, idleness judged by the project's entries); `~/Library/Caches` entries holding non-regenerable data (`LocalHistory`) are opened up around it; detection warning codes `detector_failed`, `location_unreadable`, `finding_dropped`; `--min-size` keeps inform-only findings; human sketch corrected (inform-only line format, ordering, footer). §7: why `suggest` walks cold.

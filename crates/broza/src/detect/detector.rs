@@ -6,28 +6,79 @@
 //! reason to raise the risk. Every path it reports is a candidate the safety
 //! kernel will check again before anything moves (`AGENTS.md` §2).
 
+use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use jiff::Timestamp;
 
 use crate::BrozaError;
-use crate::model::{Category, Finding};
+use crate::model::{Category, Diagnostic, Finding};
 use crate::ports::FileOps;
 use crate::scan::{DirNode, MountTable};
+
+/// Warning code for a location one detector wanted and could not read.
+///
+/// The detector's other findings stand; only the part that needed this
+/// location is missing, and the warning says which.
+pub const LOCATION_UNREADABLE_CODE: &str = "location_unreadable";
 
 /// One source of findings for one category.
 pub trait Detector: Send + Sync {
     /// The category every finding of this detector belongs to.
     fn category(&self) -> Category;
 
-    /// Look, and report. Failures here are turned into warnings by the
-    /// registry: one detector that cannot read never hides the others.
+    /// Look, and report.
+    ///
+    /// A location the detector cannot read is a warning inside [`Detected`],
+    /// not an error: `~/Downloads` being off limits must not hide the caches.
+    /// The registry turns an `Err` into a `detector_failed` warning, so even a
+    /// programming error in one detector never hides the others.
     ///
     /// # Errors
     ///
-    /// Whatever the filesystem port reports for a location the detector needs.
-    fn detect(&self, context: &DetectContext<'_>) -> Result<Vec<Finding>, BrozaError>;
+    /// Only for failures that leave the detector with nothing to say.
+    fn detect(&self, context: &DetectContext<'_>) -> Result<Detected, BrozaError>;
+}
+
+/// What one detector returned: its findings and what it could not look at.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Detected {
+    /// Findings, in the detector's own order.
+    pub findings: Vec<Finding>,
+    /// Locations that could not be read, one warning each.
+    pub warnings: Vec<Diagnostic>,
+}
+
+impl Detected {
+    /// Add a finding when there is one.
+    #[must_use]
+    pub fn with_finding(mut self, finding: Option<Finding>) -> Self {
+        self.findings.extend(finding);
+        self
+    }
+
+    /// Fold another result into this one, in order.
+    #[must_use]
+    pub fn merged(mut self, other: Self) -> Self {
+        self.findings.extend(other.findings);
+        self.warnings.extend(other.warnings);
+        self
+    }
+
+    /// The warning for a location `category`'s detector could not read.
+    pub fn unreadable(category: Category, path: &Path, what: &str, error: &BrozaError) -> Diagnostic {
+        Diagnostic {
+            code: LOCATION_UNREADABLE_CODE.to_owned(),
+            message: format!(
+                "the {} detector could not read {}: {error}; {what} were not checked",
+                category.as_str(),
+                path.display()
+            ),
+            path: Some(path.to_path_buf()),
+        }
+    }
 }
 
 /// What a detector may look at.
@@ -48,12 +99,46 @@ pub struct DetectContext<'a> {
     pub unused_after: Duration,
     /// Every directory under the home, as the scanner measured it.
     pub home_nodes: &'a [DirNode],
+    /// The same nodes, indexed by path and by final component.
+    index: NodeIndex<'a>,
 }
 
-impl DetectContext<'_> {
+/// Lookups over the walk that would otherwise be linear scans of every node.
+struct NodeIndex<'a> {
+    by_path: HashMap<&'a Path, &'a DirNode>,
+    by_name: HashMap<&'a OsStr, Vec<&'a DirNode>>,
+}
+
+impl<'a> NodeIndex<'a> {
+    fn of(nodes: &'a [DirNode]) -> Self {
+        let by_path = nodes.iter().map(|node| (node.path.as_path(), node)).collect();
+        let by_name = nodes.iter().filter_map(|node| node.path.file_name().map(|name| (name, node))).fold(
+            HashMap::<&OsStr, Vec<&DirNode>>::new(),
+            |mut map, (name, node)| {
+                map.entry(name).or_default().push(node);
+                map
+            },
+        );
+        Self { by_path, by_name }
+    }
+}
+
+impl<'a> DetectContext<'a> {
+    /// Package what detectors read, indexing the walk once.
+    pub fn new(
+        home: &'a Path,
+        fs: &'a dyn FileOps,
+        mounts: &'a MountTable,
+        now: Timestamp,
+        unused_after: Duration,
+        home_nodes: &'a [DirNode],
+    ) -> Self {
+        Self { home, fs, mounts, now, unused_after, home_nodes, index: NodeIndex::of(home_nodes) }
+    }
+
     /// The measured node for `path`, when the walk reached it.
-    pub fn node(&self, path: &Path) -> Option<&DirNode> {
-        self.home_nodes.iter().find(|node| node.path == path)
+    pub fn node(&self, path: &Path) -> Option<&'a DirNode> {
+        self.index.by_path.get(path).copied()
     }
 
     /// Allocated bytes of `path` according to the walk, `0` when unknown.
@@ -61,13 +146,13 @@ impl DetectContext<'_> {
         self.node(path).map_or(0, |node| node.allocated_bytes)
     }
 
-    /// The nodes whose final component is `name`.
-    pub fn nodes_named<'b>(&'b self, name: &'b str) -> impl Iterator<Item = &'b DirNode> + 'b {
-        self.home_nodes.iter().filter(move |node| node.path.file_name().is_some_and(|n| n == name))
+    /// The nodes whose final component is `name`, in walk order.
+    pub fn nodes_named(&self, name: &str) -> impl Iterator<Item = &'a DirNode> + '_ {
+        self.index.by_name.get(OsStr::new(name)).into_iter().flatten().copied()
     }
 
     /// The direct child directories of `path`, as the walk saw them.
-    pub fn children_of<'b>(&'b self, path: &'b Path) -> impl Iterator<Item = &'b DirNode> + 'b {
+    pub fn children_of<'b>(&'b self, path: &'b Path) -> impl Iterator<Item = &'a DirNode> + 'b {
         self.home_nodes.iter().filter(move |node| node.path.parent() == Some(path))
     }
 

@@ -69,14 +69,14 @@ pub fn run(context: &SuggestContext<'_>) -> Result<Outcome, BrozaError> {
     let enumeration = context.ports.disks.enumerate()?;
     let mount = mount_table(context.ports, &enumeration.disks)?;
     let (nodes, walk_warnings) = walk_home(home, &mount.table, context)?;
-    let detect_context = DetectContext {
+    let detect_context = DetectContext::new(
         home,
-        fs: context.ports.fs.as_ref(),
-        mounts: &mount.table,
-        now: context.generated_at,
+        context.ports.fs.as_ref(),
+        &mount.table,
+        context.generated_at,
         unused_after,
-        home_nodes: &nodes,
-    };
+        &nodes,
+    );
     let report = Registry::builtin().restricted_to(categories.as_deref()).run(&detect_context);
     let findings = filter::apply(report.findings, core_risk(context.args.risk), min_size.bytes());
     let warnings =

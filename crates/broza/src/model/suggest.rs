@@ -8,10 +8,16 @@ use crate::model::finding::{Finding, Risk};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SuggestReport {
-    /// Sum of `reclaimable_bytes` over every finding.
+    /// Sum of `reclaimable_bytes` over every **actionable** finding: what Broza
+    /// itself can make reclaimable.
     pub total_reclaimable_bytes: u64,
     /// The same sum, split by risk level.
     pub by_risk: RiskTotals,
+    /// Bytes behind inform-only findings. Reported, never counted as reclaimable:
+    /// Broza does not touch them, so a headline that included them would promise
+    /// space it cannot free.
+    #[serde(default)]
+    pub inform_only_bytes: u64,
     /// Findings, in the order the detectors produced them.
     #[serde(default)]
     pub findings: Vec<Finding>,
@@ -21,7 +27,11 @@ impl SuggestReport {
     /// Build a report whose totals are derived from `findings`.
     pub fn from_findings(findings: Vec<Finding>) -> Self {
         let by_risk = RiskTotals::from_findings(&findings);
-        Self { total_reclaimable_bytes: by_risk.total(), by_risk, findings }
+        let inform_only_bytes = findings
+            .iter()
+            .filter(|finding| !finding.is_actionable())
+            .fold(0_u64, |sum, finding| sum.saturating_add(finding.reclaimable_bytes()));
+        Self { total_reclaimable_bytes: by_risk.total(), by_risk, inform_only_bytes, findings }
     }
 }
 
@@ -33,14 +43,16 @@ pub struct RiskTotals {
     pub green: u64,
     /// Bytes behind `amber` findings.
     pub amber: u64,
-    /// Bytes behind `red` findings. These are reported, never deleted by Broza.
+    /// Bytes behind actionable `red` findings.
     pub red: u64,
 }
 
 impl RiskTotals {
-    /// Sum the reclaimable bytes of `findings` per risk level, saturating on overflow.
+    /// Sum the reclaimable bytes of the actionable `findings` per risk level,
+    /// saturating on overflow. Inform-only findings are left out: see
+    /// [`SuggestReport::inform_only_bytes`].
     pub fn from_findings(findings: &[Finding]) -> Self {
-        findings.iter().fold(Self::default(), |totals, finding| {
+        findings.iter().filter(|finding| finding.is_actionable()).fold(Self::default(), |totals, finding| {
             let bytes = finding.reclaimable_bytes();
             match finding.risk() {
                 Risk::Green => Self { green: totals.green.saturating_add(bytes), ..totals },
@@ -86,8 +98,9 @@ mod tests {
             finding("cloud-synced.icloud", Category::CloudSynced, Risk::Red, 25),
         ];
         let report = SuggestReport::from_findings(findings);
-        assert_eq!(report.by_risk, RiskTotals { green: 300, amber: 50, red: 25 });
-        assert_eq!(report.total_reclaimable_bytes, 375);
+        assert_eq!(report.by_risk, RiskTotals { green: 300, amber: 50, red: 0 });
+        assert_eq!(report.total_reclaimable_bytes, 350, "inform-only bytes are not reclaimable");
+        assert_eq!(report.inform_only_bytes, 25);
     }
 
     #[test]

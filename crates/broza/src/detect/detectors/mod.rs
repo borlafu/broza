@@ -12,6 +12,7 @@ pub fn builtin() -> Vec<Box<dyn Detector>> {
 
 /// Shared helpers for detectors.
 pub(super) mod support {
+    use std::cmp::Ordering;
     use std::path::Path;
 
     use jiff::Timestamp;
@@ -20,7 +21,14 @@ pub(super) mod support {
     use crate::model::{Category, Finding, FindingBuilder, FindingId, FindingPath};
     use crate::scan::DirNode;
 
-    /// A finding path measured by the walk: allocated bytes, mtime as `last_used`.
+    /// A finding path measured by the walk: allocated bytes, and the directory's
+    /// mtime as `last_used`.
+    ///
+    /// A directory's mtime is when an entry was last added or removed inside it,
+    /// not when its contents were last read: an approximation of "last used",
+    /// good enough to sort caches, and what `--explain` shows. `atime` and
+    /// Spotlight's last-used date (`docs/cli-spec.md` §3.3) are for the
+    /// detectors that judge single files.
     pub fn path_of(node: &DirNode) -> FindingPath {
         FindingPath { path: node.path.clone(), size_bytes: node.allocated_bytes, last_used: node.mtime }
     }
@@ -28,6 +36,11 @@ pub(super) mod support {
     /// A finding path for something the walk did not measure.
     pub fn path_with(path: &Path, size_bytes: u64, last_used: Option<Timestamp>) -> FindingPath {
         FindingPath { path: path.to_path_buf(), size_bytes, last_used }
+    }
+
+    /// The order every finding lists its paths in: biggest first, then by path.
+    pub fn by_size_then_path(a: &FindingPath, b: &FindingPath) -> Ordering {
+        b.size_bytes.cmp(&a.size_bytes).then_with(|| a.path.cmp(&b.path))
     }
 
     /// Start a finding of `category` with id `<category>.<detector>`.

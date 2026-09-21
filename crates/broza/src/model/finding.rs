@@ -249,6 +249,23 @@ impl Finding {
         self.instructions.as_ref()
     }
 
+    /// The same finding over `paths`, with `reclaimable_bytes` and `item_count`
+    /// recomputed from them.
+    ///
+    /// For a path-backed finding the numbers it prints are the numbers its paths
+    /// add up to; anything that narrows the paths must narrow the numbers too.
+    ///
+    /// # Errors
+    ///
+    /// When the result breaks an invariant of the model (`validate`).
+    pub fn with_paths(self, paths: Vec<FindingPath>) -> Result<Self, BrozaError> {
+        let reclaimable_bytes = paths.iter().fold(0_u64, |sum, path| sum.saturating_add(path.size_bytes));
+        let item_count = Some(u64::try_from(paths.len()).unwrap_or(u64::MAX));
+        let finding = Self { reclaimable_bytes, item_count, paths, ..self };
+        finding.validate()?;
+        Ok(finding)
+    }
+
     /// Check the invariants of `docs/cli-spec.md` §3.3 and §4.3.
     ///
     /// 1. The identifier's category part matches `category`.

@@ -214,25 +214,23 @@ fn scan_roots_on(
     save_store(store, store_path.as_deref(), walks.iter().map(|(_, _, walked)| walked), ports)?;
     Ok(walks
         .into_iter()
-        .map(|(index, root, walked)| (index, assemble(entry, root, &walked, request)))
+        .map(|(index, root, walked)| (index, assemble(entry, root, walked, request)))
         .collect())
 }
 
 /// One root's walk, turned into what the report shows.
-fn assemble(entry: &MountEntry, root_path: &Path, walked: &WalkResult, request: &ScanRequest) -> VolumeScan {
+///
+/// Takes the walk by value: its nodes move into the result rather than being
+/// copied, which on a multi-million-entry home is hundreds of megabytes.
+fn assemble(entry: &MountEntry, root_path: &Path, walked: WalkResult, request: &ScanRequest) -> VolumeScan {
     let volume_id = entry.volume.id.clone();
     let root = walked.root().cloned().unwrap_or_else(|| unreadable_root(entry, root_path));
     let mut warnings = collapse_permission_warnings(walked.errors.clone(), request.verbose_warnings);
     warnings.extend(cache_key_warning(request, &entry.volume));
     warnings.extend(overcount_warning(&root, entry));
-    VolumeScan {
-        largest: aggregate::largest_items(walked, request.top, request.min_size, &volume_id),
-        tree: aggregate::tree(&root, &walked.nodes, request.depth, request.min_size),
-        root,
-        warnings,
-        volume_id,
-        nodes: walked.nodes.clone(),
-    }
+    let largest = aggregate::largest_items(&walked, request.top, request.min_size, &volume_id);
+    let tree = aggregate::tree(&root, &walked.nodes, request.depth, request.min_size);
+    VolumeScan { largest, tree, root, warnings, volume_id, nodes: walked.nodes }
 }
 
 /// Where this volume's cache lives: under its UUID, or under its BSD name.
@@ -381,7 +379,9 @@ fn walk_volume(
         skip_hook: Some(&hook),
         // Whatever the tree view shows is measured on this run.
         cache_from_depth: request.depth.saturating_add(1),
-        report_files_min_size: Some(request.min_size),
+        // With nothing to list, collecting file entries only to drop them
+        // would allocate one per file of the volume.
+        report_files_min_size: (request.top > 0).then_some(request.min_size),
         report_files_top: request.top,
         progress: reporter,
     };

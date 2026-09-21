@@ -1,10 +1,11 @@
 //! The human rendering of `broza suggest` (`docs/cli-spec.md` §3.3).
 //!
 //! Findings are grouped by risk, each group headed by its text label and its
-//! total, then by category. Every risk carries a word as well as a colour
-//! (RNF-06), inform-only findings say in the same breath that Broza does not
-//! delete them, and the footer names the two commands that come next — the dry
-//! run first.
+//! total, then by category, biggest first. Every risk carries a word as well as
+//! a colour (RNF-06). The headline counts only what Broza can act on; inform-only
+//! findings are named on their own line with their size, so the number at the
+//! top is never inflated by space Broza will not free. The footer names the two
+//! commands that come next — the dry run first — for the safest non-empty group.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -19,8 +20,11 @@ use crate::output::{ColorPolicy, format_bytes};
 const CATEGORY_WIDTH: usize = 16;
 /// Width of the size column.
 const SIZE_WIDTH: usize = 9;
+/// How many paths `--explain` prints per finding.
+const EXPLAIN_PATHS: usize = 5;
 /// What is printed when no detector found anything.
-const NOTHING_FOUND: &str = "Nothing to suggest: no cleanable category reached --min-size.";
+const NOTHING_FOUND: &str =
+    "Nothing to suggest: no finding passed the --category, --risk and --min-size filters.";
 
 /// Render `report` for a terminal.
 pub fn render(report: &SuggestReport, explain: bool, home: &Path, policy: ColorPolicy) -> String {
@@ -29,6 +33,10 @@ pub fn render(report: &SuggestReport, explain: bool, home: &Path, policy: ColorP
     }
     let mut text =
         format!("Potentially reclaimable space:  {}", format_bytes(report.total_reclaimable_bytes));
+    if report.inform_only_bytes > 0 {
+        let _ignored =
+            write!(text, "\nReported, not reclaimable by Broza: {}", format_bytes(report.inform_only_bytes));
+    }
     for (risk, total) in [
         (Risk::Green, report.by_risk.green),
         (Risk::Amber, report.by_risk.amber),
@@ -39,15 +47,13 @@ pub fn render(report: &SuggestReport, explain: bool, home: &Path, policy: ColorP
             continue;
         }
         let _ignored = write!(text, "\n\n{} — {}", heading(risk, policy), format_bytes(total));
-        for category in Category::all() {
-            let of_category: Vec<&Finding> =
-                findings.iter().copied().filter(|f| f.category() == category).collect();
-            if !of_category.is_empty() {
-                render_category(&mut text, category, &of_category, explain, home);
-            }
+        for (category, of_category) in by_category_biggest_first(&findings) {
+            render_category(&mut text, category, &of_category, explain, home);
         }
     }
-    let _ignored = write!(text, "\n\n{}", footer());
+    if let Some(footer) = footer(report) {
+        let _ignored = write!(text, "\n\n{footer}");
+    }
     text
 }
 
@@ -61,11 +67,27 @@ fn heading(risk: Risk, policy: ColorPolicy) -> String {
     format!("{} ({token})", risk_chip(policy, risk))
 }
 
-/// One category line, with its findings summarised, plus their details.
+/// The findings of one risk group split by category, biggest category first.
+fn by_category_biggest_first<'a>(findings: &[&'a Finding]) -> Vec<(Category, Vec<&'a Finding>)> {
+    let mut groups: Vec<(Category, Vec<&Finding>)> = Category::all()
+        .into_iter()
+        .map(|category| (category, findings.iter().copied().filter(|f| f.category() == category).collect()))
+        .filter(|(_, of_category): &(Category, Vec<&Finding>)| !of_category.is_empty())
+        .collect();
+    groups.sort_by_key(|(_, of_category)| std::cmp::Reverse(actionable_total(of_category)));
+    groups
+}
+
+/// The bytes Broza can act on among `findings`.
+fn actionable_total(findings: &[&Finding]) -> u64 {
+    findings.iter().filter(|f| f.is_actionable()).map(|f| f.reclaimable_bytes()).fold(0, u64::saturating_add)
+}
+
+/// One category line, with its actionable findings summarised, plus their details.
 fn render_category(text: &mut String, category: Category, findings: &[&Finding], explain: bool, home: &Path) {
-    let total: u64 = findings.iter().map(|f| f.reclaimable_bytes()).fold(0, u64::saturating_add);
     let summary = findings
         .iter()
+        .filter(|f| f.is_actionable())
         .map(|f| format!("{} ({})", f.title(), format_bytes(f.reclaimable_bytes())))
         .collect::<Vec<_>>()
         .join(", ");
@@ -73,15 +95,17 @@ fn render_category(text: &mut String, category: Category, findings: &[&Finding],
         text,
         "\n   {:<CATEGORY_WIDTH$}{:>SIZE_WIDTH$}   {summary}",
         category.as_str(),
-        format_bytes(total)
+        format_bytes(actionable_total(findings))
     );
     for finding in findings {
         if !finding.is_actionable() {
             let _ignored = write!(
                 text,
-                "\n   {:<CATEGORY_WIDTH$}{:>SIZE_WIDTH$}   → Broza does not delete this. See: broza explain {}",
+                "\n   {:<CATEGORY_WIDTH$}{:>SIZE_WIDTH$}   {}: {} — inform only, see: broza explain {}",
                 "",
                 "",
+                finding.title(),
+                format_bytes(finding.reclaimable_bytes()),
                 category.as_str()
             );
         }
@@ -94,10 +118,11 @@ fn render_category(text: &mut String, category: Category, findings: &[&Finding],
 /// `--explain`: the reasoning and the paths behind one finding.
 fn render_reasoning(text: &mut String, finding: &Finding, home: &Path) {
     let indent = " ".repeat(3 + CATEGORY_WIDTH + SIZE_WIDTH + 3);
+    let _ignored = write!(text, "\n{indent}{}", finding.id());
     if let Some(reasoning) = finding.reasoning() {
-        let _ignored = write!(text, "\n{indent}{}: {reasoning}", finding.id());
+        let _ignored = write!(text, ": {reasoning}");
     }
-    for path in finding.paths().iter().take(5) {
+    for path in finding.paths().iter().take(EXPLAIN_PATHS) {
         let _ignored = write!(
             text,
             "\n{indent}  {:>SIZE_WIDTH$}  {}",
@@ -105,14 +130,21 @@ fn render_reasoning(text: &mut String, finding: &Finding, home: &Path) {
             abbreviate(&path.path, Some(home))
         );
     }
-    if finding.paths().len() > 5 {
-        let _ignored = write!(text, "\n{indent}  … and {} more", finding.paths().len() - 5);
+    if finding.paths().len() > EXPLAIN_PATHS {
+        let _ignored = write!(text, "\n{indent}  … and {} more", finding.paths().len() - EXPLAIN_PATHS);
     }
 }
 
-/// What to run next: the dry run, then the real thing.
-fn footer() -> String {
-    "Next step:\n  broza clean --risk green            (dry run, deletes nothing)\n  broza clean --risk green --apply    (moves to quarantine; space is freed after expiry or purge)".to_owned()
+/// What to run next: the dry run, then the real thing, for the safest level
+/// that has something to clean. Nothing when nothing is actionable.
+fn footer(report: &SuggestReport) -> Option<String> {
+    let level = [(Risk::Green, "green"), (Risk::Amber, "amber")]
+        .into_iter()
+        .find(|(risk, _)| report.findings.iter().any(|f| f.is_actionable() && f.risk() == *risk))
+        .map(|(_, token)| token)?;
+    Some(format!(
+        "Next step:\n  broza clean --risk {level}            (dry run, deletes nothing)\n  broza clean --risk {level} --apply    (moves to quarantine; space is freed after expiry or purge)"
+    ))
 }
 
 #[cfg(test)]
@@ -157,16 +189,50 @@ mod tests {
 
         let text = render(&report, false, Path::new("/Users/dana"), ColorPolicy::Never);
 
-        assert!(text.starts_with("Potentially reclaimable space:  150.7 GB"), "{text}");
+        assert!(text.starts_with("Potentially reclaimable space:  138.2 GB"), "{text}");
+        assert!(text.contains("Reported, not reclaimable by Broza: 12.5 GB"), "{text}");
         assert!(text.contains("SAFE (green) — 138.2 GB"), "{text}");
         assert!(text.contains("   build-cache      121.4 GB   Title of build-cache (121.4 GB)"), "{text}");
-        assert!(text.contains("INFO ONLY (red) — 12.5 GB"), "{text}");
-        assert!(text.contains("→ Broza does not delete this. See: broza explain cloud-synced"), "{text}");
+        assert!(text.contains("INFO ONLY (red) — 0 B"), "{text}");
+        assert!(
+            text.contains("Title of cloud-synced: 12.5 GB — inform only, see: broza explain cloud-synced"),
+            "{text}"
+        );
+        assert!(text.contains("broza clean --risk green            (dry run"), "{text}");
         assert!(text.ends_with("(moves to quarantine; space is freed after expiry or purge)"), "{text}");
     }
 
     #[test]
-    fn explain_adds_the_reasoning_and_the_paths_shortened_to_home() {
+    fn categories_within_a_group_are_listed_biggest_first() {
+        let report = SuggestReport::from_findings(vec![
+            finding("user-cache.a", Category::UserCache, 16_800_000_000, false),
+            finding("build-cache.b", Category::BuildCache, 121_400_000_000, false),
+        ]);
+
+        let text = render(&report, false, Path::new("/Users/dana"), ColorPolicy::Never);
+
+        assert!(text.find("build-cache").unwrap() < text.find("user-cache").unwrap(), "{text}");
+    }
+
+    #[test]
+    fn the_footer_names_the_safest_level_with_something_to_clean_or_is_absent() {
+        let amber_only = SuggestReport::from_findings(vec![
+            finding("trash.a", Category::Trash, 1_000_000, false),
+            finding("cloud-synced.c", Category::CloudSynced, 12_500_000_000, true),
+        ]);
+        let inform_only =
+            SuggestReport::from_findings(vec![finding("cloud-synced.c", Category::CloudSynced, 5, true)]);
+
+        let amber = render(&amber_only, false, Path::new("/"), ColorPolicy::Never);
+        let nothing = render(&inform_only, false, Path::new("/"), ColorPolicy::Never);
+
+        assert!(amber.contains("broza clean --risk amber --apply"), "{amber}");
+        assert!(!nothing.contains("Next step"), "{nothing}");
+        assert!(nothing.starts_with("Potentially reclaimable space:  0 B"), "{nothing}");
+    }
+
+    #[test]
+    fn explain_adds_the_id_the_reasoning_and_the_paths_shortened_to_home() {
         let report =
             SuggestReport::from_findings(vec![finding("user-cache.a", Category::UserCache, 4096, false)]);
 

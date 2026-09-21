@@ -94,7 +94,14 @@ pub fn walk(
 }
 
 /// The request `suggest` walks the home with: every directory measured, nothing
-/// listed, the same cache and exclusions as `scan`.
+/// listed, the same exclusions as `scan`.
+///
+/// `min_size` is `0`, which keeps the cache from answering for any subtree
+/// (`docs/cli-spec.md` §7): a subtree served from the cache is one node, and
+/// detectors need every directory under it — the `node_modules` three levels
+/// down, the `__pycache__` inside a project. The walk still refreshes the store
+/// for `scan`'s benefit. Letting the cache answer for subtrees that hold none
+/// of the names detectors look for is the planned way to make `suggest` warm.
 ///
 /// # Errors
 ///

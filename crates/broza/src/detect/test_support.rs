@@ -9,7 +9,7 @@ use std::time::Duration;
 use jiff::Timestamp;
 
 use crate::detect::detector::DetectContext;
-use crate::scan::{DirNode, MountTable, WalkOptions, walk};
+use crate::scan::{DirNode, MountTable, WalkOptions, default_excludes, walk};
 use crate::testing::{FakeFileOps, mac_mount_table};
 
 /// The home every detector test uses, in the Data-volume spelling the walk sees.
@@ -28,19 +28,24 @@ pub struct World<'a> {
 impl World<'_> {
     /// The context detectors are handed. `now` is fixed so "unused" is decidable.
     pub fn context(&self) -> DetectContext<'_> {
-        DetectContext {
-            home: &self.home,
-            fs: self.fs,
-            mounts: &self.mounts,
-            now: "2026-09-21T10:00:00Z".parse::<Timestamp>().unwrap_or_default(),
-            unused_after: Duration::from_secs(365 * 24 * 60 * 60),
-            home_nodes: &self.nodes,
-        }
+        DetectContext::new(
+            &self.home,
+            self.fs,
+            &self.mounts,
+            "2026-09-21T10:00:00Z".parse::<Timestamp>().unwrap_or_default(),
+            Duration::from_secs(365 * 24 * 60 * 60),
+            &self.nodes,
+        )
     }
 }
 
-/// Walk `home` on `fs` and package the result.
+/// Walk `home` on `fs` the way `suggest` does — cloud roots and Broza's own
+/// stores excluded, no file list — and package the result.
 pub fn context_over(fs: &FakeFileOps, home: PathBuf) -> World<'_> {
-    let nodes = walk(Path::new(&home), &WalkOptions::default(), fs).nodes;
+    let mut exclude = default_excludes(&home);
+    exclude.push(home.join(".cache/broza"));
+    exclude.push(home.join(".local/share/broza"));
+    let options = WalkOptions { exclude, report_files_min_size: None, ..WalkOptions::default() };
+    let nodes = walk(Path::new(&home), &options, fs).nodes;
     World { fs, home, mounts: mac_mount_table(), nodes }
 }

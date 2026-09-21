@@ -7,7 +7,7 @@ expression: value
     "by_risk": {
       "amber": 96100000000,
       "green": 138200000000,
-      "red": 12500000000
+      "red": 0
     },
     "findings": [
       {
@@ -65,6 +65,7 @@ expression: value
         "title": "Already backed up in iCloud Drive"
       }
     ],
-    "total_reclaimable_bytes": 246800000000
+    "inform_only_bytes": 12500000000,
+    "total_reclaimable_bytes": 234300000000
   }
 }

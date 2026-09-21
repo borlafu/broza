@@ -1,11 +1,12 @@
 {
   "data": {
-    "total_reclaimable_bytes": 246800000000,
+    "total_reclaimable_bytes": 234300000000,
     "by_risk": {
       "green": 138200000000,
       "amber": 96100000000,
-      "red": 12500000000
+      "red": 0
     },
+    "inform_only_bytes": 12500000000,
     "findings": [{
       "id": "build-cache.xcode-deriveddata",
       "category": "build-cache",

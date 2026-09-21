@@ -17,14 +17,14 @@ mod fixture;
 ///
 /// The seam swaps the filesystem for a recording in which the real `$HOME` does
 /// not exist; the recording's own home stands in for it.
+#[cfg(all(debug_assertions, feature = "fake-diskutil"))]
 pub fn fixture_home(runtime: &crate::env::RuntimeEnv) -> Option<std::path::PathBuf> {
-    #[cfg(all(debug_assertions, feature = "fake-diskutil"))]
-    {
-        if runtime.fake_diskutil_fixtures.is_some() {
-            return Some(std::path::PathBuf::from(fixture::FIXTURE_HOME));
-        }
-    }
-    let _ = runtime;
+    runtime.fake_diskutil_fixtures.as_ref().map(|_| std::path::PathBuf::from(fixture::FIXTURE_HOME))
+}
+
+/// Without the seam there is no fixture home: the real `$HOME` is walked.
+#[cfg(not(all(debug_assertions, feature = "fake-diskutil")))]
+pub const fn fixture_home(_: &crate::env::RuntimeEnv) -> Option<std::path::PathBuf> {
     None
 }
 

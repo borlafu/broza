@@ -230,7 +230,7 @@ fn drop_session(
     fs: &dyn FileOps,
 ) -> Result<(), BrozaError> {
     match recheck(token.items(), &found.dir, fs)? {
-        Recheck::Approved => fs.remove_tree(&found.dir),
+        Recheck::Unchanged => fs.remove_tree(&found.dir),
         Recheck::Refused(code) => {
             Err(BrozaError::Other(format!("the directory changed since it was checked ({code})")))
         }

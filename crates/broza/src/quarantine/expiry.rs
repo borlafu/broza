@@ -8,7 +8,7 @@
 //! re-check `(device, inode)` before removing anything.
 //!
 //! A session directory is always derived from an identifier through
-//! [`store`](crate::quarantine::store), never taken from the caller, so nothing
+//! [`store`], never taken from the caller, so nothing
 //! outside the store root can be reached.
 
 use std::path::Path;
@@ -134,7 +134,7 @@ fn remove_session(
     }
     match recheck(token.items(), &found.dir, fs)? {
         Recheck::Refused(code) => Ok(refused(&found, &code)),
-        Recheck::Approved => Ok(match fs.remove_tree(&found.dir) {
+        Recheck::Unchanged => Ok(match fs.remove_tree(&found.dir) {
             Ok(()) => purged(&found),
             Err(error) => refused(&found, &io_code(&error)),
         }),

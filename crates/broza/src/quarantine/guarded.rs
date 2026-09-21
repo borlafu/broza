@@ -19,7 +19,7 @@ use crate::safety::guard::ApprovedItem;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Recheck {
     /// The path is covered by the token and is still the same object.
-    Approved,
+    Unchanged,
     /// The path must be left alone; record this code against the item.
     Refused(ItemErrorCode),
 }
@@ -46,7 +46,7 @@ pub fn recheck(items: &[ApprovedItem], path: &Path, fs: &dyn FileOps) -> Result<
     if current.device != approved.device() || current.inode != approved.inode() {
         return Ok(Recheck::Refused(changed_since_check()));
     }
-    Ok(Recheck::Approved)
+    Ok(Recheck::Unchanged)
 }
 
 /// The item error code of `docs/cli-spec.md` §4.1 for an I/O failure.
@@ -90,7 +90,7 @@ mod tests {
     fn an_unchanged_path_is_approved() {
         let fs = tree();
 
-        assert_eq!(recheck(&items(&token(&fs)), Path::new(STORED), &fs).ok(), Some(Recheck::Approved));
+        assert_eq!(recheck(&items(&token(&fs)), Path::new(STORED), &fs).ok(), Some(Recheck::Unchanged));
     }
 
     #[test]

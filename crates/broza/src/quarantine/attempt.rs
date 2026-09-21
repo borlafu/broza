@@ -1,7 +1,7 @@
 //! One item's journey into the store, and what it became.
 //!
 //! This is where the time-of-check/time-of-use contract of
-//! [`FileOps`](crate::ports::FileOps) is honoured: the path is `lstat`ed again
+//! [`crate::ports::FileOps`] is honoured: the path is `lstat`ed again
 //! and its `(device, inode)` compared with the pair the guard recorded, before
 //! anything is renamed (`AGENTS.md` §4).
 

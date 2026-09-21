@@ -28,7 +28,7 @@ pub const SESSION_INCOMPLETE: &str = "session_incomplete";
 /// # Errors
 ///
 /// Whatever reading the store reports; see
-/// [`store::read_all`](crate::quarantine::store::read_all).
+/// [`store::read_all`].
 pub fn list_sessions(
     root: &Path,
     fs: &dyn FileOps,

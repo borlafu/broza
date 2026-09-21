@@ -2,7 +2,7 @@
 //!
 //! A session directory is named after its identifier, and the grammar of a
 //! [`SessionId`] admits neither `/` nor `.`, so
-//! [`layout::session_dir`](crate::quarantine::layout::session_dir) can only ever
+//! [`layout::session_dir`] can only ever
 //! produce a direct child of the root. That is what keeps `expire` and `purge`
 //! from reaching outside the store: they never take a path from the caller, only
 //! an identifier.

@@ -99,8 +99,10 @@ impl CacheStore {
 
     /// The record for `key`, when there is one and it is still fresh.
     ///
-    /// A record stamped in the future is treated as expired: the clock moved, and
-    /// a scan that trusts it would report sizes nobody can reproduce.
+    /// A record stamped more than one TTL in the future is treated as expired: the
+    /// clock moved, and a scan that trusts it would report sizes nobody can
+    /// reproduce. This scan's own records, stamped moments after the store was
+    /// opened on a ticking clock, are fresh.
     pub fn lookup(&self, key: &CacheKey) -> Option<&DirRecord> {
         self.records.get(key).filter(|record| self.is_fresh(record))
     }
@@ -157,13 +159,14 @@ impl CacheStore {
         self.records.is_empty()
     }
 
-    /// `true` when `record` is inside the TTL and not stamped in the future.
+    /// `true` when `record` is within one TTL of the store's opening, either way.
     fn is_fresh(&self, record: &DirRecord) -> bool {
         // A record measured *after* the store was opened — this very scan, on a
-        // real clock — is as fresh as they come. Only records older than the
-        // TTL are stale; a negative age is not a stale record but a new one.
+        // real clock — is as fresh as they come, so a small negative age is not
+        // stale. A record from far in the future is a clock that went wrong,
+        // and it is not trusted beyond the same TTL in that direction.
         let age = self.opened_at.duration_since(record.recorded_at);
-        age <= self.ttl
+        age <= self.ttl && age >= -self.ttl
     }
 
     /// Every record still worth keeping, in a stable order.
@@ -390,6 +393,17 @@ mod tests {
 
         assert!(store.lookup(&key(1)).is_some());
         assert_eq!(store.sorted_records().len(), 1, "and it is written back");
+    }
+
+    #[test]
+    fn a_record_from_far_in_the_future_is_not_trusted() {
+        let clock = FixedClock::at(at("2026-01-02T00:00:00Z"));
+        let store = CacheStore::load(&path(), &fs(), &clock, TTL)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .with_record(record(1, at("2027-06-01T00:00:00Z")));
+
+        assert_eq!(store.lookup(&key(1)), None, "a clock that went wrong is not a fresh record");
+        assert!(store.sorted_records().is_empty(), "and it is not written back");
     }
 
     #[test]

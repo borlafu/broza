@@ -42,12 +42,11 @@ pub(super) fn settle_hard_links(
         return Settled { nodes, files, credited: Vec::new() };
     }
     let nodes = mark_uncacheable(nodes, &hiders(&links));
-    let duplicates = duplicates_of(links.clone());
-    let dropped: HashSet<&Path> = duplicates.iter().map(|link| link.path.as_path()).collect();
-    let credited = links.into_iter().filter(|link| !dropped.contains(link.path.as_path())).collect();
+    let (duplicates, credited) = partition_names(links);
     if duplicates.is_empty() {
         return Settled { nodes, files, credited };
     }
+    let dropped: HashSet<&Path> = duplicates.iter().map(|link| link.path.as_path()).collect();
     let kept_files = files.into_iter().filter(|file| !dropped.contains(file.path.as_path())).collect();
     Settled { nodes: subtract(nodes, &duplicates), files: kept_files, credited }
 }
@@ -120,23 +119,20 @@ fn mark_uncacheable(nodes: Vec<DirNode>, hiders: &HashSet<PathBuf>) -> Vec<DirNo
 }
 
 /// Every sighting that is not the first name of its inode, by path.
-fn duplicates_of(links: Vec<LinkSighting>) -> Vec<LinkSighting> {
+fn partition_names(links: Vec<LinkSighting>) -> (Vec<LinkSighting>, Vec<LinkSighting>) {
     let mut links = links;
     links.sort_by(|left, right| {
         (left.device, left.inode, &left.path).cmp(&(right.device, right.inode, &right.path))
     });
     let mut keeper: Option<(u64, u64)> = None;
-    links
-        .into_iter()
-        .filter(|link| {
-            let inode = (link.device, link.inode);
-            if keeper == Some(inode) {
-                return true;
-            }
-            keeper = Some(inode);
-            false
-        })
-        .collect()
+    links.into_iter().partition(|link| {
+        let inode = (link.device, link.inode);
+        if keeper == Some(inode) {
+            return true;
+        }
+        keeper = Some(inode);
+        false
+    })
 }
 
 /// Remove each duplicate's bytes from its directory and every directory above.

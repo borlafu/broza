@@ -175,6 +175,9 @@ pub(super) struct Partial {
     /// Per reported directory, the biggest file directly inside it: what the
     /// largest item is recomputed from once hard links are settled.
     pub direct_maxima: Vec<(PathBuf, u64)>,
+    /// Directories below `max_depth`: measured and settled like the rest, so the
+    /// nodes above them are computed from the truth, then left out of the report.
+    pub hidden: Vec<DirNode>,
 }
 
 impl Partial {
@@ -187,6 +190,7 @@ impl Partial {
             errors: Vec::new(),
             totals: Totals::default(),
             direct_maxima: Vec::new(),
+            hidden: Vec::new(),
         }
     }
 
@@ -196,6 +200,7 @@ impl Partial {
         self.links.append(&mut other.links);
         self.errors.append(&mut other.errors);
         self.direct_maxima.append(&mut other.direct_maxima);
+        self.hidden.append(&mut other.hidden);
         Self {
             files: self.files.merge(other.files),
             totals: self.totals.merge(other.totals),
@@ -203,6 +208,7 @@ impl Partial {
             links: self.links,
             errors: self.errors,
             direct_maxima: self.direct_maxima,
+            hidden: self.hidden,
         }
     }
 }

@@ -408,3 +408,23 @@ fn a_depth_limit_keeps_the_largest_item_of_what_it_hides() {
         "`max_depth` limits what is reported, never what is measured"
     );
 }
+
+#[test]
+fn a_depth_limit_does_not_resurrect_a_discounted_link_below_it() {
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/aaa/keeper.bin", &[]);
+    fs.set_size("/vol/aaa/keeper.bin", 1_000_000);
+    fs.add_hard_link("/vol/aaa/keeper.bin", "/vol/mid/deep/alias.bin");
+    for name in ["half1.bin", "half2.bin"] {
+        fs.add_file(format!("/vol/mid/deep/{name}"), &[]);
+        fs.set_size(format!("/vol/mid/deep/{name}"), 300_000);
+    }
+    let options = WalkOptions { max_depth: Some(1), ..WalkOptions::default() };
+
+    let limited = walk_sample(&fs, &options);
+    let full = walk_sample(&fs, &WalkOptions::default());
+
+    assert_eq!(node(&limited, "/vol/mid").largest_item_bytes, node(&full, "/vol/mid").largest_item_bytes);
+    assert!(node(&limited, "/vol/mid").largest_item_bytes <= node(&limited, "/vol/mid").allocated_bytes);
+    assert!(limited.nodes.iter().all(|n| n.path != Path::new("/vol/mid/deep")), "hidden stays hidden");
+}

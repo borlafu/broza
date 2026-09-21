@@ -42,7 +42,7 @@ mod parts;
 mod top_files;
 mod types;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -107,10 +107,16 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     let totals = leaves.totals.merge(below.totals).with_child_dirs(child_dirs).with_truncation(truncated);
     let node = DirNode::new(&identity, totals, truncated);
     // Children below `max_depth` are not reported, but they are still this
-    // directory's items: the limit shapes what is reported, never what is measured.
-    let biggest_hidden = (!reports_children)
-        .then(|| below.nodes.iter().map(|n| n.largest_item_bytes.max(n.allocated_bytes)).max().unwrap_or(0));
-    let mut nodes = if reports_children { below.nodes } else { Vec::new() };
+    // directory's items: the limit shapes what is reported, never what is
+    // measured. They travel as `hidden`, get settled and recomputed with
+    // everything else, and are dropped from the report at the very end.
+    let mut hidden = below.hidden;
+    let mut nodes = if reports_children {
+        below.nodes
+    } else {
+        hidden.extend(below.nodes);
+        Vec::new()
+    };
     nodes.push(node);
     let mut links = leaves.links;
     links.extend(below.links);
@@ -118,9 +124,6 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     all_errors.extend(below.errors);
     let mut direct_maxima = below.direct_maxima;
     direct_maxima.push((identity.path.clone(), totals.largest_direct_file_bytes));
-    if let Some(hidden) = biggest_hidden {
-        direct_maxima.push((identity.path.clone(), hidden));
-    }
     Partial {
         nodes,
         files: leaves.files.merge(below.files),
@@ -128,6 +131,7 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
         errors: all_errors,
         totals: totals.as_child(),
         direct_maxima,
+        hidden,
     }
 }
 
@@ -221,7 +225,9 @@ fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u
 /// Parallel walks finish in whatever order the threads happen to take, and a report
 /// that changes between two identical scans is a report nobody can diff.
 fn sorted(partial: Partial) -> WalkResult {
-    let Partial { nodes, files, links, mut errors, mut direct_maxima, .. } = partial;
+    let Partial { mut nodes, files, links, mut errors, mut direct_maxima, hidden, .. } = partial;
+    let hidden_paths: HashSet<PathBuf> = hidden.iter().map(|node| node.path.clone()).collect();
+    nodes.extend(hidden);
     let settled = dedupe::settle_hard_links(nodes, files.into_vec(), links);
     let mut files = settled.files;
     // The surviving name of every multiply-linked file is a direct file of the
@@ -232,6 +238,7 @@ fn sorted(partial: Partial) -> WalkResult {
         }
     }
     let mut nodes = recompute_largest_items(settled.nodes, &direct_maxima);
+    nodes.retain(|node| !hidden_paths.contains(&node.path));
     nodes.sort_by(|left, right| left.path.cmp(&right.path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));

@@ -39,19 +39,33 @@ pub(super) fn rename_exclusive(from: &Path, to: &Path) -> Result<RenameMode, Bro
     Err(from_io(context, blame_rename(from, to, &failure), failure))
 }
 
+/// How many times a contended `flock` is retried, and how long between tries.
+///
+/// On macOS a lock released by `close` is, very rarely, still reported busy to a
+/// `flock` issued a few microseconds later in the same process (observed about
+/// once in fifteen full test runs). A handful of millisecond retries turns that
+/// race into a non-event without changing what "busy" means: a lock somebody
+/// else really holds is still busy after ten milliseconds.
+const CONTENDED_RETRIES: u32 = 5;
+const RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(2);
+
 /// An exclusive, non-blocking `flock` on `path`, released when the guard drops.
 pub(super) fn lock_exclusive(path: &Path) -> Result<Box<dyn FsLock>, BrozaError> {
     let context = format!("lock {}", path.display());
     let file = open_lock_file(path).map_err(|source| from_io(context.clone(), path, source))?;
-    // SAFETY: the descriptor is owned by `file`, which outlives the call and
-    // is not closed until the returned guard is dropped. `flock` reads no
-    // memory through it.
-    #[allow(unsafe_code, reason = "std has no wrapper for flock")]
-    let code = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if code == 0 {
-        return Ok(Box::new(StdFsLock { _file: file }));
+    let mut failure = try_flock(&file);
+    for _ in 0..CONTENDED_RETRIES {
+        match failure {
+            Some(ref error) if error.raw_os_error() == Some(libc::EWOULDBLOCK) => {
+                std::thread::sleep(RETRY_PAUSE);
+                failure = try_flock(&file);
+            }
+            _ => break,
+        }
     }
-    let failure = std::io::Error::last_os_error();
+    let Some(failure) = failure else {
+        return Ok(Box::new(StdFsLock { _file: file }));
+    };
     if matches!(failure.raw_os_error(), Some(libc::EWOULDBLOCK)) {
         return Err(BrozaError::Io {
             context: format!("{context}: another Broza is working on it"),
@@ -59,6 +73,16 @@ pub(super) fn lock_exclusive(path: &Path) -> Result<Box<dyn FsLock>, BrozaError>
         });
     }
     Err(from_io(context, path, failure))
+}
+
+/// One non-blocking `flock` attempt; `None` when the lock was taken.
+fn try_flock(file: &fs::File) -> Option<std::io::Error> {
+    // SAFETY: the descriptor is owned by `file`, which outlives the call and
+    // is not closed until the returned guard is dropped. `flock` reads no
+    // memory through it.
+    #[allow(unsafe_code, reason = "std has no wrapper for flock")]
+    let code = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    (code != 0).then(std::io::Error::last_os_error)
 }
 
 /// Open a lock file for `flock`, which needs no write permission.

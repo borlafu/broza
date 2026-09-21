@@ -22,14 +22,10 @@ Options:
           [default: all]
 
       --min-size <SIZE>
-          Omit findings smaller than this size
-          
-          [default: 50MB]
+          Omit findings smaller than this size [default: the `min-size` key, 50MB]
 
       --unused-after <DURATION>
-          "Unused app" threshold (for example 6m, 1y, 2y)
-          
-          [default: 1y]
+          "Unused app" threshold, for example 6m, 1y, 2y [default: the `unused-after` key, 1y]
 
       --explain
           Include the reasoning behind each detection

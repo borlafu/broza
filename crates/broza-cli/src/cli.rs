@@ -1,23 +1,26 @@
 //! Top-level clap tree and the flag-combination rules of `docs/cli-spec.md` §1.1 and §2.
 
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use broza::BrozaError;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::args::{
-    CleanArgs, ConfigArgs, ExplainArgs, QuarantineArgs, QuarantineCommand, RestoreArgs, ScanArgs, SuggestArgs,
+    CleanArgs, ConfigArgs, ConfigCommand, ExplainArgs, QuarantineArgs, QuarantineCommand, RestoreArgs,
+    ScanArgs, SuggestArgs,
 };
 
-/// `-V/--version` text: binary version plus the JSON schema version.
-/// [`tests::version_text_matches_the_core_schema_version`] keeps it honest.
-pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (JSON schema 1.1)");
+/// `-V/--version` text: binary version plus the JSON schema version, both read
+/// from the core so the two can never drift apart.
+pub static VERSION: LazyLock<String> =
+    LazyLock::new(|| format!("{} (JSON schema {})", broza::BROZA_VERSION, broza::SCHEMA_VERSION));
 
 /// Safe, explainable disk analysis and cleanup for macOS.
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "broza",
-    version = VERSION,
+    version = VERSION.as_str(),
     about = "Safe, explainable disk analysis and cleanup for macOS",
     long_about = None,
     disable_help_subcommand = true,
@@ -111,6 +114,21 @@ impl Command {
         }
     }
 
+    /// Whether an explicitly named configuration file may be absent.
+    ///
+    /// `config set`, `config reset` and `config path` create or merely name the
+    /// file, so `--config <new file>` is legitimate. Every other command reads
+    /// it, and a file the user named but that does not exist is an error.
+    pub const fn creates_config_file(&self) -> bool {
+        match self {
+            Self::Config(args) => matches!(
+                args.command,
+                ConfigCommand::Set { .. } | ConfigCommand::Reset { .. } | ConfigCommand::Path
+            ),
+            _ => false,
+        }
+    }
+
     /// Whether `--csv` is accepted (`docs/cli-spec.md` §1.1).
     pub const fn supports_csv(&self) -> bool {
         match self {
@@ -148,14 +166,18 @@ impl Cli {
     }
 }
 
+/// Irreversible deletion never accepts an implicit "yes" (AGENTS.md §2, invariant 2).
+fn yes_with_purge() -> BrozaError {
+    BrozaError::Usage(
+        "--yes cannot be combined with --purge: irreversible deletion always requires typing PURGE"
+            .to_owned(),
+    )
+}
+
 /// Per-command rules that do not depend on the global flags.
 fn validate_command(command: &Command) -> Result<(), BrozaError> {
     match command {
-        Command::Clean(args) if args.purge && args.yes => Err(BrozaError::Usage(
-            "--yes cannot be combined with --purge: irreversible deletion always requires \
-             typing PURGE"
-                .to_owned(),
-        )),
+        Command::Clean(args) if args.purge && args.yes => Err(yes_with_purge()),
         Command::Restore(args)
             if !args.list && args.ids.is_empty() && !args.all && args.session.is_none() =>
         {
@@ -170,10 +192,11 @@ fn validate_command(command: &Command) -> Result<(), BrozaError> {
 
 fn validate_quarantine(command: &QuarantineCommand) -> Result<(), BrozaError> {
     match command {
-        QuarantineCommand::Purge { sessions, all } if sessions.is_empty() && !all => {
+        QuarantineCommand::Purge { yes: true, .. } => Err(yes_with_purge()),
+        QuarantineCommand::Purge { sessions, all, .. } if sessions.is_empty() && !all => {
             Err(BrozaError::Usage("quarantine purge needs at least one SESSION_ID or --all".to_owned()))
         }
-        QuarantineCommand::Purge { sessions, all } if !sessions.is_empty() && *all => {
+        QuarantineCommand::Purge { sessions, all, .. } if !sessions.is_empty() && *all => {
             Err(BrozaError::Usage("quarantine purge takes either SESSION_IDs or --all, not both".to_owned()))
         }
         _ => Ok(()),
@@ -198,8 +221,9 @@ mod tests {
     }
 
     #[test]
-    fn version_text_matches_the_core_schema_version() {
-        assert!(VERSION.contains(broza::SCHEMA_VERSION), "{VERSION} must mention the schema version");
+    fn version_text_is_built_from_the_core_constants() {
+        assert!(VERSION.contains(broza::SCHEMA_VERSION), "{} must mention the schema", *VERSION);
+        assert!(VERSION.starts_with(broza::BROZA_VERSION), "{} must start with the version", *VERSION);
     }
 
     #[test]
@@ -263,6 +287,36 @@ mod tests {
         assert!(parse(&["broza", "quarantine", "purge", "cln_1", "--all"]).validate().is_err());
         assert!(parse(&["broza", "quarantine", "purge", "--all"]).validate().is_ok());
         assert!(parse(&["broza", "quarantine", "purge", "cln_1"]).validate().is_ok());
+    }
+
+    #[test]
+    fn quarantine_purge_rejects_yes_exactly_like_clean() {
+        let purge =
+            parse(&["broza", "quarantine", "purge", "--all", "--yes"]).validate().expect_err("must fail");
+        let clean = parse(&["broza", "clean", "--purge", "--yes"]).validate().expect_err("must fail");
+        assert_eq!(purge.to_string(), clean.to_string());
+        assert!(purge.to_string().contains("PURGE"), "{purge}");
+    }
+
+    #[test]
+    fn only_the_writing_config_subcommands_may_name_an_absent_file() {
+        for args in [
+            vec!["broza", "config", "set", "min-size", "2GB"],
+            vec!["broza", "config", "reset"],
+            vec!["broza", "config", "path"],
+        ] {
+            let cli = parse(&args);
+            assert!(cli.command.as_ref().is_some_and(Command::creates_config_file), "{args:?}");
+        }
+        for args in [
+            vec!["broza", "config", "list"],
+            vec!["broza", "config", "get", "min-size"],
+            vec!["broza", "about"],
+            vec!["broza", "scan"],
+        ] {
+            let cli = parse(&args);
+            assert!(!cli.command.as_ref().is_some_and(Command::creates_config_file), "{args:?}");
+        }
     }
 
     #[test]

@@ -1,0 +1,26 @@
+---
+source: crates/broza-cli/tests/json_snapshots.rs
+expression: "json_of(&[\"config\", \"list\", \"--json\"])"
+---
+{
+  "broza_version": "[version]",
+  "command": "config",
+  "data": {
+    "cache-ttl": "24h",
+    "color": "auto",
+    "donate-prompt": true,
+    "exclude": [],
+    "min-size": "50MB",
+    "quarantine-path": "~/.local/share/broza/quarantine",
+    "quarantine-ttl": "30d",
+    "unused-after": "1y"
+  },
+  "errors": [],
+  "generated_at": "[rfc3339]",
+  "host": {
+    "arch": "arm64",
+    "macos_version": "26.1"
+  },
+  "schema_version": "1.1",
+  "warnings": []
+}

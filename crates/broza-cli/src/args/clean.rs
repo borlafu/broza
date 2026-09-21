@@ -4,9 +4,6 @@ use clap::Args;
 
 use crate::args::RiskLevel;
 
-/// Default "unused app" threshold.
-const DEFAULT_UNUSED_AFTER: &str = "1y";
-
 /// Execute the cleanup. Dry run by default.
 #[derive(Debug, Clone, Args)]
 pub struct CleanArgs {
@@ -38,7 +35,7 @@ pub struct CleanArgs {
     #[arg(long, value_name = "GLOB")]
     pub exclude: Vec<String>,
 
-    /// Threshold for unused-apps.
-    #[arg(long, value_name = "DURATION", default_value = DEFAULT_UNUSED_AFTER)]
-    pub unused_after: String,
+    /// Threshold for unused-apps [default: the `unused-after` key, 1y].
+    #[arg(long, value_name = "DURATION")]
+    pub unused_after: Option<String>,
 }

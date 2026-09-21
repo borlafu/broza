@@ -73,6 +73,16 @@ fn yes_together_with_purge_exits_two() {
 }
 
 #[test]
+fn quarantine_purge_with_yes_exits_two() {
+    let home = temp_home();
+    broza(home.path())
+        .args(["quarantine", "purge", "--all", "--yes"])
+        .assert()
+        .code(2)
+        .stderr(contains("PURGE"));
+}
+
+#[test]
 fn unimplemented_commands_exit_one_with_a_message_on_stderr() {
     let home = temp_home();
     broza(home.path())
@@ -96,6 +106,7 @@ fn about_json_is_a_valid_envelope() {
     assert_eq!(parsed["data"]["license"], "MIT");
     assert_eq!(parsed["data"]["schema_version"], "1.1");
     assert!(parsed["warnings"].is_array());
+    assert!(!parsed["generated_at"].as_str().unwrap_or_default().contains('.'));
     assert!(parsed["errors"].is_array());
 }
 

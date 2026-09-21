@@ -54,3 +54,47 @@ pub enum BrozaError {
     #[error("{0}")]
     Other(String),
 }
+
+impl BrozaError {
+    /// Classify an [`std::io::Error`] that occurred while working on `path`.
+    ///
+    /// `EACCES` and `EPERM` become [`BrozaError::PermissionDenied`] (exit `3`);
+    /// every other kind becomes [`BrozaError::Io`] (exit `1`). `Config` is
+    /// reserved for parse and validation failures and is never produced here.
+    pub fn from_io(context: impl Into<String>, path: &std::path::Path, source: std::io::Error) -> Self {
+        if source.kind() == std::io::ErrorKind::PermissionDenied {
+            return Self::PermissionDenied { path: path.to_path_buf() };
+        }
+        Self::Io { context: format!("{} {}", context.into(), path.display()), source }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::io::{Error, ErrorKind};
+    use std::path::Path;
+
+    use super::*;
+    use crate::ExitCode;
+
+    #[test]
+    fn permission_errors_become_exit_three() {
+        let err = BrozaError::from_io(
+            "reading",
+            Path::new("/etc/broza.toml"),
+            Error::from(ErrorKind::PermissionDenied),
+        );
+        assert!(matches!(err, BrozaError::PermissionDenied { .. }), "{err}");
+        assert_eq!(ExitCode::from(&err), ExitCode::PermissionDenied);
+    }
+
+    #[test]
+    fn other_io_errors_become_exit_one_and_name_the_path() {
+        let err = BrozaError::from_io("reading", Path::new("/tmp/x.toml"), Error::from(ErrorKind::NotFound));
+        assert!(matches!(err, BrozaError::Io { .. }), "{err}");
+        assert_eq!(ExitCode::from(&err), ExitCode::GenericError);
+        assert!(err.to_string().contains("/tmp/x.toml"), "{err}");
+    }
+}

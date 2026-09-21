@@ -4,11 +4,13 @@ expression: help_for(args)
 ---
 Validate a value and write it to the configuration file
 
-Usage: broza config set [OPTIONS] <KEY> <VALUE>
+Usage: broza config set [OPTIONS] <KEY> <VALUE>...
 
 Arguments:
-  <KEY>    Configuration key, for example `min-size`
-  <VALUE>  New value; validated against the key's type
+  <KEY>       Configuration key, for example `min-size`
+  <VALUE>...  New value, validated against the key's type. Scalar keys take exactly one; list keys
+              such as `exclude` take one value per entry, so patterns containing commas or braces
+              stay intact
 
 Options:
       --json            JSON output on stdout. Disables color, progress and interactivity

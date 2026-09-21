@@ -9,8 +9,11 @@ use std::path::PathBuf;
 
 use broza::config::EnvSnapshot;
 
-/// Fallback home directory when `HOME` is unset. Never written to.
-const FALLBACK_HOME: &str = "/";
+/// Test and debug hook: `BROZA_HOST=<macos_version>/<arch>` pins the reported
+/// host so integration tests never run `sw_vers`. Honoured only in debug
+/// builds; release binaries always ask the system.
+#[cfg(debug_assertions)]
+const HOST_OVERRIDE_VAR: &str = "BROZA_HOST";
 
 /// Everything the CLI is allowed to learn from the outside world.
 // A snapshot of independent environment facts; grouping them would only add indirection.
@@ -29,12 +32,12 @@ pub struct RuntimeEnv {
     pub no_color: bool,
     /// `BROZA_NO_DONATE` is set.
     pub broza_no_donate: bool,
-    /// Home directory, from `HOME`.
-    pub home: PathBuf,
+    /// `HOME`, or `None` when it is unset. Operations that need it fail with a
+    /// clear usage error instead of writing to a guessed location.
+    pub home: Option<PathBuf>,
     /// `BROZA_CONFIG`, lower priority than `--config`.
     pub broza_config: Option<PathBuf>,
-    /// `BROZA_HOST` (`<macos_version>/<arch>`): pins the reported host instead
-    /// of asking the system. Used by tests and by sandboxes without `sw_vers`.
+    /// See [`HOST_OVERRIDE_VAR`]. Always `None` in release builds.
     pub host_override: Option<String>,
 }
 
@@ -48,9 +51,9 @@ impl RuntimeEnv {
             ci: is_set("CI"),
             no_color: is_set("NO_COLOR"),
             broza_no_donate: is_set("BROZA_NO_DONATE"),
-            home: std::env::var_os("HOME").map_or_else(|| PathBuf::from(FALLBACK_HOME), PathBuf::from),
+            home: std::env::var_os("HOME").map(PathBuf::from).filter(|home| !home.as_os_str().is_empty()),
             broza_config: std::env::var_os("BROZA_CONFIG").map(PathBuf::from),
-            host_override: std::env::var("BROZA_HOST").ok().filter(|value| !value.is_empty()),
+            host_override: host_override(),
         }
     }
 
@@ -63,7 +66,7 @@ impl RuntimeEnv {
             ci: false,
             no_color: false,
             broza_no_donate: false,
-            home,
+            home: Some(home),
             broza_config: None,
             host_override: None,
         }
@@ -76,14 +79,24 @@ impl RuntimeEnv {
 
     /// The subset the core is allowed to see.
     pub fn to_core_snapshot(&self) -> EnvSnapshot {
-        EnvSnapshot {
-            home: self.home.clone(),
-            no_color: self.no_color,
-            broza_no_donate: self.broza_no_donate,
-            ci: self.ci,
-            broza_config: self.broza_config.clone(),
-        }
+        EnvSnapshot::default()
+            .with_home(self.home.clone())
+            .with_no_color(self.no_color)
+            .with_broza_no_donate(self.broza_no_donate)
+            .with_ci(self.ci)
+            .with_broza_config(self.broza_config.clone())
     }
+}
+
+#[cfg(debug_assertions)]
+fn host_override() -> Option<String> {
+    std::env::var(HOST_OVERRIDE_VAR).ok().filter(|value| !value.is_empty())
+}
+
+/// Release builds ignore the override entirely.
+#[cfg(not(debug_assertions))]
+const fn host_override() -> Option<String> {
+    None
 }
 
 /// A variable counts as "set" when present, whatever its value (`NO_COLOR` rule).
@@ -120,7 +133,6 @@ mod tests {
     fn a_process_snapshot_is_self_consistent() {
         // Reads the environment, never the filesystem: safe in a test.
         let env = RuntimeEnv::from_process();
-        assert!(!env.home.as_os_str().is_empty(), "home must always have a value");
         assert_eq!(env.is_interactive(), env.stdin_is_tty && env.stderr_is_tty && !env.ci);
         assert_eq!(env.to_core_snapshot().home, env.home);
     }
@@ -135,8 +147,14 @@ mod tests {
             ..RuntimeEnv::for_tests(PathBuf::from("/Users/test"))
         };
         let snapshot = env.to_core_snapshot();
-        assert_eq!(snapshot.home, PathBuf::from("/Users/test"));
+        assert_eq!(snapshot.home, Some(PathBuf::from("/Users/test")));
         assert!(snapshot.no_color && snapshot.broza_no_donate && snapshot.ci);
         assert_eq!(snapshot.broza_config, Some(PathBuf::from("/tmp/c.toml")));
+    }
+
+    #[test]
+    fn an_unset_home_propagates_as_none_instead_of_a_guessed_path() {
+        let env = RuntimeEnv { home: None, ..RuntimeEnv::for_tests(PathBuf::from("/Users/test")) };
+        assert_eq!(env.to_core_snapshot().home, None);
     }
 }

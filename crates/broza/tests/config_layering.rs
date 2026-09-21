@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use broza::config::{CliOverrides, ColorChoice, Config, EnvSnapshot, keys, layering, load};
+use broza::config::{CliOverrides, ColorChoice, Config, ConfigValue, EnvSnapshot, keys, layering, load};
 
 fn env_with_home(home: &Path) -> EnvSnapshot {
     EnvSnapshot::for_home(home.to_path_buf())
@@ -72,7 +72,7 @@ fn explicit_path_beats_env_which_beats_default() {
     std::fs::write(&from_env, "min-size = \"1GB\"\n").unwrap_or_else(|e| panic!("{e}"));
     let explicit = write_config(tmp.path(), "min-size = \"2GB\"\n");
 
-    let env = EnvSnapshot { broza_config: Some(from_env.clone()), ..env_with_home(tmp.path()) };
+    let env = env_with_home(tmp.path()).with_broza_config(Some(from_env.clone()));
     assert_eq!(load(None, &env).unwrap_or_else(|e| panic!("{e}")).min_size, "1GB");
     assert_eq!(load(Some(&explicit), &env).unwrap_or_else(|e| panic!("{e}")).min_size, "2GB");
 }
@@ -95,8 +95,8 @@ fn layering_applies_profile_then_env_then_flags() {
         ..file
     };
     let tmp = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
-    let env = EnvSnapshot { no_color: true, broza_no_donate: true, ..env_with_home(tmp.path()) };
-    let overrides = CliOverrides { min_size: Some("2GB".into()), ..CliOverrides::default() };
+    let env = env_with_home(tmp.path()).with_no_color(true).with_broza_no_donate(true);
+    let overrides = CliOverrides::default().with_min_size(Some("2GB".into()));
 
     let merged =
         layering::layer(&file, Some("developer"), &env, &overrides).unwrap_or_else(|e| panic!("{e}"));
@@ -118,9 +118,14 @@ fn unknown_profile_is_an_error() {
 
 #[test]
 fn keys_round_trip_through_set_and_get() {
-    let updated = keys::set(Config::default(), "min-size", "2GB").unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(keys::get(&updated, "min-size").unwrap_or_else(|e| panic!("{e}")), "2GB");
-    assert_eq!(keys::get(&Config::default(), "min-size").unwrap_or_else(|e| panic!("{e}")), "50MB");
+    let values = vec!["2GB".to_owned()];
+    let updated = keys::set(Config::default(), "min-size", &values).unwrap_or_else(|e| panic!("{e}"));
+    let read_back = keys::get(&updated, "min-size").unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(read_back, ConfigValue::Text("2GB".to_owned()));
+    assert_eq!(
+        keys::get(&Config::default(), "min-size").unwrap_or_else(|e| panic!("{e}")),
+        ConfigValue::Text("50MB".to_owned())
+    );
 
     let reset = keys::reset(updated, Some("min-size")).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(reset.min_size, "50MB");
@@ -128,7 +133,7 @@ fn keys_round_trip_through_set_and_get() {
 
 #[test]
 fn keys_list_covers_every_documented_key() {
-    let listed = keys::list(&Config::default());
+    let listed = keys::list(&Config::default()).unwrap_or_else(|e| panic!("{e}"));
     let names: Vec<&str> = listed.iter().map(|(k, _)| k.as_str()).collect();
     assert_eq!(
         names,
@@ -150,12 +155,12 @@ fn keys_reject_unknown_names_and_bad_values() {
     let unknown = keys::get(&Config::default(), "nope").expect_err("unknown key");
     assert!(matches!(unknown, broza::BrozaError::Usage(_)), "got {unknown}");
 
-    let bad_duration = keys::set(Config::default(), "unused-after", "3").expect_err("no unit");
+    let bad_duration = keys::set(Config::default(), "unused-after", &["3".to_owned()]).expect_err("no unit");
     assert!(matches!(bad_duration, broza::BrozaError::Usage(_)), "got {bad_duration}");
 
-    let bad_size = keys::set(Config::default(), "min-size", "big").expect_err("not a size");
+    let bad_size = keys::set(Config::default(), "min-size", &["big".to_owned()]).expect_err("not a size");
     assert!(matches!(bad_size, broza::BrozaError::Usage(_)), "got {bad_size}");
 
-    let bad_enum = keys::set(Config::default(), "color", "rainbow").expect_err("not a color");
+    let bad_enum = keys::set(Config::default(), "color", &["rainbow".to_owned()]).expect_err("not a color");
     assert!(matches!(bad_enum, broza::BrozaError::Usage(_)), "got {bad_enum}");
 }

@@ -34,9 +34,7 @@ Options:
           Glob patterns to exclude. Repeatable; merged with `exclude` from the configuration
 
       --unused-after <DURATION>
-          Threshold for unused-apps
-          
-          [default: 1y]
+          Threshold for unused-apps [default: the `unused-after` key, 1y]
 
       --json
           JSON output on stdout. Disables color, progress and interactivity

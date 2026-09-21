@@ -74,6 +74,27 @@ mod tests {
         );
     }
 
+    /// The `[default: ...]` notes in the `--help` text of `suggest` and `clean`
+    /// are literals, because clap needs them at build time. This test fails the
+    /// moment the core defaults move, so the two cannot drift apart silently.
+    #[test]
+    fn help_text_defaults_still_match_the_core() {
+        use broza::config::schema::{DEFAULT_MIN_SIZE, DEFAULT_UNUSED_AFTER};
+
+        assert_eq!(DEFAULT_MIN_SIZE, "50MB", "update the --min-size help text");
+        assert_eq!(DEFAULT_UNUSED_AFTER, "1y", "update the --unused-after help text");
+        assert_eq!(
+            scan::SCAN_DEFAULT_MIN_SIZE,
+            "100MB",
+            "scan keeps its own default (spec §3.1); update its help text"
+        );
+        assert_ne!(
+            scan::SCAN_DEFAULT_MIN_SIZE,
+            DEFAULT_MIN_SIZE,
+            "the documented exception only exists while the two differ"
+        );
+    }
+
     #[test]
     fn empty_segments_are_dropped() {
         assert_eq!(split_categories(&["a,,b,".to_owned()]), vec!["a".to_owned(), "b".to_owned()]);

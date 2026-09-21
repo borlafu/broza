@@ -9,7 +9,12 @@ const DEFAULT_DEPTH: &str = "2";
 /// Default number of largest items listed.
 const DEFAULT_TOP: &str = "20";
 /// Default minimum size of a listed item.
-const DEFAULT_MIN_SIZE: &str = "100MB";
+///
+/// The one place where a command default deliberately differs from the
+/// `min-size` configuration key (`docs/cli-spec.md` §3.1 vs §3.6): `scan`
+/// lists consumers, `suggest` filters findings. Applied at use time, not by
+/// clap, so the flag stays `None` when it is absent.
+pub const SCAN_DEFAULT_MIN_SIZE: &str = "100MB";
 
 /// Analyse storage and present the system map.
 #[derive(Debug, Clone, Args)]
@@ -26,9 +31,12 @@ pub struct ScanArgs {
     #[arg(long, value_name = "N", default_value = DEFAULT_TOP)]
     pub top: u32,
 
-    /// Ignore items below this size (for example 500MB, 2GB, 1GiB).
-    #[arg(long, value_name = "SIZE", default_value = DEFAULT_MIN_SIZE)]
-    pub min_size: String,
+    /// Ignore items below this size, for example 500MB, 2GB, 1GiB [default: 100MB].
+    ///
+    /// Unlike the other size flags this one does not read `min-size` from the
+    /// configuration; `scan` and `suggest` filter different things.
+    #[arg(long, value_name = "SIZE")]
+    pub min_size: Option<String>,
 
     /// Restrict the scan to one volume (device id, name or mount point).
     #[arg(long, value_name = "ID")]

@@ -29,5 +29,9 @@ pub enum QuarantineCommand {
         /// Delete every session.
         #[arg(long)]
         all: bool,
+        /// Accepted only to be rejected: purging never takes an implicit "yes"
+        /// (`docs/cli-spec.md` §2 and AGENTS.md §2 invariant 2). Exits 2.
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }

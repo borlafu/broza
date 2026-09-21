@@ -27,16 +27,21 @@ const HELP_PAGES: [(&str, &[&str]); 17] = [
     ("about", &["about"]),
 ];
 
-fn help_for(args: &[&str]) -> String {
+/// A temporary, empty `HOME`: help output must never depend on a real one.
+fn temp_home() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"))
+}
+
+fn broza(home: &std::path::Path) -> Command {
     let mut command = Command::cargo_bin("broza").unwrap_or_else(|e| panic!("binary: {e}"));
-    let output = command
-        .env_clear()
-        .env("HOME", "/tmp/broza-help-snapshot-home")
-        .env("TERM", "dumb")
-        .args(args)
-        .arg("--help")
-        .output()
-        .unwrap_or_else(|e| panic!("run {args:?}: {e}"));
+    command.env_clear().env("HOME", home).env("TERM", "dumb");
+    command
+}
+
+fn help_for(args: &[&str]) -> String {
+    let home = temp_home();
+    let output =
+        broza(home.path()).args(args).arg("--help").output().unwrap_or_else(|e| panic!("run {args:?}: {e}"));
     assert_eq!(output.status.code(), Some(0), "`broza {args:?} --help` must exit 0");
     String::from_utf8(output.stdout).unwrap_or_else(|e| panic!("non-UTF-8 help: {e}"))
 }
@@ -50,13 +55,8 @@ fn every_help_page_matches_its_snapshot() {
 
 #[test]
 fn bare_invocation_prints_the_same_page_as_help() {
-    let mut command = Command::cargo_bin("broza").unwrap_or_else(|e| panic!("binary: {e}"));
-    let output = command
-        .env_clear()
-        .env("HOME", "/tmp/broza-help-snapshot-home")
-        .env("TERM", "dumb")
-        .output()
-        .unwrap_or_else(|e| panic!("run: {e}"));
+    let home = temp_home();
+    let output = broza(home.path()).output().unwrap_or_else(|e| panic!("run: {e}"));
     assert_eq!(output.status.code(), Some(0));
     let bare = String::from_utf8(output.stdout).unwrap_or_else(|e| panic!("non-UTF-8: {e}"));
     assert_eq!(bare, help_for(&[]));

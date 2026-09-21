@@ -22,8 +22,11 @@ pub enum ConfigCommand {
     Set {
         /// Configuration key, for example `min-size`.
         key: String,
-        /// New value; validated against the key's type.
-        value: String,
+        /// New value, validated against the key's type. Scalar keys take
+        /// exactly one; list keys such as `exclude` take one value per entry,
+        /// so patterns containing commas or braces stay intact.
+        #[arg(value_name = "VALUE", required = true, num_args = 1..)]
+        values: Vec<String>,
     },
     /// Print every key with its effective value.
     List,
@@ -33,5 +36,8 @@ pub enum ConfigCommand {
     Reset {
         /// Configuration key. Omit to reset everything.
         key: Option<String>,
+        /// Skip the confirmation asked before resetting every key.
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }

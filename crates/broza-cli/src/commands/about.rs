@@ -4,7 +4,7 @@
 //! shows the donation prompt: it *is* the place for the link.
 
 use broza::BrozaError;
-use broza::model::{Envelope, Host};
+use broza::model::{Envelope, Host, Warning};
 use serde::{Deserialize, Serialize};
 
 use crate::donate::DONATE_URL;
@@ -55,12 +55,13 @@ pub struct About {
     data: AboutData,
     host: Host,
     generated_at: String,
+    warnings: Vec<Warning>,
 }
 
 impl About {
     /// Build the command result for `host` at `generated_at` (RFC 3339 UTC).
-    pub fn new(host: Host, generated_at: String) -> Self {
-        Self { data: AboutData::default(), host, generated_at }
+    pub fn new(host: Host, generated_at: String, warnings: Vec<Warning>) -> Self {
+        Self { data: AboutData::default(), host, generated_at, warnings }
     }
 }
 
@@ -76,12 +77,10 @@ impl Renderer for About {
     }
 
     fn to_json(&self) -> Result<String, BrozaError> {
-        envelope_to_json(&Envelope::new(
-            "about",
-            self.host.clone(),
-            self.generated_at.clone(),
-            self.data.clone(),
-        ))
+        let envelope =
+            Envelope::new("about", self.host.clone(), self.generated_at.clone(), self.data.clone());
+        let envelope = self.warnings.iter().cloned().fold(envelope, Envelope::with_warning);
+        envelope_to_json(&envelope)
     }
 }
 
@@ -95,6 +94,7 @@ mod tests {
         About::new(
             Host { macos_version: "26.1".into(), arch: "arm64".into() },
             "2026-09-21T10:36:08Z".to_owned(),
+            Vec::new(),
         )
     }
 
@@ -123,5 +123,21 @@ mod tests {
     #[test]
     fn about_has_no_csv_form() {
         assert!(about().to_csv().is_err());
+    }
+
+    #[test]
+    fn a_host_warning_is_carried_into_the_envelope() {
+        let with_warning = About::new(
+            Host { macos_version: "unknown".into(), arch: "arm64".into() },
+            "2026-09-21T10:36:08Z".to_owned(),
+            vec![Warning {
+                code: crate::host::WARNING_HOST_VERSION_UNKNOWN.into(),
+                message: "sw_vers failed".into(),
+                path: None,
+            }],
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&with_warning.to_json().unwrap()).unwrap();
+        assert_eq!(parsed["warnings"][0]["code"], "host_version_unknown");
+        assert_eq!(parsed["host"]["macos_version"], "unknown");
     }
 }

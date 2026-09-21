@@ -41,10 +41,23 @@ pub fn validate_size(raw: &str) -> Result<String, BrozaError> {
         return Err(size_error(raw));
     };
     let number = upper[..upper.len() - unit.len()].trim();
-    if number.is_empty() || number.parse::<f64>().is_err() || number.starts_with('-') {
+    if !is_plain_decimal(number) {
         return Err(size_error(raw));
     }
     Ok(text.to_owned())
+}
+
+/// A non-negative decimal mantissa: ASCII digits with at most one `.`, at least
+/// one digit, and no sign, exponent, `nan` or `inf`.
+fn is_plain_decimal(number: &str) -> bool {
+    if number.is_empty() || number.matches('.').count() > 1 {
+        return false;
+    }
+    let digits = number.replace('.', "");
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    number.parse::<f64>().is_ok_and(f64::is_finite)
 }
 
 /// Validate a boolean literal (`true` / `false`).
@@ -100,6 +113,19 @@ mod tests {
         for literal in ["big", "", "100", "MB", "-5MB"] {
             assert!(validate_size(literal).is_err(), "{literal} should be rejected");
         }
+    }
+
+    #[test]
+    fn rejects_non_finite_and_exponent_mantissas() {
+        for literal in ["nanGB", "infGB", "infinityTB", "1e3MB", "1E3MB", "+1MB", "1.2.3GB", ".MB"] {
+            assert!(validate_size(literal).is_err(), "{literal} should be rejected");
+        }
+    }
+
+    #[test]
+    fn accepts_mantissas_with_a_leading_or_trailing_point() {
+        assert!(validate_size(".5GB").is_ok());
+        assert!(validate_size("5.GB").is_ok());
     }
 
     #[test]

@@ -3,6 +3,12 @@
 //! Keys are the `kebab-case` names of `docs/cli-spec.md` §3.6. Unknown keys are
 //! a usage error (exit `2`). Every function returns a new [`Config`]; nothing is
 //! mutated in place.
+//!
+//! Values keep their type: `exclude` is a list of globs and is never joined or
+//! split on a separator, so patterns containing `,` — `~/p/**/*.{js,ts}` — round
+//! trip unchanged.
+
+use serde_json::Value as Json;
 
 use crate::BrozaError;
 use crate::config::schema::{ColorChoice, Config};
@@ -20,43 +26,79 @@ pub const KEYS: [&str; 8] = [
     "cache-ttl",
 ];
 
-/// Separator used to render and parse the `exclude` list on the command line.
-const LIST_SEPARATOR: &str = ",";
+/// A configuration value with its type preserved.
+///
+/// Deliberately **not** `#[non_exhaustive]`: it is an internal rendering type,
+/// not part of the JSON contract of `model/`, and exhaustive matching in the
+/// CLI is what guarantees a new value kind cannot be rendered incorrectly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigValue {
+    /// A string-typed key: durations, sizes, paths and `color`.
+    Text(String),
+    /// A boolean key: `donate-prompt`.
+    Flag(bool),
+    /// A list key: `exclude`.
+    List(Vec<String>),
+}
 
-/// Read one key as the string `broza config get` prints.
+impl ConfigValue {
+    /// Human-readable rendering: one list entry per line.
+    pub fn to_human(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Flag(flag) => flag.to_string(),
+            Self::List(items) => items.join("\n"),
+        }
+    }
+
+    /// JSON rendering, keeping the type (`docs/cli-spec.md` §4.1).
+    pub fn to_json(&self) -> Json {
+        match self {
+            Self::Text(text) => Json::String(text.clone()),
+            Self::Flag(flag) => Json::Bool(*flag),
+            Self::List(items) => Json::Array(items.iter().cloned().map(Json::String).collect()),
+        }
+    }
+}
+
+/// Read one key.
 ///
 /// # Errors
 ///
 /// [`BrozaError::Usage`] when `key` is not one of [`KEYS`].
-pub fn get(config: &Config, key: &str) -> Result<String, BrozaError> {
+pub fn get(config: &Config, key: &str) -> Result<ConfigValue, BrozaError> {
     match key {
-        "unused-after" => Ok(config.unused_after.clone()),
-        "quarantine-ttl" => Ok(config.quarantine_ttl.clone()),
-        "quarantine-path" => Ok(config.quarantine_path.clone()),
-        "min-size" => Ok(config.min_size.clone()),
-        "donate-prompt" => Ok(config.donate_prompt.to_string()),
-        "color" => Ok(config.color.as_str().to_owned()),
-        "exclude" => Ok(config.exclude.join(LIST_SEPARATOR)),
-        "cache-ttl" => Ok(config.cache_ttl.clone()),
+        "unused-after" => Ok(ConfigValue::Text(config.unused_after.clone())),
+        "quarantine-ttl" => Ok(ConfigValue::Text(config.quarantine_ttl.clone())),
+        "quarantine-path" => Ok(ConfigValue::Text(config.quarantine_path.clone())),
+        "min-size" => Ok(ConfigValue::Text(config.min_size.clone())),
+        "donate-prompt" => Ok(ConfigValue::Flag(config.donate_prompt)),
+        "color" => Ok(ConfigValue::Text(config.color.as_str().to_owned())),
+        "exclude" => Ok(ConfigValue::List(config.exclude.clone())),
+        "cache-ttl" => Ok(ConfigValue::Text(config.cache_ttl.clone())),
         other => Err(unknown_key(other)),
     }
 }
 
-/// Return a copy of `config` with `key` set to `value`, validated per key type.
+/// Return a copy of `config` with `key` set to `values`, validated per key type.
+///
+/// Scalar keys take exactly one value; list keys take one or more. Each value is
+/// used verbatim: nothing is split on a separator.
 ///
 /// # Errors
 ///
-/// [`BrozaError::Usage`] when `key` is unknown or `value` does not match its type.
-pub fn set(config: Config, key: &str, value: &str) -> Result<Config, BrozaError> {
+/// [`BrozaError::Usage`] when `key` is unknown, the number of values does not
+/// match its arity, or a value does not match its type.
+pub fn set(config: Config, key: &str, values: &[String]) -> Result<Config, BrozaError> {
     match key {
-        "unused-after" => Ok(Config { unused_after: validate_duration(value)?, ..config }),
-        "quarantine-ttl" => Ok(Config { quarantine_ttl: validate_duration(value)?, ..config }),
-        "cache-ttl" => Ok(Config { cache_ttl: validate_duration(value)?, ..config }),
-        "min-size" => Ok(Config { min_size: validate_size(value)?, ..config }),
-        "quarantine-path" => Ok(Config { quarantine_path: validate_path(value)?, ..config }),
-        "donate-prompt" => Ok(Config { donate_prompt: validate_bool(value)?, ..config }),
-        "color" => Ok(Config { color: validate_color(value)?, ..config }),
-        "exclude" => Ok(Config { exclude: parse_list(value), ..config }),
+        "unused-after" => Ok(Config { unused_after: validate_duration(scalar(key, values)?)?, ..config }),
+        "quarantine-ttl" => Ok(Config { quarantine_ttl: validate_duration(scalar(key, values)?)?, ..config }),
+        "cache-ttl" => Ok(Config { cache_ttl: validate_duration(scalar(key, values)?)?, ..config }),
+        "min-size" => Ok(Config { min_size: validate_size(scalar(key, values)?)?, ..config }),
+        "quarantine-path" => Ok(Config { quarantine_path: validate_path(scalar(key, values)?)?, ..config }),
+        "donate-prompt" => Ok(Config { donate_prompt: validate_bool(scalar(key, values)?)?, ..config }),
+        "color" => Ok(Config { color: validate_color(scalar(key, values)?)?, ..config }),
+        "exclude" => Ok(Config { exclude: validate_globs(key, values)?, ..config }),
         other => Err(unknown_key(other)),
     }
 }
@@ -87,8 +129,31 @@ pub fn reset(config: Config, key: Option<&str>) -> Result<Config, BrozaError> {
 }
 
 /// All keys with their current values, in specification order.
-pub fn list(config: &Config) -> Vec<(String, String)> {
-    KEYS.iter().filter_map(|key| get(config, key).ok().map(|value| ((*key).to_owned(), value))).collect()
+///
+/// # Errors
+///
+/// [`BrozaError::Usage`] if [`KEYS`] ever names a key [`get`] cannot read.
+pub fn list(config: &Config) -> Result<Vec<(String, ConfigValue)>, BrozaError> {
+    KEYS.iter().map(|key| get(config, key).map(|value| ((*key).to_owned(), value))).collect()
+}
+
+/// Exactly one value, as scalar keys require.
+fn scalar<'a>(key: &str, values: &'a [String]) -> Result<&'a str, BrozaError> {
+    match values {
+        [single] => Ok(single.as_str()),
+        _ => Err(BrozaError::Usage(format!("`{key}` takes exactly one value, got {}", values.len()))),
+    }
+}
+
+/// One or more non-empty glob patterns, kept verbatim.
+fn validate_globs(key: &str, values: &[String]) -> Result<Vec<String>, BrozaError> {
+    if values.is_empty() {
+        return Err(BrozaError::Usage(format!("`{key}` takes at least one value")));
+    }
+    if values.iter().any(|value| value.trim().is_empty()) {
+        return Err(BrozaError::Usage(format!("`{key}` does not accept empty patterns")));
+    }
+    Ok(values.to_vec())
 }
 
 fn validate_color(value: &str) -> Result<ColorChoice, BrozaError> {
@@ -105,15 +170,6 @@ fn validate_path(value: &str) -> Result<String, BrozaError> {
     Ok(trimmed.to_owned())
 }
 
-fn parse_list(value: &str) -> Vec<String> {
-    value
-        .split(LIST_SEPARATOR)
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
 fn unknown_key(key: &str) -> BrozaError {
     BrozaError::Usage(format!("unknown configuration key `{key}`: known keys are {}", KEYS.join(", ")))
 }
@@ -123,6 +179,10 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    fn one(value: &str) -> Vec<String> {
+        vec![value.to_owned()]
+    }
 
     #[test]
     fn every_key_is_readable_from_the_defaults() {
@@ -134,38 +194,62 @@ mod tests {
 
     #[test]
     fn list_returns_every_key_in_specification_order() {
-        let listed = list(&Config::default());
+        let listed = list(&Config::default()).unwrap();
         assert_eq!(listed.len(), KEYS.len());
-        assert_eq!(listed[0], ("unused-after".to_owned(), "1y".to_owned()));
-        assert_eq!(listed[7], ("cache-ttl".to_owned(), "24h".to_owned()));
+        assert_eq!(listed[0], ("unused-after".to_owned(), ConfigValue::Text("1y".to_owned())));
+        assert_eq!(listed[7], ("cache-ttl".to_owned(), ConfigValue::Text("24h".to_owned())));
+    }
+
+    #[test]
+    fn values_keep_their_type_in_json() {
+        let config = Config { exclude: vec!["~/a/**".into()], ..Config::default() };
+        assert_eq!(get(&config, "donate-prompt").unwrap().to_json(), serde_json::json!(true));
+        assert_eq!(get(&config, "exclude").unwrap().to_json(), serde_json::json!(["~/a/**"]));
+        assert_eq!(get(&config, "min-size").unwrap().to_json(), serde_json::json!("50MB"));
     }
 
     #[test]
     fn set_validates_per_key_type() {
-        assert!(set(Config::default(), "unused-after", "6m").is_ok());
-        assert!(set(Config::default(), "unused-after", "6").is_err());
-        assert!(set(Config::default(), "min-size", "500MB").is_ok());
-        assert!(set(Config::default(), "min-size", "500").is_err());
-        assert!(set(Config::default(), "donate-prompt", "false").is_ok());
-        assert!(set(Config::default(), "donate-prompt", "0").is_err());
-        assert!(set(Config::default(), "color", "never").is_ok());
-        assert!(set(Config::default(), "color", "beige").is_err());
-        assert!(set(Config::default(), "quarantine-path", "  ").is_err());
+        assert!(set(Config::default(), "unused-after", &one("6m")).is_ok());
+        assert!(set(Config::default(), "unused-after", &one("6")).is_err());
+        assert!(set(Config::default(), "min-size", &one("500MB")).is_ok());
+        assert!(set(Config::default(), "min-size", &one("500")).is_err());
+        assert!(set(Config::default(), "donate-prompt", &one("false")).is_ok());
+        assert!(set(Config::default(), "donate-prompt", &one("0")).is_err());
+        assert!(set(Config::default(), "color", &one("never")).is_ok());
+        assert!(set(Config::default(), "color", &one("beige")).is_err());
+        assert!(set(Config::default(), "quarantine-path", &one("  ")).is_err());
+    }
+
+    #[test]
+    fn scalar_keys_refuse_more_than_one_value() {
+        let values = vec!["1y".to_owned(), "2y".to_owned()];
+        let err = set(Config::default(), "unused-after", &values).expect_err("must fail");
+        assert!(err.to_string().contains("exactly one value"), "{err}");
+        assert!(set(Config::default(), "min-size", &[]).is_err());
     }
 
     #[test]
     fn set_does_not_mutate_the_original() {
         let original = Config::default();
-        let updated = set(original.clone(), "min-size", "2GB").unwrap();
+        let updated = set(original.clone(), "min-size", &one("2GB")).unwrap();
         assert_eq!(original.min_size, "50MB");
         assert_eq!(updated.min_size, "2GB");
     }
 
     #[test]
-    fn exclude_is_stored_as_a_comma_separated_list() {
-        let updated = set(Config::default(), "exclude", "~/a/**, ~/b/**,").unwrap();
-        assert_eq!(updated.exclude, vec!["~/a/**".to_owned(), "~/b/**".to_owned()]);
-        assert_eq!(get(&updated, "exclude").unwrap(), "~/a/**,~/b/**");
+    fn exclude_takes_one_value_per_glob_and_never_splits_on_commas() {
+        let globs = vec!["~/p/**/*.{js,ts}".to_owned(), "~/Library/Caches/com.a,b.*".to_owned()];
+        let updated = set(Config::default(), "exclude", &globs).unwrap();
+        assert_eq!(updated.exclude, globs, "brace and comma globs must survive intact");
+        assert_eq!(get(&updated, "exclude").unwrap(), ConfigValue::List(globs.clone()));
+        assert_eq!(get(&updated, "exclude").unwrap().to_human(), globs.join("\n"));
+    }
+
+    #[test]
+    fn exclude_rejects_no_values_and_blank_patterns() {
+        assert!(set(Config::default(), "exclude", &[]).is_err());
+        assert!(set(Config::default(), "exclude", &one("  ")).is_err());
     }
 
     #[test]
@@ -191,7 +275,7 @@ mod tests {
     #[test]
     fn unknown_keys_are_usage_errors_everywhere() {
         assert!(matches!(get(&Config::default(), "nope"), Err(BrozaError::Usage(_))));
-        assert!(matches!(set(Config::default(), "nope", "1"), Err(BrozaError::Usage(_))));
+        assert!(matches!(set(Config::default(), "nope", &one("1")), Err(BrozaError::Usage(_))));
         assert!(matches!(reset(Config::default(), Some("nope")), Err(BrozaError::Usage(_))));
     }
 }

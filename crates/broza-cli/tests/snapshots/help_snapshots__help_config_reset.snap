@@ -10,6 +10,7 @@ Arguments:
   [KEY]  Configuration key. Omit to reset everything
 
 Options:
+  -y, --yes             Skip the confirmation asked before resetting every key
       --json            JSON output on stdout. Disables color, progress and interactivity
       --csv             Flat CSV output on stdout. Only on tabular commands
   -o, --output <FILE>   Write output to a file instead of stdout

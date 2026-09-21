@@ -4,11 +4,6 @@ use clap::Args;
 
 use crate::args::RiskFilter;
 
-/// Default minimum size of a reported finding.
-const DEFAULT_MIN_SIZE: &str = "50MB";
-/// Default "unused app" threshold.
-const DEFAULT_UNUSED_AFTER: &str = "1y";
-
 /// Detect cleanable categories. Never writes anything.
 #[derive(Debug, Clone, Args)]
 pub struct SuggestArgs {
@@ -20,13 +15,13 @@ pub struct SuggestArgs {
     #[arg(long, value_name = "LEVEL", default_value = "all")]
     pub risk: RiskFilter,
 
-    /// Omit findings smaller than this size.
-    #[arg(long, value_name = "SIZE", default_value = DEFAULT_MIN_SIZE)]
-    pub min_size: String,
+    /// Omit findings smaller than this size [default: the `min-size` key, 50MB].
+    #[arg(long, value_name = "SIZE")]
+    pub min_size: Option<String>,
 
-    /// "Unused app" threshold (for example 6m, 1y, 2y).
-    #[arg(long, value_name = "DURATION", default_value = DEFAULT_UNUSED_AFTER)]
-    pub unused_after: String,
+    /// "Unused app" threshold, for example 6m, 1y, 2y [default: the `unused-after` key, 1y].
+    #[arg(long, value_name = "DURATION")]
+    pub unused_after: Option<String>,
 
     /// Include the reasoning behind each detection.
     #[arg(long)]

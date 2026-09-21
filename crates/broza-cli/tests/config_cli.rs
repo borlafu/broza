@@ -119,8 +119,9 @@ fn list_json_uses_the_envelope() {
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("invalid json: {e}"));
     assert_eq!(parsed["schema_version"], "1.1");
     assert_eq!(parsed["command"], "config");
-    assert_eq!(parsed["data"]["quarantine-ttl"], "30d");
-    assert_eq!(parsed["data"]["donate-prompt"], "true");
+    assert_eq!(parsed["data"]["quarantine-ttl"], serde_json::json!("30d"));
+    assert_eq!(parsed["data"]["donate-prompt"], serde_json::json!(true), "booleans stay booleans");
+    assert_eq!(parsed["data"]["exclude"], serde_json::json!([]), "lists stay arrays");
 }
 
 #[test]
@@ -177,6 +178,122 @@ fn broza_no_donate_forces_the_donation_key_off() {
 fn resetting_everything_without_a_tty_exits_seven() {
     let home = temp_home();
     broza(home.path()).args(["config", "reset"]).assert().code(7);
+    assert!(!home.path().join(".config/broza/config.toml").exists());
+}
+
+#[test]
+fn resetting_everything_with_yes_needs_no_tty() {
+    let home = temp_home();
+    let config = home.path().join("config.toml");
+    write(&config, "# keep\nmin-size = \"2GB\"\n");
+    broza(home.path()).args(["--config"]).arg(&config).args(["config", "reset", "--yes"]).assert().code(0);
+
+    let written = std::fs::read_to_string(&config).unwrap_or_else(|e| panic!("{e}"));
+    assert!(written.contains("# keep"), "comments survive: {written}");
+    assert!(written.contains("min-size = \"50MB\""), "{written}");
+}
+
+#[test]
+fn a_comment_survives_a_single_key_write() {
+    let home = temp_home();
+    let config = home.path().join("config.toml");
+    write(&config, "# company policy\nunused-after = \"2y\"\n");
+    broza(home.path())
+        .args(["--config"])
+        .arg(&config)
+        .args(["config", "set", "min-size", "2GB"])
+        .assert()
+        .code(0);
+
+    let written = std::fs::read_to_string(&config).unwrap_or_else(|e| panic!("{e}"));
+    assert!(written.contains("# company policy"), "{written}");
+    assert!(written.contains("unused-after = \"2y\""), "{written}");
+    assert!(written.contains("min-size = \"2GB\""), "{written}");
+}
+
+#[test]
+fn exclude_takes_one_value_per_glob_and_keeps_braces_intact() {
+    let home = temp_home();
+    let config = home.path().join("config.toml");
+    broza(home.path())
+        .args(["--config"])
+        .arg(&config)
+        .args(["config", "set", "exclude", "~/p/**/*.{js,ts}", "~/Library/Caches/com.a,b.*"])
+        .assert()
+        .code(0);
+
+    broza(home.path())
+        .args(["--config"])
+        .arg(&config)
+        .args(["config", "get", "exclude"])
+        .assert()
+        .code(0)
+        .stdout(contains("~/p/**/*.{js,ts}"))
+        .stdout(contains("~/Library/Caches/com.a,b.*"));
+}
+
+#[test]
+fn get_exclude_json_is_an_array() {
+    let home = temp_home();
+    let config = home.path().join("config.toml");
+    write(&config, "exclude = [\"~/p/**/*.{js,ts}\"]\n");
+    let output = broza(home.path())
+        .args(["--config"])
+        .arg(&config)
+        .args(["config", "get", "exclude", "--json"])
+        .output()
+        .unwrap_or_else(|e| panic!("{e}"));
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(parsed["data"]["exclude"], serde_json::json!(["~/p/**/*.{js,ts}"]));
+}
+
+#[test]
+fn a_missing_explicit_config_file_exits_two() {
+    let home = temp_home();
+    broza(home.path())
+        .args(["--config"])
+        .arg(home.path().join("absent.toml"))
+        .args(["config", "list"])
+        .assert()
+        .code(2)
+        .stderr(contains("not found"));
+}
+
+#[test]
+fn a_read_only_configuration_directory_exits_three() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = temp_home();
+    let locked = home.path().join("locked");
+    std::fs::create_dir(&locked).unwrap_or_else(|e| panic!("{e}"));
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500))
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    broza(home.path())
+        .args(["--config"])
+        .arg(locked.join("config.toml"))
+        .args(["config", "set", "min-size", "2GB"])
+        .assert()
+        .code(3);
+
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700))
+        .unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+fn an_unreadable_configuration_file_exits_three() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = temp_home();
+    let config = home.path().join("secret.toml");
+    write(&config, "min-size = \"2GB\"\n");
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000))
+        .unwrap_or_else(|e| panic!("{e}"));
+
+    broza(home.path()).args(["--config"]).arg(&config).args(["config", "list"]).assert().code(3);
+
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600))
+        .unwrap_or_else(|e| panic!("{e}"));
 }
 
 #[test]

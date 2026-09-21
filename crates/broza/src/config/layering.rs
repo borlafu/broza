@@ -22,7 +22,11 @@ use crate::BrozaError;
 use crate::config::schema::{ColorChoice, Config, Profile};
 
 /// Values that command-line flags may override. `None` means "flag absent".
+///
+/// Build with [`CliOverrides::default`] and the `with_*` methods; the struct is
+/// `#[non_exhaustive]` so new flags do not break downstream construction.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct CliOverrides {
     /// `--unused-after`.
     pub unused_after: Option<String>,
@@ -36,12 +40,49 @@ pub struct CliOverrides {
     pub categories: Option<Vec<String>>,
 }
 
+impl CliOverrides {
+    /// Set `--unused-after`.
+    #[must_use]
+    pub fn with_unused_after(self, value: Option<String>) -> Self {
+        Self { unused_after: value, ..self }
+    }
+
+    /// Set `--min-size`.
+    #[must_use]
+    pub fn with_min_size(self, value: Option<String>) -> Self {
+        Self { min_size: value, ..self }
+    }
+
+    /// Set `--no-color`.
+    #[must_use]
+    pub fn with_no_color(self, value: bool) -> Self {
+        Self { no_color: value, ..self }
+    }
+
+    /// Set the extra `--exclude` globs.
+    #[must_use]
+    pub fn with_exclude(self, value: Vec<String>) -> Self {
+        Self { exclude: value, ..self }
+    }
+
+    /// Set `--category`.
+    #[must_use]
+    pub fn with_categories(self, value: Option<Vec<String>>) -> Self {
+        Self { categories: value, ..self }
+    }
+}
+
 /// Environment facts the core is allowed to see. Built by the CLI; never read
 /// from the process environment inside this crate.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Build with [`EnvSnapshot::default`] or [`EnvSnapshot::for_home`] and the
+/// `with_*` methods.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EnvSnapshot {
     /// Home directory used to resolve `~` and the default config path.
-    pub home: PathBuf,
+    /// `None` when `HOME` is unset: any operation that needs it fails loudly.
+    pub home: Option<PathBuf>,
     /// `NO_COLOR` is set.
     pub no_color: bool,
     /// `BROZA_NO_DONATE` is set.
@@ -55,7 +96,37 @@ pub struct EnvSnapshot {
 impl EnvSnapshot {
     /// A snapshot with `home` and no environment variables set.
     pub fn for_home(home: PathBuf) -> Self {
-        Self { home, no_color: false, broza_no_donate: false, ci: false, broza_config: None }
+        Self { home: Some(home), ..Self::default() }
+    }
+
+    /// Set the home directory, or clear it to model an unset `HOME`.
+    #[must_use]
+    pub fn with_home(self, home: Option<PathBuf>) -> Self {
+        Self { home, ..self }
+    }
+
+    /// Set `NO_COLOR`.
+    #[must_use]
+    pub fn with_no_color(self, value: bool) -> Self {
+        Self { no_color: value, ..self }
+    }
+
+    /// Set `BROZA_NO_DONATE`.
+    #[must_use]
+    pub fn with_broza_no_donate(self, value: bool) -> Self {
+        Self { broza_no_donate: value, ..self }
+    }
+
+    /// Set `CI`.
+    #[must_use]
+    pub fn with_ci(self, value: bool) -> Self {
+        Self { ci: value, ..self }
+    }
+
+    /// Set `BROZA_CONFIG`.
+    #[must_use]
+    pub fn with_broza_config(self, value: Option<PathBuf>) -> Self {
+        Self { broza_config: value, ..self }
     }
 }
 
@@ -192,34 +263,32 @@ mod tests {
     #[test]
     fn no_color_env_forces_never_even_over_always_in_file() {
         let file = Config { color: ColorChoice::Always, ..Config::default() };
-        let snapshot = EnvSnapshot { no_color: true, ..env() };
+        let snapshot = env().with_no_color(true);
         let merged = layer(&file, None, &snapshot, &CliOverrides::default()).unwrap();
         assert_eq!(merged.color, ColorChoice::Never);
     }
 
     #[test]
     fn broza_no_donate_env_forces_donate_prompt_off() {
-        let snapshot = EnvSnapshot { broza_no_donate: true, ..env() };
+        let snapshot = env().with_broza_no_donate(true);
         let merged = layer(&Config::default(), None, &snapshot, &CliOverrides::default()).unwrap();
         assert!(!merged.donate_prompt);
     }
 
     #[test]
     fn ci_alone_changes_no_configuration_key() {
-        let snapshot = EnvSnapshot { ci: true, ..env() };
+        let snapshot = env().with_ci(true);
         let merged = layer(&Config::default(), None, &snapshot, &CliOverrides::default()).unwrap();
         assert_eq!(merged, Config::default(), "CI only affects interactivity, not keys");
     }
 
     #[test]
     fn cli_flags_win_over_everything_else() {
-        let snapshot = EnvSnapshot { no_color: false, ..env() };
-        let overrides = CliOverrides {
-            min_size: Some("2GB".into()),
-            unused_after: Some("6m".into()),
-            no_color: true,
-            ..CliOverrides::default()
-        };
+        let snapshot = env().with_no_color(false);
+        let overrides = CliOverrides::default()
+            .with_min_size(Some("2GB".into()))
+            .with_unused_after(Some("6m".into()))
+            .with_no_color(true);
         let merged = layer(&file_with_profile(), Some("developer"), &snapshot, &overrides).unwrap();
         assert_eq!(merged.min_size, "2GB");
         assert_eq!(merged.unused_after, "6m");
@@ -229,7 +298,7 @@ mod tests {
     #[test]
     fn cli_exclusions_are_merged_with_configured_ones() {
         let file = Config { exclude: vec!["~/a/**".into()], ..Config::default() };
-        let overrides = CliOverrides { exclude: vec!["~/b/**".into()], ..CliOverrides::default() };
+        let overrides = CliOverrides::default().with_exclude(vec!["~/b/**".into()]);
         let merged = layer(&file, None, &env(), &overrides).unwrap();
         assert_eq!(merged.exclude, vec!["~/a/**".to_owned(), "~/b/**".to_owned()]);
         assert_eq!(file.exclude, vec!["~/a/**".to_owned()], "input untouched");

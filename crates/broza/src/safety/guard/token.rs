@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::seal;
 use crate::model::CleanPlan;
@@ -48,17 +48,52 @@ impl seal::Sealed for SnapshotDelete {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovedItem {
     /// The checked path: absolute, free of `.`/`..`, no symlinked component.
-    pub path: PathBuf,
+    path: PathBuf,
     /// `st_dev` observed during the check.
-    pub device: u64,
+    device: u64,
     /// `st_ino` observed during the check.
-    pub inode: u64,
+    inode: u64,
+    /// `st_size` observed during the check.
+    size_bytes: u64,
+    /// `true` when the leaf is a directory.
+    is_dir: bool,
 }
 
 impl ApprovedItem {
     /// Records the identity a path had when the guard checked it.
     pub(super) fn from_checked(checked: &CanonicalPath) -> Self {
-        Self { path: checked.path.clone(), device: checked.metadata.device, inode: checked.metadata.inode }
+        Self {
+            path: checked.path.clone(),
+            device: checked.metadata.device,
+            inode: checked.metadata.inode,
+            size_bytes: checked.metadata.size_bytes,
+            is_dir: checked.metadata.is_dir,
+        }
+    }
+
+    /// The checked path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// `st_dev` at the moment of the check; re-`lstat` and compare before writing.
+    pub fn device(&self) -> u64 {
+        self.device
+    }
+
+    /// `st_ino` at the moment of the check; re-`lstat` and compare before writing.
+    pub fn inode(&self) -> u64 {
+        self.inode
+    }
+
+    /// Size of the leaf itself, as `lstat` reported it during the check.
+    pub fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+
+    /// `true` when the leaf is a directory, whose size the scanner aggregated.
+    pub fn is_dir(&self) -> bool {
+        self.is_dir
     }
 }
 
@@ -143,4 +178,23 @@ impl Approved<QuarantineWrite> {
 /// Builds a token. The only constructor of [`Approved`] in the whole crate.
 pub(super) fn issue<K: WriteKind>(payload: K::Payload) -> Approved<K> {
     Approved { payload, seal: seal::Seal, kind: PhantomData }
+}
+
+/// Evidence for a path the guard did not really check, for tests inside `guard`.
+#[cfg(test)]
+pub(super) fn evidence_for(path: &str, device: u64, inode: u64) -> ApprovedItem {
+    ApprovedItem::from_checked(&CanonicalPath {
+        path: PathBuf::from(path),
+        metadata: crate::ports::EntryMetadata {
+            device,
+            inode,
+            size_bytes: 1,
+            allocated_bytes: 1,
+            link_count: 1,
+            is_dir: false,
+            is_symlink: false,
+            modified: None,
+            accessed: None,
+        },
+    })
 }

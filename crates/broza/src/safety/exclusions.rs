@@ -57,11 +57,18 @@ impl Exclusions {
         Ok(Self { set: Some(set), patterns })
     }
 
-    /// `true` when `path` matches at least one pattern, in either spelling.
-    pub fn matches(&self, path: &Path) -> bool {
+    /// `true` when `path` matches at least one pattern.
+    ///
+    /// On the Data volume a path has two spellings for the same directory and both
+    /// are tried; anywhere else `/System/Volumes/Data/...` would be a different
+    /// place, so only the path as given is matched.
+    pub fn matches(&self, path: &Path, on_data_volume: bool) -> bool {
         let Some(set) = self.set.as_ref() else {
             return false;
         };
+        if !on_data_volume {
+            return set.is_match(path);
+        }
         firmlink_spellings(path).iter().any(|spelling| set.is_match(spelling))
     }
 
@@ -127,22 +134,24 @@ mod tests {
     fn an_empty_set_matches_nothing() {
         let exclusions = Exclusions::none();
         assert!(exclusions.is_empty());
-        assert!(!exclusions.matches(Path::new("/Users/dana/anything")));
+        assert!(!exclusions.matches(Path::new("/Users/dana/anything"), true));
     }
 
     #[test]
     fn a_recursive_pattern_matches_nested_paths() {
         let exclusions = set(&["/Users/dana/Projects/**/node_modules/**"]);
-        assert!(exclusions.matches(Path::new("/Users/dana/Projects/app/node_modules/left-pad/index.js")));
-        assert!(!exclusions.matches(Path::new("/Users/dana/Library/Caches/node_modules")));
+        assert!(
+            exclusions.matches(Path::new("/Users/dana/Projects/app/node_modules/left-pad/index.js"), true)
+        );
+        assert!(!exclusions.matches(Path::new("/Users/dana/Library/Caches/node_modules"), true));
     }
 
     #[test]
     fn an_exclusion_protects_both_firmlink_spellings() {
         let exclusions = set(&["/Users/dana/Library/Caches/**"]);
-        assert!(exclusions.matches(Path::new("/Users/dana/Library/Caches/app.cache")));
+        assert!(exclusions.matches(Path::new("/Users/dana/Library/Caches/app.cache"), true));
         assert!(
-            exclusions.matches(Path::new("/System/Volumes/Data/Users/dana/Library/Caches/app.cache")),
+            exclusions.matches(Path::new("/System/Volumes/Data/Users/dana/Library/Caches/app.cache"), true),
             "the Data-volume spelling is the same directory"
         );
     }
@@ -150,22 +159,22 @@ mod tests {
     #[test]
     fn a_pattern_written_on_the_data_volume_protects_the_short_spelling() {
         let exclusions = set(&["/System/Volumes/Data/Users/dana/Library/Caches/**"]);
-        assert!(exclusions.matches(Path::new("/System/Volumes/Data/Users/dana/Library/Caches/a")));
-        assert!(exclusions.matches(Path::new("/Users/dana/Library/Caches/a")));
+        assert!(exclusions.matches(Path::new("/System/Volumes/Data/Users/dana/Library/Caches/a"), true));
+        assert!(exclusions.matches(Path::new("/Users/dana/Library/Caches/a"), true));
     }
 
     #[test]
     fn matching_ignores_case_like_the_default_volume() {
         let exclusions = set(&["/Users/dana/Library/Caches/**"]);
-        assert!(exclusions.matches(Path::new("/users/dana/library/caches/app.cache")));
+        assert!(exclusions.matches(Path::new("/users/dana/library/caches/app.cache"), true));
     }
 
     #[test]
     fn several_patterns_are_all_considered() {
         let exclusions = set(&["/Library/Caches/keep/*", "/Users/dana/Library/Caches/com.mycompany.*"]);
-        assert!(exclusions.matches(Path::new("/Library/Caches/keep/thing")));
-        assert!(exclusions.matches(Path::new("/Users/dana/Library/Caches/com.mycompany.tool")));
-        assert!(!exclusions.matches(Path::new("/Users/dana/Library/Caches/com.other.tool")));
+        assert!(exclusions.matches(Path::new("/Library/Caches/keep/thing"), true));
+        assert!(exclusions.matches(Path::new("/Users/dana/Library/Caches/com.mycompany.tool"), true));
+        assert!(!exclusions.matches(Path::new("/Users/dana/Library/Caches/com.other.tool"), true));
         assert_eq!(exclusions.patterns().len(), 2);
     }
 
@@ -186,6 +195,18 @@ mod tests {
             "{error:?}"
         );
         assert!(Exclusions::new(["node_modules/**"]).is_err());
+    }
+
+    /// Outside the Data volume `/System/Volumes/Data/...` is just another path,
+    /// so the twin spelling must not be invented for it.
+    #[test]
+    fn the_twin_spelling_is_only_tried_on_the_data_volume() {
+        let exclusions = set(&["/Users/dana/Library/Caches/**"]);
+        let twin = Path::new("/System/Volumes/Data/Users/dana/Library/Caches/app.cache");
+        assert!(exclusions.matches(twin, true));
+        assert!(!exclusions.matches(twin, false));
+        let plain = Path::new("/Users/dana/Library/Caches/app.cache");
+        assert!(exclusions.matches(plain, false), "the path as written always counts");
     }
 
     #[test]

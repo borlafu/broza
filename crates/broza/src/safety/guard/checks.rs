@@ -1,65 +1,88 @@
-//! The seven safety checks of `docs/cli-spec.md` §3.4.
+//! The plan-level safety checks of `docs/cli-spec.md` §3.4.
 //!
-//! Order (the two refusals that are pure usage errors come first, so a wrong
-//! command line is reported as such and never as a path problem):
+//! Order (the refusals that are pure usage errors come first, so a wrong command
+//! line is reported as such and never as a path problem):
 //!
+//! 0. the findings must be a set: a duplicated identifier makes every later
+//!    lookup ambiguous;
 //! 1. `--apply` present, else the plan stays a dry run;
 //! 2. red selection, and `--yes` with `--purge`, are refused outright;
 //! 3. an inform-only finding in the selection refuses the whole plan;
-//! 4. per item: validate the path, `lstat` every component, resolve the volume,
-//!    check the role, the allowlist and the exclusions, and check that the action
-//!    is the one the finding plus `--purge` imply;
-//! 5. `--max-size`;
-//! 6. no `inform_only` item survived into the plan;
+//! 4. per item, in [`super::item`]: the action, the finding it belongs to, the
+//!    path, the volume, the role, the allowlist, the exclusions and the size;
+//! 5. no `inform_only` item survived into the plan;
+//! 6. `--max-size`;
 //! 7. the confirmation policy.
 //!
 //! An item whose path no longer exists is not a refusal: it is marked `skipped`
-//! with `not_found` and the rest of the plan proceeds.
+//! with `not_found` and contributes nothing to the totals. When *every* item has
+//! vanished the verdict is [`Verdict::Nothing`], which writes nothing and exits `0`.
 
-use super::{ApprovedItem, ApprovedPlan, PendingApproval, Verdict, WriteRequest, seal};
-use crate::model::{Action, CleanItem, CleanPlan, CleanPlanRepr, Finding, ItemErrorCode, ItemStatus, Risk};
+use super::item::Outcome;
+use super::item::check_item;
+use super::rebuild::rebuild;
+use super::{ApprovedPlan, PendingApproval, Verdict, WriteRequest, seal};
+use crate::clean::PlanOutcome;
+use crate::model::{Action, CleanItem, CleanPlan, Finding, Risk};
 use crate::ports::{ConfirmationRequest, FileOps};
-use crate::safety::path::canonicalize_no_follow;
 use crate::safety::policy::{ConfirmationMode, confirmation_policy};
 use crate::safety::rejection::{GuardRejection, PolicyError};
-use crate::safety::roles::allows_action;
-use crate::safety::roots::{AllowedRoots, RootContext, is_allowed_root, is_under_allowed_root};
 use crate::scan::MountTable;
 
 /// Runs every check and, if they pass, produces the pending approval.
 ///
 /// `findings` must contain every finding the plan refers to: the guard reads the
-/// risk, the category and the intended action from them rather than trusting the
-/// caller or re-parsing identifiers.
+/// risk, the category, the intended action and the paths from them rather than
+/// trusting the caller. The planner's whole [`PlanOutcome`] is taken, so the
+/// inform-only findings it set aside cannot be dropped on the way here.
 pub fn approve(
-    plan: CleanPlan,
+    outcome: &PlanOutcome,
     findings: &[Finding],
     req: &WriteRequest,
     mounts: &MountTable,
     fs: &dyn FileOps,
 ) -> Result<Verdict, GuardRejection> {
+    reject_duplicate_findings(findings)?;
+    let plan = &outcome.plan;
     if !req.apply {
-        return dry_run(plan);
+        return dry_run(plan.clone());
     }
-    let mode = confirmation_policy(req.policy_input(max_risk(&plan, findings)?));
+    let input = req.policy_input(max_risk(plan, findings)?, is_irreversible(plan, req));
+    let mode = confirmation_policy(input);
     if let ConfirmationMode::Rejected(reason) = mode {
         return Err(PolicyError::Rejected(reason).into());
     }
-    if let Some(informed) = req.informed_only.first() {
+    if let Some(informed) = outcome.informed_only.first() {
         return Err(GuardRejection::InformOnlySelected(informed.clone()));
     }
     if plan.items().is_empty() {
-        return Ok(Verdict::Nothing);
+        return Ok(Verdict::Nothing(plan.clone()));
     }
-    let outcomes = check_items(&plan, findings, req, mounts, fs)?;
-    let payload = rebuild(&plan, &outcomes)?;
-    check_max_size(&payload, req)?;
+    let payload = rebuild(plan, &check_items(plan, findings, req, mounts, fs)?)?;
     check_no_inform_only(&payload.plan)?;
+    if payload.items.is_empty() {
+        return Ok(Verdict::Nothing(payload.plan));
+    }
+    check_max_size(&payload, req)?;
     if let Ok(stopped) = PolicyError::try_from(mode) {
         return Err(stopped.into());
     }
     let request = confirmation_request(&payload, req, findings);
     Ok(Verdict::NeedsConfirmation(PendingApproval { payload, mode, request, seal: seal::Seal }))
+}
+
+/// Check 0: two findings with the same identifier make `finding_of` a coin toss.
+fn reject_duplicate_findings(findings: &[Finding]) -> Result<(), GuardRejection> {
+    let duplicate = findings
+        .iter()
+        .enumerate()
+        .find(|(index, finding)| findings[..*index].iter().any(|earlier| earlier.id() == finding.id()));
+    match duplicate {
+        Some((_, finding)) => {
+            Err(GuardRejection::Inconsistent(format!("finding `{}` is listed more than once", finding.id())))
+        }
+        None => Ok(()),
+    }
 }
 
 /// Check 1: without `--apply` the plan must already be, and stay, a dry run.
@@ -71,7 +94,7 @@ fn dry_run(plan: CleanPlan) -> Result<Verdict, GuardRejection> {
         )));
     }
     if plan.items().is_empty() {
-        return Ok(Verdict::Nothing);
+        return Ok(Verdict::Nothing(plan));
     }
     Ok(Verdict::DryRun(plan))
 }
@@ -86,6 +109,14 @@ fn max_risk(plan: &CleanPlan, findings: &[Finding]) -> Result<Option<Risk>, Guar
         .map(Iterator::max)
 }
 
+/// `true` when the plan destroys something no restore can bring back.
+///
+/// `--purge` is the obvious case, but emptying the trash and deleting a snapshot
+/// are irreversible by nature, with or without the flag.
+fn is_irreversible(plan: &CleanPlan, req: &WriteRequest) -> bool {
+    req.purge || plan.items().iter().any(|item| matches!(item.action, Action::Purge | Action::TmutilDelete))
+}
+
 /// The finding an item came from; a plan that refers to an unknown one is a bug.
 fn finding_of<'a>(item: &CleanItem, findings: &'a [Finding]) -> Result<&'a Finding, GuardRejection> {
     findings.iter().find(|finding| finding.id() == &item.finding_id).ok_or_else(|| {
@@ -97,15 +128,7 @@ fn finding_of<'a>(item: &CleanItem, findings: &'a [Finding]) -> Result<&'a Findi
     })
 }
 
-/// What one item turned into during the checks.
-enum Outcome {
-    /// The path passed every check.
-    Approved(ApprovedItem),
-    /// The path is gone; the item is skipped and the plan proceeds.
-    Missing,
-}
-
-/// Checks every item in plan order.
+/// Checks every item in plan order, remembering where each one came from.
 fn check_items(
     plan: &CleanPlan,
     findings: &[Finding],
@@ -116,121 +139,18 @@ fn check_items(
     let roots = req.allowed_roots()?;
     plan.items()
         .iter()
-        .filter(|item| item.action != Action::InformOnly)
-        .map(|item| check_item(item, findings, req, &roots, mounts, fs))
+        .enumerate()
+        .filter(|(_, item)| item.action != Action::InformOnly)
+        .map(|(index, item)| {
+            let finding = finding_of(item, findings)?;
+            check_item(index, item, finding, req, &roots, mounts, fs)
+        })
         .collect()
 }
 
-/// Checks 2 to 5 plus the `--purge` consistency rule for one item.
-fn check_item(
-    item: &CleanItem,
-    findings: &[Finding],
-    req: &WriteRequest,
-    roots: &AllowedRoots,
-    mounts: &MountTable,
-    fs: &dyn FileOps,
-) -> Result<Outcome, GuardRejection> {
-    let finding = finding_of(item, findings)?;
-    check_action_matches(item, finding, req)?;
-    let checked = match canonicalize_no_follow(&item.path, fs) {
-        Ok(checked) => checked,
-        Err(rejection) if rejection.is_missing_path() => return Ok(Outcome::Missing),
-        Err(rejection) => return Err(rejection),
-    };
-    let path = checked.path.as_path();
-    let mount = mounts.volume_for(path).ok_or_else(|| GuardRejection::UnknownVolume(path.to_path_buf()))?;
-    allows_action(mount.volume.role, item.action).map_err(|rejection| rejection.with_path(path))?;
-    let context = RootContext { category: finding.category(), mount };
-    if !is_under_allowed_root(path, roots, context) {
-        return Err(if is_allowed_root(path, roots, context) {
-            GuardRejection::RootItself(path.to_path_buf())
-        } else {
-            GuardRejection::OutsideAllowedRoots(path.to_path_buf())
-        });
-    }
-    if req.exclusions.matches(path) {
-        return Err(GuardRejection::Excluded(path.to_path_buf()));
-    }
-    Ok(Outcome::Approved(ApprovedItem::from_checked(&checked)))
-}
-
-/// The action must be exactly what the finding plus `--purge` imply.
-///
-/// `--purge` upgrades a quarantine to an irreversible deletion and nothing else;
-/// a category whose own action is already `purge` (the trash) is unaffected.
-fn check_action_matches(
-    item: &CleanItem,
-    finding: &Finding,
-    req: &WriteRequest,
-) -> Result<(), GuardRejection> {
-    let expected = expected_action(finding.action(), req.purge);
-    if item.action == expected {
-        return Ok(());
-    }
-    Err(GuardRejection::Inconsistent(format!(
-        "item `{}` has action `{:?}` but finding `{}` with purge={} implies `{expected:?}`",
-        item.path.display(),
-        item.action,
-        finding.id(),
-        req.purge,
-    )))
-}
-
-/// `--purge` turns a quarantine into an irreversible deletion; nothing else changes.
-pub(crate) fn expected_action(action: Action, purge: bool) -> Action {
-    if purge && action == Action::Quarantine { Action::Purge } else { action }
-}
-
-/// Rebuilds the plan from the checked paths, marking the vanished ones `skipped`.
-///
-/// The result is no longer a dry run: it is the plan that will be applied, and it
-/// carries only paths the guard has validated.
-fn rebuild(plan: &CleanPlan, outcomes: &[Outcome]) -> Result<ApprovedPlan, GuardRejection> {
-    let mut checked = outcomes.iter();
-    let items = plan
-        .items()
-        .iter()
-        .map(|item| match item.action {
-            Action::InformOnly => item.clone(),
-            _ => checked.next().map_or_else(|| item.clone(), |outcome| rebuilt_item(item, outcome)),
-        })
-        .collect();
-    let repr = CleanPlanRepr {
-        dry_run: false,
-        session_id: plan.session_id().clone(),
-        planned_bytes: plan.planned_bytes(),
-        quarantined_bytes: 0,
-        reclaimed_bytes: 0,
-        quarantine_path: None,
-        expired_sessions: Vec::new(),
-        items,
-    };
-    let plan = CleanPlan::new(repr)
-        .map_err(|error| GuardRejection::Inconsistent(format!("approved plan: {error}")))?;
-    let items = outcomes
-        .iter()
-        .filter_map(|outcome| match outcome {
-            Outcome::Approved(item) => Some(item.clone()),
-            Outcome::Missing => None,
-        })
-        .collect();
-    Ok(ApprovedPlan { plan, items })
-}
-
-fn rebuilt_item(item: &CleanItem, outcome: &Outcome) -> CleanItem {
-    match outcome {
-        Outcome::Approved(approved) => CleanItem { path: approved.path.clone(), ..item.clone() },
-        Outcome::Missing => {
-            CleanItem { status: ItemStatus::Skipped, error: Some(ItemErrorCode::NotFound), ..item.clone() }
-        }
-    }
-}
-
-/// Check 6: what the plan would actually remove must fit under `--max-size`.
-///
-/// Skipped items are not counted: they will not be removed.
+/// Check 6: what the plan will remove must fit under `--max-size`.
 fn check_max_size(payload: &ApprovedPlan, req: &WriteRequest) -> Result<(), GuardRejection> {
-    let planned_bytes = removable_bytes(&payload.plan);
+    let planned_bytes = payload.plan.planned_bytes();
     if let Some(max_bytes) = req.max_size
         && planned_bytes > max_bytes
     {
@@ -239,14 +159,7 @@ fn check_max_size(payload: &ApprovedPlan, req: &WriteRequest) -> Result<(), Guar
     Ok(())
 }
 
-fn removable_bytes(plan: &CleanPlan) -> u64 {
-    plan.items()
-        .iter()
-        .filter(|item| item.status == ItemStatus::Planned)
-        .fold(0_u64, |sum, item| sum.saturating_add(item.size_bytes))
-}
-
-/// Check 7: a single `inform_only` item rejects the whole plan.
+/// Check 5: a single `inform_only` item rejects the whole plan.
 fn check_no_inform_only(plan: &CleanPlan) -> Result<(), GuardRejection> {
     match plan.items().iter().find(|item| item.action == Action::InformOnly) {
         Some(item) => Err(GuardRejection::InformOnlyItem(item.path.clone())),
@@ -270,19 +183,21 @@ fn confirmation_request(
     ConfirmationRequest {
         max_risk: max_risk.unwrap_or(Risk::Green),
         item_count: payload.items.len(),
-        total_bytes: removable_bytes(&payload.plan),
-        irreversible: req.purge,
-        preview: payload.items.iter().map(|item| item.path.display().to_string()).collect(),
+        total_bytes: payload.plan.planned_bytes(),
+        irreversible: is_irreversible(&payload.plan, req),
+        preview: payload.items.iter().map(|item| item.path().display().to_string()).collect(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{approve, expected_action};
+    use super::approve;
+    use crate::clean::PlanOutcome;
     use crate::model::{
-        Action, Category, CleanItem, CleanPlan, Finding, ItemStatus, SessionId, Volume, VolumeRole,
+        Action, Category, CleanItem, CleanPlan, Finding, FindingPath, ItemStatus, SessionId, Volume,
+        VolumeRole,
     };
-    use crate::safety::guard::WriteRequest;
+    use crate::safety::guard::{Verdict, WriteRequest};
     use crate::safety::rejection::GuardRejection;
     use crate::scan::{MountEntry, MountTable};
     use crate::testing::FakeFileOps;
@@ -295,8 +210,15 @@ mod tests {
         "cln_20260921103608_a1b2".parse().unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn finding(id: &str, category: Category) -> Finding {
+    fn finding(id: &str, category: Category, paths: &[&str]) -> Finding {
         Finding::builder(id.parse().unwrap_or_else(|error| panic!("{error}")), category, "title")
+            .paths(
+                paths
+                    .iter()
+                    .map(|path| FindingPath { path: PathBuf::from(path), size_bytes: 1, last_used: None })
+                    .collect(),
+            )
+            .reclaimable_bytes(paths.len() as u64)
             .build()
             .unwrap_or_else(|error| panic!("{error}"))
     }
@@ -312,8 +234,11 @@ mod tests {
         }
     }
 
-    fn plan(items: Vec<CleanItem>) -> CleanPlan {
-        CleanPlan::dry_run(session(), items).unwrap_or_else(|error| panic!("{error}"))
+    fn outcome(items: Vec<CleanItem>) -> PlanOutcome {
+        PlanOutcome {
+            plan: CleanPlan::dry_run(session(), items).unwrap_or_else(|error| panic!("{error}")),
+            informed_only: Vec::new(),
+        }
     }
 
     fn table(role: VolumeRole) -> MountTable {
@@ -338,20 +263,13 @@ mod tests {
     }
 
     #[test]
-    fn purge_only_upgrades_a_quarantine() {
-        assert_eq!(expected_action(Action::Quarantine, true), Action::Purge);
-        assert_eq!(expected_action(Action::Quarantine, false), Action::Quarantine);
-        assert_eq!(expected_action(Action::Purge, false), Action::Purge);
-        assert_eq!(expected_action(Action::TmutilDelete, true), Action::TmutilDelete);
-    }
-
-    #[test]
     fn an_already_applied_plan_without_apply_is_a_bug_in_the_caller() {
-        let applied = plan(Vec::new())
-            .into_applied(Some(PathBuf::from(STORE)))
+        let applied = CleanPlan::dry_run(session(), Vec::new())
+            .and_then(|plan| plan.into_applied(Some(PathBuf::from(STORE))))
             .unwrap_or_else(|error| panic!("{error}"));
+        let outcome = PlanOutcome { plan: applied, informed_only: Vec::new() };
         let rejection = approve(
-            applied,
+            &outcome,
             &[],
             &WriteRequest::new("/Users/dana"),
             &table(VolumeRole::Data),
@@ -362,11 +280,36 @@ mod tests {
         assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
     }
 
+    /// Two findings with the same id make every lookup a coin toss, so the guard
+    /// refuses before it has looked at anything else.
+    #[test]
+    fn duplicate_finding_identifiers_are_refused_in_either_order() {
+        let cache = finding("user-cache.app", Category::UserCache, &[CACHE]);
+        let twin = finding("user-cache.app", Category::UserCache, &["/Users/dana/other"]);
+        let other = finding("trash.volumes", Category::Trash, &["/Users/dana/.Trash/x"]);
+        for findings in [
+            vec![cache.clone(), twin.clone()],
+            vec![twin.clone(), cache.clone()],
+            vec![other.clone(), cache.clone(), twin.clone()],
+        ] {
+            let rejection = approve(
+                &outcome(Vec::new()),
+                &findings,
+                &WriteRequest::new("/Users/dana"),
+                &table(VolumeRole::Data),
+                &FakeFileOps::new(),
+            )
+            .err()
+            .unwrap_or_else(|| panic!("a duplicated finding id must be refused"));
+            assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
+        }
+    }
+
     #[test]
     fn an_item_whose_finding_is_missing_is_refused() {
         let fs = FakeFileOps::new().with_root("/", 1).with_sized_file(CACHE, 1);
         let rejection = approve(
-            plan(vec![item(CACHE, Action::Quarantine)]),
+            &outcome(vec![item(CACHE, Action::Quarantine)]),
             &[],
             &applying(),
             &table(VolumeRole::Data),
@@ -380,9 +323,9 @@ mod tests {
     #[test]
     fn a_path_on_no_known_volume_is_refused() {
         let fs = FakeFileOps::new().with_root("/", 1).with_sized_file(CACHE, 1);
-        let findings = [finding("user-cache.app", Category::UserCache)];
+        let findings = [finding("user-cache.app", Category::UserCache, &[CACHE])];
         let rejection = approve(
-            plan(vec![item(CACHE, Action::Quarantine)]),
+            &outcome(vec![item(CACHE, Action::Quarantine)]),
             &findings,
             &applying(),
             &MountTable::default(),
@@ -391,5 +334,30 @@ mod tests {
         .err()
         .unwrap_or_else(|| panic!("an unmounted path must be refused"));
         assert_eq!(rejection, GuardRejection::UnknownVolume(CACHE.into()));
+    }
+
+    /// A mount table that disagrees with `lstat` is stale; the guard refuses
+    /// rather than reasoning about the wrong volume.
+    #[test]
+    fn a_device_the_mount_table_does_not_expect_is_refused() {
+        let fs = FakeFileOps::new().with_root("/", 99).with_sized_file(CACHE, 1);
+        let findings = [finding("user-cache.app", Category::UserCache, &[CACHE])];
+        let rejection = approve(
+            &outcome(vec![item(CACHE, Action::Quarantine)]),
+            &findings,
+            &applying(),
+            &table(VolumeRole::Data),
+            &fs,
+        )
+        .err()
+        .unwrap_or_else(|| panic!("a device mismatch must be refused"));
+        assert_eq!(rejection, GuardRejection::UnknownVolume(CACHE.into()));
+    }
+
+    #[test]
+    fn an_empty_plan_is_nothing_to_do() {
+        let verdict =
+            approve(&outcome(Vec::new()), &[], &applying(), &table(VolumeRole::Data), &FakeFileOps::new());
+        assert!(matches!(verdict, Ok(Verdict::Nothing(_))), "{verdict:?}");
     }
 }

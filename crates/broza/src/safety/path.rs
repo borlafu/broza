@@ -35,19 +35,36 @@ pub fn canonicalize_no_follow(path: &Path, fs: &dyn FileOps) -> Result<Canonical
     Ok(CanonicalPath { path: path.to_path_buf(), metadata })
 }
 
-/// Check 2a: the path must be absolute and already resolved.
+/// Check 2a: the path must be absolute, plain and already resolved.
 ///
 /// The raw bytes are inspected on purpose: [`Path::components`] silently drops a
-/// `.` in the middle of a path, and the whole point here is to see it.
+/// `.`, an empty component and a trailing separator, and the whole point here is
+/// to see them. Two spellings of the same file must never both be accepted, or a
+/// comparison against an exclusion or a root can be defeated by punctuation.
 pub(crate) fn reject_relative_components(path: &Path) -> Result<(), GuardRejection> {
     use std::os::unix::ffi::OsStrExt;
 
     if !path.is_absolute() {
         return Err(GuardRejection::NotAbsolute(path.to_path_buf()));
     }
-    let relative =
-        path.as_os_str().as_bytes().split(|byte| *byte == b'/').any(|part| part == b"." || part == b"..");
-    if relative {
+    let bytes = path.as_os_str().as_bytes();
+    let malformed = |reason: &str| {
+        Err(GuardRejection::MalformedPath { path: path.to_path_buf(), reason: reason.to_owned() })
+    };
+    if bytes.contains(&0) {
+        return malformed("it contains a NUL byte");
+    }
+    if bytes == b"/" {
+        return Ok(());
+    }
+    if bytes.ends_with(b"/") {
+        return malformed("it ends with a separator");
+    }
+    let parts: Vec<&[u8]> = bytes.split(|byte| *byte == b'/').skip(1).collect();
+    if parts.iter().any(|part| part.is_empty()) {
+        return malformed("it contains an empty component");
+    }
+    if parts.iter().any(|part| *part == b"." || *part == b"..") {
         return Err(GuardRejection::RelativeComponent(path.to_path_buf()));
     }
     Ok(())
@@ -141,6 +158,24 @@ mod tests {
             .err()
             .unwrap_or_else(|| panic!("a missing path must be reported"));
         assert!(error.is_missing_path(), "{error}");
+    }
+
+    /// One file must have exactly one spelling the guard accepts, or a root or an
+    /// exclusion can be side-stepped with punctuation.
+    #[test]
+    fn a_malformed_path_is_refused() {
+        let cases = [
+            ("/Users//dana/Library", "an empty component"),
+            ("/Users/dana/Library/", "it ends with a separator"),
+            ("/Users/dana/\0/Library", "a NUL byte"),
+        ];
+        for (raw, what) in cases {
+            let error = canonicalize_no_follow(Path::new(raw), &tree());
+            assert!(
+                matches!(error, Err(GuardRejection::MalformedPath { .. })),
+                "{raw} ({what}) must be refused, got {error:?}"
+            );
+        }
     }
 
     #[test]

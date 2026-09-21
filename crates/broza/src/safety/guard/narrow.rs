@@ -65,8 +65,9 @@ pub fn narrow_to_snapshot_delete(
 mod tests {
     use super::{approve_quarantine_write, narrow_to_snapshot_delete};
     use crate::model::{Action, CleanItem, CleanPlan, ItemStatus, SessionId, Volume, VolumeRole};
+    use crate::safety::guard::token::evidence_for;
     use crate::safety::guard::token::issue;
-    use crate::safety::guard::{Approved, ApprovedItem, ApprovedPlan, Write};
+    use crate::safety::guard::{Approved, ApprovedPlan, Write};
     use crate::safety::rejection::GuardRejection;
     use crate::scan::{MountEntry, MountTable};
     use crate::testing::FakeFileOps;
@@ -91,7 +92,7 @@ mod tests {
 
     fn approved(items: Vec<CleanItem>) -> Approved<Write> {
         let evidence =
-            items.iter().map(|item| ApprovedItem { path: item.path.clone(), device: 2, inode: 3 }).collect();
+            items.iter().map(|item| evidence_for(&item.path.display().to_string(), 2, 3)).collect();
         let plan = CleanPlan::dry_run(session(), items).unwrap_or_else(|error| panic!("{error}"));
         issue::<Write>(ApprovedPlan::new(plan, evidence))
     }

@@ -116,7 +116,7 @@ fn items_of(finding: &Finding, selection: &Selection, quarantine_root: Option<&P
     finding
         .paths()
         .iter()
-        .filter(|candidate| !selection.exclusions.matches(&candidate.path))
+        .filter(|candidate| !selection.exclusions.matches(&candidate.path, true))
         .filter(|candidate| quarantine_root.is_none_or(|root| !candidate.path.starts_with(root)))
         .map(|candidate| CleanItem {
             path: candidate.path.clone(),

@@ -1,0 +1,53 @@
+error[E0603]: module `token` is private
+  --> tests/compile_fail/reach_into_the_guard.rs:20:40
+   |
+20 |     let _token = broza::safety::guard::token::issue::<broza::safety::guard::Write>(todo!());
+   |                                        ^^^^^  ----- function `issue` is not publicly re-exported
+   |                                        |
+   |                                        private module
+   |
+note: the module `token` is defined here
+  --> src/safety/guard/mod.rs
+   |
+   | mod token;
+   | ^^^^^^^^^
+
+error[E0624]: method `seal` is private
+  --> tests/compile_fail/reach_into_the_guard.rs:10:26
+   |
+10 |     let _token = pending.seal(broza::ports::Answer::Yes);
+   |                          ^^^^ private method
+   |
+  ::: src/safety/guard/mod.rs
+   |
+   |     fn seal(self, answer: Answer) -> Result<Approved<Write>, GuardRejection> {
+   |     ------------------------------------------------------------------------ private method defined here
+
+error[E0624]: associated function `new` is private
+  --> tests/compile_fail/reach_into_the_guard.rs:15:34
+   |
+15 |     let _payload = ApprovedPlan::new(todo!(), Vec::new());
+   |                                  ^^^ private associated function
+   |
+  ::: src/safety/guard/token.rs
+   |
+   |     pub(super) fn new(plan: CleanPlan, items: Vec<ApprovedItem>) -> Self {
+   |     -------------------------------------------------------------------- private associated function defined here
+
+warning: unreachable expression
+  --> tests/compile_fail/reach_into_the_guard.rs:15:47
+   |
+15 |     let _payload = ApprovedPlan::new(todo!(), Vec::new());
+   |                                      -------  ^^^^^^^^^^ unreachable expression
+   |                                      |
+   |                                      any code following this expression is unreachable
+   |
+   = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable call
+  --> tests/compile_fail/reach_into_the_guard.rs:20:18
+   |
+20 |     let _token = broza::safety::guard::token::issue::<broza::safety::guard::Write>(todo!());
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ------- any code following this expression is unreachable
+   |                  |
+   |                  unreachable call

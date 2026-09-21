@@ -97,15 +97,22 @@ pub fn fs() -> FakeFileOps {
         .with_sized_file("/Volumes/External/.Trashes/501/old.dmg", 60)
         .with_sized_file("/System/Volumes/Data/private/var/db/.Trashes/victim", 70)
         .with_sized_file("/Users/dana/Library/Mobile Documents/synced.key", 70)
+        .with_dir("/Applications/Other.app")
+        .with_dir("/Applications/Safari.app")
         .with_dir(STORE)
         .with_sized_file(format!("{STORE}/cln_20260921103608_a1b2/items/1/a"), 5)
+}
+
+/// An `unused-apps` finding that reported one application only.
+pub fn unused_apps(paths: &[(&str, u64)]) -> Vec<Finding> {
+    vec![finding("unused-apps.leftovers", Category::UnusedApps, paths)]
 }
 
 /// Plans and approves the given cache paths.
 pub fn approve_paths(paths: &[(&str, u64)], req: &WriteRequest) -> Result<Verdict, GuardRejection> {
     let findings = caches(paths);
-    let plan = planned(&findings, &Selection::everything()).plan;
-    approve(plan, &findings, req, &mounts(), &fs())
+    let outcome = planned(&findings, &Selection::everything());
+    approve(&outcome, &findings, req, &mounts(), &fs())
 }
 
 /// The rejection those paths produce, or a panic if they are approved.

@@ -23,6 +23,9 @@ pub struct PolicyInput {
     pub max_risk: Option<Risk>,
     /// `--purge` was given (irreversible deletion, bypassing quarantine).
     pub purge: bool,
+    /// The plan destroys something for good, with or without `--purge`: emptying
+    /// the trash and deleting a snapshot are irreversible by nature.
+    pub irreversible: bool,
     /// `--yes` was given.
     pub yes: bool,
     /// stdin/stderr are attached to an interactive terminal.
@@ -80,7 +83,7 @@ impl ConfirmationMode {
 ///
 /// First match wins; the order of the rules is normative (`docs/cli-spec.md` §3.4).
 pub fn confirmation_policy(input: PolicyInput) -> ConfirmationMode {
-    let PolicyInput { apply, max_risk, purge, yes, tty, ci } = input;
+    let PolicyInput { apply, max_risk, purge, irreversible, yes, tty, ci } = input;
     if !apply {
         return ConfirmationMode::None;
     }
@@ -103,8 +106,10 @@ pub fn confirmation_policy(input: PolicyInput) -> ConfirmationMode {
         return ConfirmationMode::RequiredButNoTty;
     }
     match max_risk {
-        Some(Risk::Green) => ConfirmationMode::SimpleYesNo,
-        Some(Risk::Amber) => ConfirmationMode::DetailedExplicit,
+        // An irreversible plan is never waved through with a one-line question,
+        // even when every item is green.
+        Some(Risk::Green) if !irreversible => ConfirmationMode::SimpleYesNo,
+        Some(Risk::Green | Risk::Amber) => ConfirmationMode::DetailedExplicit,
         _ => ConfirmationMode::None,
     }
 }
@@ -142,15 +147,21 @@ mod tests {
         if !interactive {
             return ConfirmationMode::RequiredButNoTty;
         }
-        match input.max_risk {
-            Some(Risk::Green) => ConfirmationMode::SimpleYesNo,
-            Some(Risk::Amber) => ConfirmationMode::DetailedExplicit,
-            _ => ConfirmationMode::None,
+        if matches!(input.max_risk, Some(Risk::Amber)) {
+            return ConfirmationMode::DetailedExplicit;
         }
+        if matches!(input.max_risk, Some(Risk::Green)) {
+            return if input.irreversible {
+                ConfirmationMode::DetailedExplicit
+            } else {
+                ConfirmationMode::SimpleYesNo
+            };
+        }
+        ConfirmationMode::None
     }
 
     fn all_inputs() -> Vec<PolicyInput> {
-        (0..32_u8)
+        (0..64_u8)
             .flat_map(|bits| {
                 RISKS.into_iter().map(move |max_risk| PolicyInput {
                     apply: bits & 1 != 0,
@@ -159,6 +170,7 @@ mod tests {
                     yes: bits & 4 != 0,
                     tty: bits & 8 != 0,
                     ci: bits & 16 != 0,
+                    irreversible: bits & 32 != 0,
                 })
             })
             .collect()
@@ -167,14 +179,14 @@ mod tests {
     #[test]
     fn the_whole_truth_table_matches_the_oracle() {
         let inputs = all_inputs();
-        assert_eq!(inputs.len(), 128, "2^5 flag combinations times 4 risk levels");
+        assert_eq!(inputs.len(), 256, "2^6 flag combinations times 4 risk levels");
         for input in inputs {
             assert_eq!(confirmation_policy(input), oracle(input), "{input:?}");
         }
     }
 
     fn input(apply: bool, max_risk: Option<Risk>) -> PolicyInput {
-        PolicyInput { apply, max_risk, purge: false, yes: false, tty: true, ci: false }
+        PolicyInput { apply, max_risk, purge: false, irreversible: false, yes: false, tty: true, ci: false }
     }
 
     #[test]
@@ -228,6 +240,25 @@ mod tests {
         let yes = PolicyInput { yes: true, ..input(true, Some(Risk::Amber)) };
         assert_eq!(confirmation_policy(yes), ConfirmationMode::None);
         assert!(!confirmation_policy(yes).needs_prompt());
+    }
+
+    /// Emptying the trash or deleting a snapshot destroys data for good even
+    /// without `--purge`, so the user sees every path before answering.
+    #[test]
+    fn a_green_but_irreversible_plan_is_shown_in_full() {
+        let irreversible = PolicyInput { irreversible: true, ..input(true, Some(Risk::Green)) };
+        assert_eq!(confirmation_policy(irreversible), ConfirmationMode::DetailedExplicit);
+        assert_eq!(confirmation_policy(input(true, Some(Risk::Green))), ConfirmationMode::SimpleYesNo);
+    }
+
+    /// `--yes` is an explicit confirmation the user typed on the command line; it
+    /// covers an irreversible plan, unlike `--purge`, which never accepts it.
+    #[test]
+    fn yes_still_covers_an_irreversible_plan_without_purge() {
+        let irreversible = PolicyInput { irreversible: true, yes: true, ..input(true, Some(Risk::Amber)) };
+        assert_eq!(confirmation_policy(irreversible), ConfirmationMode::None);
+        let purging = PolicyInput { purge: true, ..irreversible };
+        assert_eq!(confirmation_policy(purging), ConfirmationMode::Rejected(RejectReason::YesWithPurge));
     }
 
     #[test]

@@ -98,6 +98,23 @@ pub enum GuardRejection {
     /// because a `..` can jump over a symlink that was already checked.
     #[error("path `{0}` contains a `.` or `..` component")]
     RelativeComponent(PathBuf),
+    /// The path is not a plain POSIX path: an empty component (`//`), a trailing
+    /// separator, or an interior NUL.
+    #[error("path `{path}` is malformed: {reason}")]
+    MalformedPath {
+        /// The offending path, as given.
+        path: PathBuf,
+        /// What is wrong with it.
+        reason: String,
+    },
+    /// An item of a clean plan lives inside the quarantine store.
+    #[error("`{path}` is inside the quarantine store `{store_root}`, which a plan never cleans")]
+    InsideQuarantineStore {
+        /// Path that was refused.
+        path: PathBuf,
+        /// Root of the quarantine store.
+        store_root: PathBuf,
+    },
     /// One component of the path is a symbolic link.
     #[error("path component `{0}` is a symbolic link")]
     SymlinkComponent(PathBuf),
@@ -262,6 +279,14 @@ mod tests {
         let cases = [
             GuardRejection::NotAbsolute("relative/path".into()),
             GuardRejection::RelativeComponent("/Users/dana/../etc".into()),
+            GuardRejection::MalformedPath {
+                path: "/Users//dana".into(),
+                reason: "an empty component".into(),
+            },
+            GuardRejection::InsideQuarantineStore {
+                path: "/Users/dana/.local/share/broza/quarantine/cln/items/1".into(),
+                store_root: "/Users/dana/.local/share/broza/quarantine".into(),
+            },
             GuardRejection::SymlinkComponent("/Users/dana/link".into()),
             GuardRejection::UnknownVolume("/nowhere".into()),
             GuardRejection::ProtectedVolume { path: "/System/Library".into(), role: VolumeRole::System },

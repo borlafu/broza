@@ -7,8 +7,8 @@
 //! The flow of one `clean --apply` is:
 //!
 //! ```text
-//! approve(plan, findings, request, mounts, fs)   checks 1-7 of docs/cli-spec.md 3.4
-//!   -> Verdict::Nothing                          empty selection, exit 0
+//! approve(outcome, findings, request, mounts, fs)  checks of docs/cli-spec.md 3.4
+//!   -> Verdict::Nothing                             nothing left to write, exit 0
 //!   -> Verdict::DryRun                           nothing may be written
 //!   -> Verdict::NeedsConfirmation(p)             p.confirm(prompter)
 //!        -> Approved<Write>                      the executor's ticket
@@ -19,7 +19,9 @@
 //! executor closes the time-of-check/time-of-use gap: see [`ApprovedItem`].
 
 mod checks;
+mod item;
 mod narrow;
+mod rebuild;
 mod token;
 
 pub use checks::approve;
@@ -27,12 +29,12 @@ pub use narrow::{approve_quarantine_write, narrow_to_snapshot_delete};
 pub use token::{Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, SnapshotDelete, Write, WriteKind};
 
 /// Shared with `clean::planner` so the plan and the guard agree on what
-/// `--purge` means; see [`checks::expected_action`].
-pub(crate) use checks::expected_action;
+/// `--purge` means; see [`item::expected_action`].
+pub(crate) use item::expected_action;
 
 use std::path::PathBuf;
 
-use crate::model::{CleanPlan, FindingId, Risk};
+use crate::model::{CleanPlan, Risk};
 use crate::ports::{Answer, ConfirmationRequest, Prompter};
 use crate::safety::exclusions::Exclusions;
 use crate::safety::guard::token::issue;
@@ -71,10 +73,9 @@ pub struct WriteRequest {
     pub max_size: Option<u64>,
     /// Exclusions from the configuration and the command line.
     pub exclusions: Exclusions,
-    /// Inform-only findings the selection matched, from
-    /// [`crate::clean::PlanOutcome`]. Not empty means the user asked to clean
-    /// something Broza only reports, which refuses the whole plan under `--apply`.
-    pub informed_only: Vec<FindingId>,
+    /// Root of the quarantine store, when one is configured. Nothing inside it is
+    /// ever part of a clean plan: that is where the previous plan put its items.
+    pub quarantine_root: Option<PathBuf>,
     /// The user's home directory (`/Users/<name>`).
     pub home: PathBuf,
     /// Per-uid temporary directories (`/private/var/folders/<xx>/<hash>`).
@@ -92,17 +93,18 @@ impl WriteRequest {
             ci: false,
             max_size: None,
             exclusions: Exclusions::none(),
-            informed_only: Vec::new(),
+            quarantine_root: None,
             home: home.into(),
             uid_temp_dirs: Vec::new(),
         }
     }
 
-    fn policy_input(&self, max_risk: Option<Risk>) -> PolicyInput {
+    fn policy_input(&self, max_risk: Option<Risk>, irreversible: bool) -> PolicyInput {
         PolicyInput {
             apply: self.apply,
             max_risk,
             purge: self.purge,
+            irreversible,
             yes: self.yes,
             tty: self.tty,
             ci: self.ci,
@@ -110,15 +112,17 @@ impl WriteRequest {
     }
 
     fn allowed_roots(&self) -> Result<AllowedRoots, GuardRejection> {
-        AllowedRoots::new(&self.home, self.uid_temp_dirs.clone())
+        AllowedRoots::new(&self.home, &self.uid_temp_dirs)
     }
 }
 
 /// What the guard decided.
 #[derive(Debug)]
 pub enum Verdict {
-    /// The plan is empty: there is nothing to confirm and nothing to write (exit `0`).
-    Nothing,
+    /// Nothing is left to write: the selection was empty, or every path it named
+    /// has since vanished (exit `0`). The plan is carried along so the report can
+    /// still show the skipped items.
+    Nothing(CleanPlan),
     /// No `--apply`: the plan is reported and nothing is written.
     DryRun(CleanPlan),
     /// Every safety check passed; the confirmation still has to happen.
@@ -195,10 +199,8 @@ impl PendingApproval {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Approved, ApprovedItem, ApprovedPlan, PendingApproval, QuarantineWrite, Write, WriteRequest, issue,
-        seal,
-    };
+    use super::token::evidence_for;
+    use super::{Approved, ApprovedPlan, PendingApproval, QuarantineWrite, Write, WriteRequest, issue, seal};
     use crate::model::{CleanPlan, Risk, SessionId};
     use crate::ports::{Answer, ConfirmationRequest, Prompter};
     use crate::safety::policy::{ConfirmationMode, PURGE_LITERAL, RejectReason};
@@ -212,7 +214,7 @@ mod tests {
     fn payload() -> ApprovedPlan {
         ApprovedPlan {
             plan: CleanPlan::dry_run(session(), Vec::new()).unwrap_or_else(|error| panic!("{error}")),
-            items: vec![ApprovedItem { path: "/Users/dana/x".into(), device: 2, inode: 7 }],
+            items: vec![evidence_for("/Users/dana/x", 2, 7)],
         }
     }
 
@@ -322,13 +324,13 @@ mod tests {
         let token: Approved<Write> = issue::<Write>(payload());
         assert_eq!(format!("{token:?}"), "Approved<clean plan execution>");
         assert!(token.plan().is_dry_run());
-        assert_eq!(token.items()[0].inode, 7);
+        assert_eq!(token.items()[0].inode(), 7);
         assert_eq!(token.into_plan().items().len(), 0);
 
         let entries: Approved<QuarantineWrite> =
-            issue::<QuarantineWrite>(vec![ApprovedItem { path: "/q/items/1".into(), device: 2, inode: 9 }]);
+            issue::<QuarantineWrite>(vec![evidence_for("/q/items/1", 2, 9)]);
         assert_eq!(entries.items().len(), 1);
-        assert_eq!(entries.into_items()[0].path, std::path::PathBuf::from("/q/items/1"));
+        assert_eq!(entries.into_items()[0].path(), std::path::Path::new("/q/items/1"));
     }
 
     #[test]
@@ -337,7 +339,7 @@ mod tests {
         assert!(!request.apply && !request.purge && !request.yes && !request.tty && !request.ci);
         assert_eq!(request.max_size, None);
         assert!(request.exclusions.is_empty());
-        assert!(request.informed_only.is_empty());
+        assert!(request.quarantine_root.is_none());
         let roots = request.allowed_roots().unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(roots.roots().len(), 6, "three roots, two spellings each");
     }

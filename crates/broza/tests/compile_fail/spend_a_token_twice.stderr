@@ -1,0 +1,9 @@
+error[E0382]: borrow of moved value: `approved`
+  --> tests/compile_fail/spend_a_token_twice.rs:12:13
+   |
+10 | fn spend_twice(approved: Approved<Write>) {
+   |                -------- move occurs because `approved` has type `Approved<broza::safety::Write>`, which does not implement the `Copy` trait
+11 |     let _snapshots = narrow_to_snapshot_delete(approved);
+   |                                                -------- value moved here
+12 |     execute(&approved);
+   |             ^^^^^^^^^ value borrowed here after move

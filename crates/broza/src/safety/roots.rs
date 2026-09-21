@@ -46,20 +46,16 @@ impl AllowedRoots {
     /// path below it: `home` must be `/Users/<name>` and each temporary directory
     /// `/private/var/folders/<xx>/<hash>`. Both may also be spelled on the Data
     /// volume. Every root is registered under both spellings.
-    pub fn new(home: &Path, uid_temp_dirs: Vec<PathBuf>) -> Result<Self, GuardRejection> {
-        validate_home(home)?;
-        for dir in &uid_temp_dirs {
-            validate_uid_temp_dir(dir)?;
-        }
-        let fixed = [home.to_path_buf(), PathBuf::from(SHARED_ROOT), PathBuf::from(LIBRARY_CACHES_ROOT)];
-        let roots = fixed
-            .into_iter()
-            .chain(uid_temp_dirs)
-            .flat_map(|root| {
-                let twin = data_volume_twin(&root);
-                [root, twin]
-            })
-            .collect();
+    pub fn new(home: &Path, uid_temp_dirs: &[PathBuf]) -> Result<Self, GuardRejection> {
+        let home = validate_home(home)?;
+        let temp_dirs = uid_temp_dirs
+            .iter()
+            .map(|dir| validate_uid_temp_dir(dir))
+            .collect::<Result<Vec<PathBuf>, GuardRejection>>()?;
+        let fixed = [home, PathBuf::from(SHARED_ROOT), PathBuf::from(LIBRARY_CACHES_ROOT)];
+        // `firmlink_spellings` always yields the plain form first, so a root given
+        // in either spelling ends up registered under both.
+        let roots = fixed.into_iter().chain(temp_dirs).flat_map(|root| firmlink_spellings(&root)).collect();
         Ok(Self { roots })
     }
 
@@ -74,31 +70,43 @@ fn invalid_root(path: &Path, reason: &str) -> GuardRejection {
 }
 
 /// `home` must be exactly `/Users/<name>`, in either spelling.
-fn validate_home(home: &Path) -> Result<(), GuardRejection> {
-    let plain = plain_absolute(home)?;
-    let parts = normal_components(&plain);
+///
+/// Returns the root as it will be stored: trailing separators removed.
+fn validate_home(home: &Path) -> Result<PathBuf, GuardRejection> {
+    let tidy = tidy(home);
+    let parts = normal_components(&without_data_volume_prefix(&tidy));
+    reject_odd_root(home, &tidy)?;
     if parts.len() == HOME_DEPTH && parts[0] == "Users" && parts[1] != "Shared" {
-        return Ok(());
+        return Ok(tidy);
     }
     Err(invalid_root(home, "the home directory must be `/Users/<name>`"))
 }
 
 /// Each temporary directory must be exactly `/private/var/folders/<xx>/<hash>`.
-fn validate_uid_temp_dir(dir: &Path) -> Result<(), GuardRejection> {
-    let plain = plain_absolute(dir)?;
-    let parts = normal_components(&plain);
+fn validate_uid_temp_dir(dir: &Path) -> Result<PathBuf, GuardRejection> {
+    let tidy = tidy(dir);
+    let parts = normal_components(&without_data_volume_prefix(&tidy));
     let expected = normal_components(Path::new(UID_TEMP_PARENT));
+    reject_odd_root(dir, &tidy)?;
     if parts.len() == expected.len() + UID_TEMP_DEPTH && parts.starts_with(&expected) {
-        return Ok(());
+        return Ok(tidy);
     }
     Err(invalid_root(dir, "a temporary directory must be `/private/var/folders/<xx>/<hash>`"))
 }
 
-/// A root has to be absolute and free of `.` and `..`, like any other path.
-fn plain_absolute(path: &Path) -> Result<PathBuf, GuardRejection> {
-    crate::safety::path::reject_relative_components(path)
-        .map_err(|_| invalid_root(path, "must be a plain absolute path"))?;
-    Ok(without_data_volume_prefix(path))
+/// A root has to be absolute and free of `.`, `..` and empty components.
+///
+/// A trailing separator is accepted and dropped: `$HOME` often carries one, and
+/// `/Users/dana/` names the same directory as `/Users/dana`.
+fn reject_odd_root(given: &Path, tidy: &Path) -> Result<(), GuardRejection> {
+    crate::safety::path::reject_relative_components(tidy)
+        .map_err(|error| invalid_root(given, &error.to_string()))
+}
+
+/// The same path without trailing separators.
+fn tidy(path: &Path) -> PathBuf {
+    let trimmed = path.to_string_lossy().trim_end_matches('/').to_owned();
+    if trimmed.is_empty() { path.to_path_buf() } else { PathBuf::from(trimmed) }
 }
 
 fn normal_components(path: &Path) -> Vec<String> {
@@ -196,7 +204,7 @@ mod tests {
     const HOME: &str = "/Users/dana";
 
     fn roots() -> AllowedRoots {
-        AllowedRoots::new(Path::new(HOME), vec![PathBuf::from("/private/var/folders/aa/bbbbbb")])
+        AllowedRoots::new(Path::new(HOME), &[PathBuf::from("/private/var/folders/aa/bbbbbb")])
             .unwrap_or_else(|error| panic!("{error}"))
     }
 
@@ -223,15 +231,17 @@ mod tests {
 
     #[test]
     fn a_root_that_is_too_broad_is_refused() {
-        for home in ["/", "/Users", "/Users/Shared", "/private/var", "Users/dana", "/Users/dana/.."] {
-            let error = AllowedRoots::new(Path::new(home), Vec::new());
+        for home in
+            ["/", "/Users", "/Users/Shared", "/private/var", "Users/dana", "/Users/dana/..", "/Users//dana"]
+        {
+            let error = AllowedRoots::new(Path::new(home), &[]);
             assert!(
                 matches!(error, Err(GuardRejection::InvalidRoot { .. })),
                 "{home} must not be a home directory: {error:?}"
             );
         }
         for dir in ["/private/var", "/private/var/folders", "/private/var/folders/aa", "/tmp/x/y"] {
-            let error = AllowedRoots::new(Path::new(HOME), vec![PathBuf::from(dir)]);
+            let error = AllowedRoots::new(Path::new(HOME), &[PathBuf::from(dir)]);
             assert!(
                 matches!(error, Err(GuardRejection::InvalidRoot { .. })),
                 "{dir} must not be a temporary root: {error:?}"
@@ -239,14 +249,38 @@ mod tests {
         }
     }
 
+    /// A home given in either spelling must protect paths written in both, or a
+    /// `$HOME` reported as `/System/Volumes/Data/Users/dana` would refuse every
+    /// ordinary `/Users/dana/...` path.
     #[test]
-    fn both_spellings_of_every_root_are_accepted() {
-        let data_home = AllowedRoots::new(Path::new("/System/Volumes/Data/Users/dana"), Vec::new());
-        assert!(data_home.is_ok(), "{data_home:?}");
-        assert_eq!(roots().roots().len(), 8, "four roots, two spellings each");
+    fn a_root_given_in_either_spelling_registers_both() {
+        let plain = Path::new("/Users/dana/Library/Caches/app.cache");
         let twin = Path::new("/System/Volumes/Data/Users/dana/Library/Caches/app.cache");
         let data = mount(VolumeRole::Data, "/System/Volumes/Data");
-        assert!(is_under_allowed_root(twin, &roots(), context(Category::UserCache, &data)));
+        for home in ["/Users/dana", "/System/Volumes/Data/Users/dana"] {
+            let roots =
+                AllowedRoots::new(Path::new(home), &[]).unwrap_or_else(|error| panic!("{home}: {error}"));
+            assert!(roots.roots().contains(&PathBuf::from("/Users/dana")), "{home}");
+            assert!(roots.roots().contains(&PathBuf::from("/System/Volumes/Data/Users/dana")), "{home}");
+            let context = context(Category::UserCache, &data);
+            assert!(is_under_allowed_root(plain, &roots, context), "{home}");
+            assert!(is_under_allowed_root(twin, &roots, context), "{home}");
+        }
+        assert_eq!(roots().roots().len(), 8, "four roots, two spellings each");
+    }
+
+    /// `$HOME` often carries a trailing separator; it names the same directory.
+    #[test]
+    fn a_trailing_separator_on_a_root_is_accepted_and_dropped() {
+        let roots =
+            AllowedRoots::new(Path::new("/Users/dana/"), &[PathBuf::from("/private/var/folders/aa/bbbbbb/")])
+                .unwrap_or_else(|error| panic!("{error}"));
+        assert!(roots.roots().contains(&PathBuf::from("/Users/dana")));
+        assert!(roots.roots().contains(&PathBuf::from("/private/var/folders/aa/bbbbbb")));
+        let data = mount(VolumeRole::Data, "/System/Volumes/Data");
+        let context = context(Category::UserCache, &data);
+        assert!(!is_under_allowed_root(Path::new("/Users/dana"), &roots, context), "still not the root");
+        assert!(is_allowed_root(Path::new("/Users/dana"), &roots, context));
     }
 
     #[test]

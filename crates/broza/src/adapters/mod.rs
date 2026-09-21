@@ -6,6 +6,7 @@
 
 pub(crate) mod io_error;
 pub mod mount_table;
+pub mod process_error;
 pub mod std_fs;
 pub mod std_process;
 pub mod system_clock;
@@ -13,6 +14,7 @@ pub mod system_clock;
 use std::sync::Arc;
 
 pub use mount_table::{FIRMLINKS_PATH, parse_firmlinks, system_mount_table};
+pub use process_error::{ProcessError, ProcessErrorKind};
 pub use std_fs::StdFileOps;
 pub use std_process::StdProcessRunner;
 pub use system_clock::SystemClock;

@@ -107,6 +107,7 @@ dependencies = [
  "globset",
  "insta",
  "jiff",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

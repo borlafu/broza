@@ -109,14 +109,85 @@ fn scan_mounted(
     ports: &Ports,
     reporter: Option<&ProgressReporter<'_>>,
 ) -> Result<VolumeScan, BrozaError> {
+    scan_rooted(entry, &entry.mount_point, request, ports, reporter)
+}
+
+/// Scan every `root` the request names, each on the volume it lives on.
+///
+/// `broza scan <PATH>...`: a path is walked from itself down, on the volume
+/// [`MountTable::volume_for`] resolves it to. A path on a volume Broza may not
+/// write to, or on no known volume, is [`BrozaError::TargetNotFound`]; a
+/// relative path is a usage error. Results keep the order of `roots`.
+pub fn scan_paths(
+    roots: &[PathBuf],
+    request: &ScanRequest,
+    ports: &Ports,
+    mounts: &MountTable,
+    progress: Option<ProgressSink<'_>>,
+) -> Result<Vec<VolumeScan>, BrozaError> {
+    let targets = roots
+        .iter()
+        .map(|root| resolve_root(root, mounts).map(|entry| (entry, root.as_path())))
+        .collect::<Result<Vec<_>, BrozaError>>()?;
+    let Some(sink) = progress else {
+        return scan_each_root(&targets, request, ports, None);
+    };
+    let reporter = ProgressReporter::new(sink, ports.clock.as_ref());
+    let scans = scan_each_root(&targets, request, ports, Some(&reporter));
+    reporter.flush();
+    scans
+}
+
+/// The mount entry a scan root belongs to, when Broza may walk it at all.
+fn resolve_root<'a>(root: &Path, mounts: &'a MountTable) -> Result<&'a MountEntry, BrozaError> {
+    if !root.is_absolute() {
+        return Err(BrozaError::Usage(format!("{}: a scan path must be absolute", root.display())));
+    }
+    let entry = mounts
+        .volume_for(root)
+        .ok_or_else(|| BrozaError::TargetNotFound(format!("{} is on no known volume", root.display())))?;
+    if !entry.volume.writable_by_broza {
+        return Err(BrozaError::TargetNotFound(format!(
+            "{} is on {}, a volume Broza only reads about and never walks",
+            root.display(),
+            entry.volume.name
+        )));
+    }
+    Ok(entry)
+}
+
+/// Scan each root in parallel; the first failure in root order wins.
+fn scan_each_root(
+    targets: &[(&MountEntry, &Path)],
+    request: &ScanRequest,
+    ports: &Ports,
+    reporter: Option<&ProgressReporter<'_>>,
+) -> Result<Vec<VolumeScan>, BrozaError> {
+    targets
+        .par_iter()
+        .map(|(entry, root)| scan_rooted(entry, root, request, ports, reporter))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// The whole pipeline for one root on one mounted volume.
+fn scan_rooted(
+    entry: &MountEntry,
+    root_path: &Path,
+    request: &ScanRequest,
+    ports: &Ports,
+    reporter: Option<&ProgressReporter<'_>>,
+) -> Result<VolumeScan, BrozaError> {
     let volume_id = entry.volume.id.clone();
     let store_path = request.cache_root.as_ref().map(|root| cache_path_for(root, &entry.volume));
     let store = load_store(store_path.as_deref(), request, ports)?;
-    let walked = walk_volume(&entry.mount_point, request, ports, &store, reporter);
+    let walked = walk_volume(root_path, request, ports, &store, reporter);
     save_store(store, store_path.as_deref(), &walked, ports)?;
-    let root = walked.root().cloned().unwrap_or_else(|| unreadable_root(entry));
+    let root = walked.root().cloned().unwrap_or_else(|| unreadable_root(entry, root_path));
     let mut warnings = walked.errors.clone();
     warnings.extend(cache_key_warning(request, &entry.volume));
+    warnings.extend(overcount_warning(&root, entry));
     Ok(VolumeScan {
         largest: aggregate::largest_items(&walked, request.top, request.min_size, &volume_id),
         tree: aggregate::tree(&root, &walked.nodes, request.depth, request.min_size),
@@ -146,6 +217,33 @@ fn cache_key_warning(request: &ScanRequest, volume: &Volume) -> Option<Diagnosti
         volume.name, volume.id
     );
     Some(Diagnostic { code: cache::BSD_ID_KEY_CODE.to_owned(), message, path: volume.mount_point.clone() })
+}
+
+/// Stable code of the warning raised when a walk measures more than the volume holds.
+pub const OVERCOUNT_CODE: &str = "size_exceeds_volume";
+
+/// The warning a whole-volume walk earns when its total exceeds what macOS says
+/// is in use.
+///
+/// Allocated blocks are summed per file, and an APFS clone reports the blocks it
+/// shares with its original as its own, so a folder of cloned media can measure
+/// bigger than the disk. Broza says so rather than letting the list imply more
+/// space is freeable than exists (`AGENTS.md` §2.7; clone accounting is
+/// post-1.0, PRD RF-02).
+fn overcount_warning(root: &DirNode, entry: &MountEntry) -> Option<Diagnostic> {
+    let used = entry.volume.used_bytes;
+    if root.path != entry.mount_point || used == 0 || root.allocated_bytes <= used {
+        return None;
+    }
+    Some(Diagnostic {
+        code: OVERCOUNT_CODE.to_owned(),
+        message: format!(
+            "{} measures {} bytes but the volume reports {} in use: APFS clones are counted once \
+             per copy, so sizes inside are upper bounds until clone accounting lands",
+            entry.volume.name, root.allocated_bytes, used
+        ),
+        path: Some(entry.mount_point.clone()),
+    })
 }
 
 /// The store for this volume, or an empty one when it is disabled or bypassed.
@@ -213,10 +311,10 @@ fn walk_volume(
     walk(root, &options, ports.fs.as_ref())
 }
 
-/// The node reported for a volume whose own mount point could not be read.
-fn unreadable_root(entry: &MountEntry) -> DirNode {
+/// The node reported for a root that could not be read at all.
+fn unreadable_root(entry: &MountEntry, root: &Path) -> DirNode {
     DirNode {
-        path: entry.mount_point.clone(),
+        path: root.to_path_buf(),
         size_bytes: 0,
         allocated_bytes: 0,
         file_count: 0,

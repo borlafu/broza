@@ -12,11 +12,15 @@
 //!
 //! The volumes table of each container lives in [`volumes`].
 
+pub mod folders;
 pub mod volumes;
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use broza::model::{Container, Disk, FsKind, ScanReport};
+
+use crate::commands::scan::folders::VolumeTree;
 
 use crate::output::bar::{Fullness, fullness, usage_bar, usage_percentage};
 use crate::output::{ColorPolicy, Style, format_bytes, paint};
@@ -42,6 +46,26 @@ pub fn render(report: &ScanReport, policy: ColorPolicy) -> String {
         return NO_DISKS.to_owned();
     }
     report.disks.iter().map(|disk| render_disk(disk, policy)).collect::<Vec<_>>().join("\n\n")
+}
+
+/// The disk map followed by the folder half: consumers list, or trees with `--tree`.
+pub fn render_with_folders(
+    report: &ScanReport,
+    trees: &[VolumeTree],
+    tree_view: bool,
+    home: Option<&Path>,
+    policy: ColorPolicy,
+) -> String {
+    let map = render(report, policy);
+    if trees.is_empty() {
+        return map;
+    }
+    let below = if tree_view {
+        folders::render_trees(trees, home)
+    } else {
+        folders::render_largest(&report.largest_items, trees, home)
+    };
+    format!("{map}\n\n{below}")
 }
 
 /// One physical disk and every container on it.

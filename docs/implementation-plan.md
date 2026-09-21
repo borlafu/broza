@@ -203,12 +203,14 @@ Progress:
 - [x] CLI wiring of the real adapters (`broza-cli/src/wiring.rs`), TTY prompter, and the host
       block behind the `ProcessRunner` port.
 - [x] Debug-only `BROZA_FAKE_DISKUTIL_FIXTURES` seam so the binary is testable end to end.
-- [ ] `dua-core` walker with hard-link dedupe; aggregate, top-N, tree (`scan/walker.rs`,
-      `scan/aggregate.rs`). Until it lands `largest_items` is `[]` and `--depth`, `--top`,
-      `--min-size`, `--tree` and `PATH` arguments raise the `folder_scan_pending` warning, which
-      is removed from the contract in the same change that wires the walker.
-- [ ] Cache store and cache corruption → exit `9` (`scan/cache.rs`).
-- [ ] Benchmark script for the cold and warm `scan` targets.
+- [x] Parallel walker (`rayon` + `getattrlistbulk`; `dua-core` rejected because it cannot run
+      on the `FileOps` fakes) with deterministic hard-link dedupe; aggregate, top-N, tree
+      (`scan/walker/`, `scan/aggregate.rs`).
+- [x] Cache store, TTL, corruption → exit `9` (`scan/cache/`).
+- [x] Walker wired into `broza scan`: `largest_items`, `--tree`, `PATH` arguments, progress on stderr.
+- [x] Benchmark script for the cold and warm `scan` targets (`scripts/bench-scan.sh`, ADR 0006).
+- [ ] APFS clone accounting (post-1.0): a whole-volume walk that exceeds `used_bytes` warns with
+      `size_exceeds_volume` until then.
 - [ ] Homebrew tap publishing 0.1.
 
 ### M3 — Green detectors and quarantine (release 0.2)

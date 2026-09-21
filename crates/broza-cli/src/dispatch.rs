@@ -14,6 +14,7 @@ use crate::cli::{Cli, Command};
 use crate::commands::config::ConfigContext;
 use crate::commands::explain::ExplainContext;
 use crate::commands::scan::ScanContext;
+use crate::commands::scan::folders::FolderSettings;
 use crate::commands::{self, Outcome};
 use crate::env::RuntimeEnv;
 use crate::output::{ColorPolicy, OutputFormat, Renderer};
@@ -78,6 +79,15 @@ pub fn dispatch(
             warnings: inputs.warnings,
             policy: inputs.policy,
             format: inputs.format,
+            folders: FolderSettings {
+                home: inputs.runtime.home.clone(),
+                cache_ttl: inputs.effective.cache_ttl.to_duration(),
+                no_cache: cli.global.no_cache,
+                show_progress: inputs.runtime.stderr_is_tty
+                    && !inputs.runtime.ci
+                    && !cli.global.quiet
+                    && inputs.format == OutputFormat::Human,
+            },
         }),
         Command::Explain(args) => commands::explain::run(&ExplainContext {
             ports: &inputs.ports,

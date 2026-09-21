@@ -303,7 +303,26 @@ expression: "json_of(&[\"scan\", \"--json\"])"
         "size_bytes": 1257459712
       }
     ],
-    "largest_items": []
+    "largest_items": [
+      {
+        "kind": "file",
+        "path": "/System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o",
+        "size_bytes": 212400001024,
+        "volume_id": "disk3s5"
+      },
+      {
+        "kind": "file",
+        "path": "/System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db",
+        "size_bytes": 84100001792,
+        "volume_id": "disk3s5"
+      },
+      {
+        "kind": "file",
+        "path": "/System/Volumes/Data/Users/dana/Documents/thesis.pdf",
+        "size_bytes": 61700001792,
+        "volume_id": "disk3s5"
+      }
+    ]
   },
   "errors": [],
   "generated_at": "[rfc3339]",

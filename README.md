@@ -76,6 +76,11 @@ Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
    ├ Preboot              Preboot     6.5 GB
    ├ Recovery             Recovery    1.2 GB
    └ VM                   VM          3.0 GB   swap
+
+Largest consumers on Macintosh HD - Data:
+  312.4 GB  ~/Library/Developer/Xcode/DerivedData/
+   84.1 GB  ~/Library/Caches/
+   61.7 GB  ~/Documents/
 ```
 
 Ask what any volume, path or category actually is:

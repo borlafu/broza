@@ -13,7 +13,7 @@ use broza::model::ItemKind;
 use broza::model::Volume;
 use broza::ports::{FileOps, Ports};
 use broza::scan::{MountEntry, MountTable};
-use broza::scan::{ScanProgress, ScanRequest, VolumeScan, scan_all, scan_volume};
+use broza::scan::{ScanProgress, ScanRequest, VolumeScan, scan_all, scan_paths, scan_volume};
 use broza::testing::{FakeFileOps, Handles, fake_ports, mac_mount_table};
 use broza::{BrozaError, ExitCode};
 
@@ -90,7 +90,7 @@ fn one_volume_is_walked_aggregated_and_reported() {
     assert_eq!(scan.root.size_bytes, 8000);
     assert_eq!(scan.root.file_count, 3);
     assert!(scan.warnings.is_empty(), "{:?}", scan.warnings);
-    assert!(item_paths(&scan).contains(&"/System/Volumes/Data/Users/dana/Movies".to_owned()));
+    assert!(item_paths(&scan).contains(&"/System/Volumes/Data/Users/dana/Movies/film.mov".to_owned()));
     assert!(scan.largest.iter().any(|item| item.kind == ItemKind::File));
     assert_eq!(scan.largest.iter().map(|item| item.volume_id.as_str()).next(), Some("disk3s5"));
 }
@@ -105,6 +105,32 @@ fn the_tree_view_stops_at_the_requested_depth() {
     assert_eq!(root.name, DATA);
     assert_eq!(root.children.iter().map(|child| child.name.clone()).collect::<Vec<_>>(), vec!["Users"]);
     assert!(root.children[0].children.is_empty(), "depth 1 stops below the first level");
+}
+
+#[test]
+fn a_path_is_scanned_from_itself_down_on_the_volume_it_lives_on() {
+    let (ports, _handles) = ports();
+    let roots = vec![PathBuf::from("/System/Volumes/Data/Users/dana/Documents")];
+
+    let scans = scan_paths(&roots, &request(), &ports, &mac_mount_table(), None)
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    assert_eq!(scans.len(), 1);
+    assert_eq!(scans[0].volume_id.as_str(), "disk3s5");
+    assert_eq!(scans[0].root.path, roots[0]);
+    assert_eq!(scans[0].root.size_bytes, 3000, "only what is under the path");
+    assert_eq!(scans[0].tree.root.name, roots[0].display().to_string());
+}
+
+#[test]
+fn a_path_must_be_absolute_and_on_a_volume_broza_may_walk() {
+    let (ports, _handles) = ports();
+    let mounts = mac_mount_table();
+    let scan = |root: &str| scan_paths(&[PathBuf::from(root)], &request(), &ports, &mounts, None).err();
+
+    assert!(matches!(scan("Users/dana"), Some(BrozaError::Usage(_))));
+    assert!(matches!(scan("/System/Library"), Some(BrozaError::TargetNotFound(_))), "sealed system volume");
+    assert!(matches!(scan("/Volumes/Nowhere"), Some(BrozaError::TargetNotFound(_))));
 }
 
 #[test]

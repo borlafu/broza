@@ -6,4 +6,4 @@
 
 pub mod planner;
 
-pub use planner::{PlanError, Selection, max_risk, plan_dry_run};
+pub use planner::{PlanError, PlanOutcome, Selection, max_risk, plan_dry_run};

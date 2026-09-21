@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::BrozaError;
 use crate::model::{Action, Category, CleanItem, CleanPlan, Finding, FindingId, ItemStatus, Risk, SessionId};
 use crate::safety::exclusions::Exclusions;
+use crate::safety::guard::expected_action;
 
 /// What the user asked to clean.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,12 +39,23 @@ impl Selection {
     }
 }
 
+/// The plan, plus what the selection matched but Broza will not clean.
+///
+/// `informed_only` is not an error: a dry run reports those findings and exits
+/// `0`. It becomes one under `--apply`, where the guard refuses the whole plan
+/// (`docs/cli-spec.md` §2), so the CLI passes it into
+/// [`crate::safety::guard::WriteRequest::informed_only`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanOutcome {
+    /// The dry-run plan.
+    pub plan: CleanPlan,
+    /// Findings the selection matched that Broza only reports (`cloud-synced`).
+    pub informed_only: Vec<FindingId>,
+}
+
 /// Why a plan could not be built.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
-    /// The selection contains a finding Broza only reports (`cloud-synced`).
-    #[error("finding `{0}` is inform-only and can never be cleaned")]
-    InformOnlySelected(FindingId),
     /// The resulting plan would break an invariant of the model.
     #[error("{0}")]
     Invalid(String),
@@ -52,17 +64,21 @@ pub enum PlanError {
 impl From<PlanError> for BrozaError {
     fn from(error: PlanError) -> Self {
         match error {
-            PlanError::InformOnlySelected(_) => Self::Usage(error.to_string()),
             PlanError::Invalid(reason) => Self::Other(reason),
         }
     }
 }
 
-/// Highest risk among the selected findings; `None` when nothing is selected.
+/// Highest risk among the selected, actionable findings.
 ///
-/// This is what the caller passes to [`crate::safety::guard::WriteRequest::max_risk`].
+/// Informational only: the guard derives the risk it enforces from the findings
+/// the plan refers to, never from a value a caller passes in.
 pub fn max_risk(findings: &[Finding], selection: &Selection) -> Option<Risk> {
-    findings.iter().filter(|finding| selection.matches(finding)).map(Finding::risk).max()
+    findings
+        .iter()
+        .filter(|finding| selection.matches(finding) && finding.action() != Action::InformOnly)
+        .map(Finding::risk)
+        .max()
 }
 
 /// Builds the dry-run plan for a selection.
@@ -70,26 +86,33 @@ pub fn max_risk(findings: &[Finding], selection: &Selection) -> Option<Risk> {
 /// One [`CleanItem`] per path of every selected finding, in finding order, with
 /// `status: planned`. Excluded paths and anything inside `quarantine_root` are
 /// dropped before the bytes are summed; `--purge` upgrades
-/// [`Action::Quarantine`] to [`Action::Purge`]. An `inform_only` finding inside
-/// the selection is an error: the whole plan is refused.
+/// [`Action::Quarantine`] to [`Action::Purge`]. Inform-only findings never
+/// produce an item; they are returned in [`PlanOutcome::informed_only`].
 pub fn plan_dry_run(
     findings: &[Finding],
     selection: &Selection,
     session_id: SessionId,
     quarantine_root: Option<&Path>,
-) -> Result<CleanPlan, PlanError> {
+) -> Result<PlanOutcome, PlanError> {
     let selected: Vec<&Finding> = findings.iter().filter(|f| selection.matches(f)).collect();
-    if let Some(finding) = selected.iter().find(|f| f.action() == Action::InformOnly) {
-        return Err(PlanError::InformOnlySelected(finding.id().clone()));
-    }
-    let items: Vec<CleanItem> =
-        selected.iter().flat_map(|finding| items_of(finding, selection, quarantine_root)).collect();
-    CleanPlan::dry_run(session_id, items).map_err(|error| PlanError::Invalid(error.to_string()))
+    let informed_only = selected
+        .iter()
+        .filter(|finding| finding.action() == Action::InformOnly)
+        .map(|finding| finding.id().clone())
+        .collect();
+    let items: Vec<CleanItem> = selected
+        .iter()
+        .filter(|finding| finding.action() != Action::InformOnly)
+        .flat_map(|finding| items_of(finding, selection, quarantine_root))
+        .collect();
+    let plan =
+        CleanPlan::dry_run(session_id, items).map_err(|error| PlanError::Invalid(error.to_string()))?;
+    Ok(PlanOutcome { plan, informed_only })
 }
 
 /// The items one finding contributes, minus the excluded paths.
 fn items_of(finding: &Finding, selection: &Selection, quarantine_root: Option<&Path>) -> Vec<CleanItem> {
-    let action = effective_action(finding.action(), selection.purge);
+    let action = expected_action(finding.action(), selection.purge);
     finding
         .paths()
         .iter()
@@ -106,17 +129,12 @@ fn items_of(finding: &Finding, selection: &Selection, quarantine_root: Option<&P
         .collect()
 }
 
-/// `--purge` turns a quarantine into an irreversible deletion; nothing else changes.
-fn effective_action(action: Action, purge: bool) -> Action {
-    if purge && action == Action::Quarantine { Action::Purge } else { action }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{PlanError, Selection, max_risk, plan_dry_run};
+    use super::{PlanOutcome, Selection, max_risk, plan_dry_run};
     use crate::model::{Action, Category, Finding, FindingPath, Instructions, ItemStatus, Risk, SessionId};
     use crate::safety::exclusions::Exclusions;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn session() -> SessionId {
         "cln_20260921103608_a1b2".parse().unwrap_or_else(|error| panic!("{error}"))
@@ -135,7 +153,7 @@ mod tests {
                     })
                     .collect(),
             )
-            .reclaimable_bytes(paths.iter().map(|(_, size)| size).sum())
+            .reclaimable_bytes(paths.iter().map(|(_, size)| *size).fold(0_u64, u64::saturating_add))
             .build()
             .unwrap_or_else(|error| panic!("{error}"))
     }
@@ -172,13 +190,13 @@ mod tests {
         finding("trash.volumes", Category::Trash, &[("/Users/dana/.Trash/x", 5)])
     }
 
-    fn plan(findings: &[Finding], selection: &Selection) -> crate::model::CleanPlan {
+    fn outcome(findings: &[Finding], selection: &Selection) -> PlanOutcome {
         plan_dry_run(findings, selection, session(), None).unwrap_or_else(|error| panic!("{error}"))
     }
 
     #[test]
     fn one_item_per_path_all_planned() {
-        let plan = plan(&[caches()], &Selection::everything());
+        let plan = outcome(&[caches()], &Selection::everything()).plan;
         assert!(plan.is_dry_run());
         assert_eq!(plan.items().len(), 2);
         assert_eq!(plan.planned_bytes(), 30);
@@ -189,9 +207,15 @@ mod tests {
     #[test]
     fn purge_upgrades_quarantine_but_leaves_other_actions_alone() {
         let selection = Selection { purge: true, ..Selection::everything() };
-        let plan = plan(&[caches(), trash()], &selection);
+        let plan = outcome(&[caches(), trash()], &selection).plan;
         let actions: Vec<Action> = plan.items().iter().map(|item| item.action).collect();
         assert_eq!(actions, vec![Action::Purge, Action::Purge, Action::Purge]);
+    }
+
+    #[test]
+    fn the_trash_is_purged_even_without_the_flag() {
+        let plan = outcome(&[trash()], &Selection::everything()).plan;
+        assert_eq!(plan.items()[0].action, Action::Purge, "emptying the trash is what the trash is");
     }
 
     #[test]
@@ -199,21 +223,22 @@ mod tests {
         let exclusions =
             Exclusions::new(["/Users/dana/Library/Caches/b"]).unwrap_or_else(|error| panic!("{error}"));
         let selection = Selection { exclusions, ..Selection::everything() };
-        let plan = plan(&[caches()], &selection);
+        let plan = outcome(&[caches()], &selection).plan;
         assert_eq!(plan.items().len(), 1);
         assert_eq!(plan.planned_bytes(), 10);
     }
 
     #[test]
     fn the_quarantine_store_is_never_cleaned_by_the_plan_that_fills_it() {
-        let store = PathBuf::from("/Users/dana/.local/share/broza/quarantine");
+        let store = Path::new("/Users/dana/.local/share/broza/quarantine");
         let inside = finding(
             "build-cache.derived",
             Category::BuildCache,
             &[("/Users/dana/.local/share/broza/quarantine/cln_x/items/1", 99)],
         );
-        let plan = plan_dry_run(&[inside], &Selection::everything(), session(), Some(&store))
-            .unwrap_or_else(|error| panic!("{error}"));
+        let plan = plan_dry_run(&[inside], &Selection::everything(), session(), Some(store))
+            .unwrap_or_else(|error| panic!("{error}"))
+            .plan;
         assert_eq!(plan.items().len(), 0);
         assert_eq!(plan.planned_bytes(), 0);
     }
@@ -221,7 +246,7 @@ mod tests {
     #[test]
     fn a_category_filter_selects_only_that_category() {
         let selection = Selection { categories: Some(vec![Category::Trash]), ..Selection::everything() };
-        let plan = plan(&[caches(), trash()], &selection);
+        let plan = outcome(&[caches(), trash()], &selection).plan;
         assert_eq!(plan.items().len(), 1);
         assert_eq!(plan.items()[0].path, PathBuf::from("/Users/dana/.Trash/x"));
     }
@@ -229,33 +254,41 @@ mod tests {
     #[test]
     fn a_risk_ceiling_excludes_riskier_findings() {
         let selection = Selection { risk_ceiling: Some(Risk::Green), ..Selection::everything() };
-        let plan = plan(&[caches(), trash(), cloud_synced()], &selection);
+        let plan = outcome(&[caches(), trash(), cloud_synced()], &selection).plan;
         assert_eq!(plan.items().len(), 2, "only the green user-cache survives");
     }
 
     #[test]
-    fn an_inform_only_finding_in_the_selection_rejects_the_plan() {
-        let error = plan_dry_run(&[caches(), cloud_synced()], &Selection::everything(), session(), None);
+    fn an_inform_only_finding_is_reported_instead_of_planned() {
+        let outcome = outcome(&[caches(), cloud_synced()], &Selection::everything());
+        assert_eq!(outcome.plan.items().len(), 2, "only the cache paths are planned");
         assert_eq!(
-            error,
-            Err(PlanError::InformOnlySelected(
-                "cloud-synced.icloud".parse().unwrap_or_else(|e| panic!("{e}"))
-            ))
+            outcome.informed_only,
+            vec!["cloud-synced.icloud".parse().unwrap_or_else(|e| panic!("{e}"))]
+        );
+        assert!(
+            outcome.plan.items().iter().all(|item| item.action != Action::InformOnly),
+            "an inform-only finding never becomes an item"
         );
     }
 
     #[test]
     fn an_empty_selection_is_an_empty_plan() {
         let selection = Selection { categories: Some(vec![Category::Duplicates]), ..Selection::everything() };
-        let plan = plan(&[caches()], &selection);
-        assert_eq!(plan.items().len(), 0);
-        assert_eq!(plan.planned_bytes(), 0);
+        let outcome = outcome(&[caches()], &selection);
+        assert_eq!(outcome.plan.items().len(), 0);
+        assert_eq!(outcome.plan.planned_bytes(), 0);
+        assert!(outcome.informed_only.is_empty());
     }
 
     #[test]
-    fn the_maximum_risk_follows_the_selection() {
+    fn the_maximum_risk_ignores_what_can_never_be_cleaned() {
         let findings = [caches(), trash(), cloud_synced()];
-        assert_eq!(max_risk(&findings, &Selection::everything()), Some(Risk::Red));
+        assert_eq!(
+            max_risk(&findings, &Selection::everything()),
+            Some(Risk::Amber),
+            "the red cloud-synced finding is inform-only, not a risk to confirm"
+        );
         let green = Selection { risk_ceiling: Some(Risk::Green), ..Selection::everything() };
         assert_eq!(max_risk(&findings, &green), Some(Risk::Green));
         let none = Selection { categories: Some(Vec::new()), ..Selection::everything() };
@@ -263,12 +296,19 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_error_becomes_a_usage_error() {
-        let error = crate::BrozaError::from(PlanError::InformOnlySelected(
-            "cloud-synced.icloud".parse().unwrap_or_else(|e| panic!("{e}")),
-        ));
-        assert_eq!(crate::ExitCode::from(&error), crate::ExitCode::UsageError);
-        let invalid = crate::BrozaError::from(PlanError::Invalid("overflow".to_owned()));
-        assert_eq!(crate::ExitCode::from(&invalid), crate::ExitCode::GenericError);
+    fn an_invalid_plan_becomes_a_generic_error() {
+        let error = crate::BrozaError::from(super::PlanError::Invalid("overflow".to_owned()));
+        assert_eq!(crate::ExitCode::from(&error), crate::ExitCode::GenericError);
+    }
+
+    #[test]
+    fn item_sizes_that_overflow_are_refused_rather_than_wrapped() {
+        let huge = finding(
+            "large-old-files.big",
+            Category::LargeOldFiles,
+            &[("/Users/dana/a", u64::MAX), ("/Users/dana/b", 1)],
+        );
+        let error = plan_dry_run(&[huge], &Selection::everything(), session(), None);
+        assert!(matches!(error, Err(super::PlanError::Invalid(_))), "{error:?}");
     }
 }

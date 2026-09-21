@@ -2,21 +2,25 @@
 //!
 //! The kernel has its own error types so that a rejection can be matched on
 //! precisely; [`BrozaError`] is the transport to the exit code
-//! ([`crate::ExitCode`], `docs/cli-spec.md` §2):
+//! ([`crate::ExitCode`], `docs/cli-spec.md` §2).
 //!
-//! | Rejection kind | `BrozaError` | Exit |
-//! |---|---|---|
-//! | usage-shaped (relative path, exclusion, `--max-size`, `inform_only`, red, `--yes --purge`) | `Usage` | `2` |
-//! | path-shaped (symlink, protected role, outside the allowlist, outside the store) | `PermissionDenied` | `3` |
-//! | no TTY and no `--yes` | `ConfirmationRequired` | `7` |
-//! | the user answered "no" | `AbortedByUser` | `6` |
-//! | internal inconsistency | `Other` | `1` |
+//! # Exit-code rule
+//!
+//! *Every policy refusal is a usage error* (exit `2`): protected role, symlink
+//! component, outside the allowlist, exclusion, `--max-size`, `inform_only`, red,
+//! `--yes` with `--purge`, and any internal inconsistency. The user asked for
+//! something Broza will not do, and the fix is a different command line.
+//!
+//! Only a genuine operating-system failure keeps its own code: [`UnreadableCause`]
+//! maps `ENOENT` to `TARGET_NOT_FOUND` (`4`) and `EACCES`/`EPERM` to
+//! `PERMISSION_DENIED` (`3`). The two confirmation outcomes keep theirs as well:
+//! "no" is `6` and "no TTY" is `7`.
 
 use std::fmt;
 use std::path::PathBuf;
 
 use crate::BrozaError;
-use crate::model::{Action, VolumeRole};
+use crate::model::{Action, FindingId, VolumeRole};
 use crate::safety::policy::{ConfirmationMode, RejectReason};
 use crate::safety::roles::role_id;
 
@@ -54,15 +58,46 @@ impl TryFrom<ConfirmationMode> for PolicyError {
     }
 }
 
+/// What the operating system said when a path could not be read.
+///
+/// Classified from the [`BrozaError`] the [`crate::ports::FileOps`] port returned,
+/// so that the exit code stays honest about what actually failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnreadableCause {
+    /// `ENOENT`: nothing at that path (exit `4`).
+    NotFound,
+    /// `EACCES` or `EPERM`: Full Disk Access is probably missing (exit `3`).
+    PermissionDenied,
+    /// Anything else (exit `1`).
+    Other,
+}
+
+impl UnreadableCause {
+    /// Classifies the error a [`crate::ports::FileOps`] implementation returned.
+    pub fn of(error: &BrozaError) -> Self {
+        match error {
+            BrozaError::TargetNotFound(_) => Self::NotFound,
+            BrozaError::PermissionDenied { .. } => Self::PermissionDenied,
+            BrozaError::Io { source, .. } => match source.kind() {
+                std::io::ErrorKind::NotFound => Self::NotFound,
+                std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+                _ => Self::Other,
+            },
+            _ => Self::Other,
+        }
+    }
+}
+
 /// Every reason the safety kernel can refuse to hand out an `Approved` token.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GuardRejection {
     /// A path that is not absolute can never be checked reliably.
     #[error("path `{0}` is not absolute")]
     NotAbsolute(PathBuf),
-    /// `..` climbed above the filesystem root.
-    #[error("path `{0}` escapes the filesystem root")]
-    EscapesRoot(PathBuf),
+    /// The path contains a `.` or `..` component; the guard never resolves those,
+    /// because a `..` can jump over a symlink that was already checked.
+    #[error("path `{0}` contains a `.` or `..` component")]
+    RelativeComponent(PathBuf),
     /// One component of the path is a symbolic link.
     #[error("path component `{0}` is a symbolic link")]
     SymlinkComponent(PathBuf),
@@ -71,7 +106,9 @@ pub enum GuardRejection {
     Unreadable {
         /// Path that could not be read.
         path: PathBuf,
-        /// Why the filesystem refused.
+        /// What the operating system reported.
+        cause: UnreadableCause,
+        /// The `BrozaError` the filesystem port returned, kept verbatim.
         reason: String,
     },
     /// No mounted volume contains the path.
@@ -101,21 +138,29 @@ pub enum GuardRejection {
     /// The path *is* an allowed root; Broza only ever touches things inside one.
     #[error("`{0}` is an allowed root itself and is never removed")]
     RootItself(PathBuf),
+    /// An allowed root was configured with a path that is not one.
+    #[error("`{path}` is not a usable root: {reason}")]
+    InvalidRoot {
+        /// The offending root.
+        path: PathBuf,
+        /// Why it was refused.
+        reason: String,
+    },
     /// The path matches an exclusion and must not have reached the guard.
     #[error("`{0}` matches an exclusion")]
     Excluded(PathBuf),
-    /// An exclusion pattern is not a valid glob.
+    /// An exclusion pattern is not a valid absolute glob.
     #[error("invalid exclusion `{pattern}`: {reason}")]
     InvalidExclusion {
         /// The offending pattern.
         pattern: String,
-        /// Why `globset` refused it.
+        /// Why it was refused.
         reason: String,
     },
     /// The plan would remove more than `--max-size`.
     #[error("the plan removes {planned_bytes} bytes, more than the {max_bytes} byte cap")]
     MaxSizeExceeded {
-        /// Bytes the plan would remove.
+        /// Bytes the plan would actually remove.
         planned_bytes: u64,
         /// Cap given with `--max-size`.
         max_bytes: u64,
@@ -123,6 +168,9 @@ pub enum GuardRejection {
     /// The plan contains an item Broza only reports (`cloud-synced`).
     #[error("`{0}` is inform-only; the whole plan is rejected")]
     InformOnlyItem(PathBuf),
+    /// The selection contained a finding Broza only reports.
+    #[error("finding `{0}` is inform-only and can never be cleaned")]
+    InformOnlySelected(FindingId),
     /// A quarantine operation addressed something outside the quarantine store.
     #[error("`{path}` is outside the quarantine store `{store_root}`")]
     OutsideQuarantineStore {
@@ -154,6 +202,21 @@ impl GuardRejection {
             other => other,
         }
     }
+
+    /// Builds the rejection for a path the filesystem refused to describe.
+    pub fn unreadable(path: &std::path::Path, error: &BrozaError) -> Self {
+        Self::Unreadable {
+            path: path.to_path_buf(),
+            cause: UnreadableCause::of(error),
+            reason: error.to_string(),
+        }
+    }
+
+    /// `true` when the path does not exist, which the guard treats as a skipped
+    /// item rather than a refusal (`docs/cli-spec.md` §3.4, cross-volume rule).
+    pub fn is_missing_path(&self) -> bool {
+        matches!(self, Self::Unreadable { cause: UnreadableCause::NotFound, .. })
+    }
 }
 
 impl From<PolicyError> for BrozaError {
@@ -170,29 +233,22 @@ impl From<GuardRejection> for BrozaError {
     fn from(rejection: GuardRejection) -> Self {
         let message = rejection.to_string();
         match rejection {
-            GuardRejection::SymlinkComponent(path)
-            | GuardRejection::Unreadable { path, .. }
-            | GuardRejection::UnknownVolume(path)
-            | GuardRejection::ProtectedVolume { path, .. }
-            | GuardRejection::OutsideAllowedRoots(path)
-            | GuardRejection::RootItself(path)
-            | GuardRejection::ActionNotAllowed { path, .. }
-            | GuardRejection::OutsideQuarantineStore { path, .. } => Self::PermissionDenied { path },
-            GuardRejection::NotAbsolute(_)
-            | GuardRejection::EscapesRoot(_)
-            | GuardRejection::Excluded(_)
-            | GuardRejection::InvalidExclusion { .. }
-            | GuardRejection::MaxSizeExceeded { .. }
-            | GuardRejection::InformOnlyItem(_) => Self::Usage(message),
+            GuardRejection::Unreadable { path, cause, .. } => match cause {
+                UnreadableCause::NotFound => Self::TargetNotFound(path.display().to_string()),
+                UnreadableCause::PermissionDenied => Self::PermissionDenied { path },
+                UnreadableCause::Other => Self::Other(message),
+            },
             GuardRejection::Policy(error) => error.into(),
-            GuardRejection::Inconsistent(_) => Self::Other(message),
+            // Every remaining variant is a policy refusal: the command line, not
+            // the machine, is what has to change.
+            _ => Self::Usage(message),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{GuardRejection, PolicyError};
+    use super::{GuardRejection, PolicyError, UnreadableCause};
     use crate::model::{Action, VolumeRole};
     use crate::safety::policy::{ConfirmationMode, RejectReason};
     use crate::{BrozaError, ExitCode};
@@ -202,27 +258,11 @@ mod tests {
     }
 
     #[test]
-    fn usage_shaped_rejections_exit_with_two() {
+    fn every_policy_refusal_is_a_usage_error() {
         let cases = [
             GuardRejection::NotAbsolute("relative/path".into()),
-            GuardRejection::EscapesRoot("/../..".into()),
-            GuardRejection::Excluded("/Users/dana/keep".into()),
-            GuardRejection::InvalidExclusion { pattern: "[".into(), reason: "unclosed".into() },
-            GuardRejection::MaxSizeExceeded { planned_bytes: 10, max_bytes: 1 },
-            GuardRejection::InformOnlyItem("/Users/dana/iCloud".into()),
-            GuardRejection::Policy(PolicyError::Rejected(RejectReason::RedNotActionable)),
-            GuardRejection::Policy(PolicyError::Rejected(RejectReason::YesWithPurge)),
-        ];
-        for case in cases {
-            assert_eq!(code(case.clone()), ExitCode::UsageError, "{case}");
-        }
-    }
-
-    #[test]
-    fn path_shaped_rejections_exit_with_three() {
-        let cases = [
+            GuardRejection::RelativeComponent("/Users/dana/../etc".into()),
             GuardRejection::SymlinkComponent("/Users/dana/link".into()),
-            GuardRejection::Unreadable { path: "/Users/dana/gone".into(), reason: "missing".into() },
             GuardRejection::UnknownVolume("/nowhere".into()),
             GuardRejection::ProtectedVolume { path: "/System/Library".into(), role: VolumeRole::System },
             GuardRejection::ActionNotAllowed {
@@ -232,14 +272,65 @@ mod tests {
             },
             GuardRejection::OutsideAllowedRoots("/etc/passwd".into()),
             GuardRejection::RootItself("/Users/dana".into()),
+            GuardRejection::InvalidRoot { path: "/".into(), reason: "too broad".into() },
+            GuardRejection::Excluded("/Users/dana/keep".into()),
+            GuardRejection::InvalidExclusion { pattern: "[".into(), reason: "unclosed".into() },
+            GuardRejection::MaxSizeExceeded { planned_bytes: 10, max_bytes: 1 },
+            GuardRejection::InformOnlyItem("/Users/dana/iCloud".into()),
+            GuardRejection::InformOnlySelected(
+                "cloud-synced.icloud".parse().unwrap_or_else(|e| panic!("{e}")),
+            ),
             GuardRejection::OutsideQuarantineStore {
                 path: "/Users/dana/elsewhere".into(),
                 store_root: "/Users/dana/.local/share/broza/quarantine".into(),
             },
+            GuardRejection::Policy(PolicyError::Rejected(RejectReason::RedNotActionable)),
+            GuardRejection::Policy(PolicyError::Rejected(RejectReason::YesWithPurge)),
+            GuardRejection::Inconsistent("bug".into()),
         ];
         for case in cases {
-            assert_eq!(code(case.clone()), ExitCode::PermissionDenied, "{case}");
+            assert_eq!(code(case.clone()), ExitCode::UsageError, "{case}");
         }
+    }
+
+    #[test]
+    fn only_the_operating_system_can_produce_three_and_four() {
+        let missing = GuardRejection::unreadable(
+            std::path::Path::new("/Users/dana/gone"),
+            &BrozaError::TargetNotFound("/Users/dana/gone".into()),
+        );
+        assert!(missing.is_missing_path());
+        assert_eq!(code(missing), ExitCode::TargetNotFound);
+
+        let denied = GuardRejection::unreadable(
+            std::path::Path::new("/Users/dana/secret"),
+            &BrozaError::PermissionDenied { path: "/Users/dana/secret".into() },
+        );
+        assert!(!denied.is_missing_path());
+        assert_eq!(code(denied), ExitCode::PermissionDenied);
+
+        let broken = GuardRejection::unreadable(
+            std::path::Path::new("/Users/dana/x"),
+            &BrozaError::Io {
+                context: "lstat".into(),
+                source: std::io::Error::from(std::io::ErrorKind::InvalidData),
+            },
+        );
+        assert_eq!(code(broken), ExitCode::GenericError);
+    }
+
+    #[test]
+    fn io_errors_are_classified_by_their_kind() {
+        let cases = [
+            (std::io::ErrorKind::NotFound, UnreadableCause::NotFound),
+            (std::io::ErrorKind::PermissionDenied, UnreadableCause::PermissionDenied),
+            (std::io::ErrorKind::Other, UnreadableCause::Other),
+        ];
+        for (kind, expected) in cases {
+            let error = BrozaError::Io { context: "lstat".into(), source: std::io::Error::from(kind) };
+            assert_eq!(UnreadableCause::of(&error), expected, "{kind:?}");
+        }
+        assert_eq!(UnreadableCause::of(&BrozaError::Usage("x".into())), UnreadableCause::Other);
     }
 
     #[test]
@@ -249,11 +340,6 @@ mod tests {
             ExitCode::ConfirmationRequired
         );
         assert_eq!(code(GuardRejection::Policy(PolicyError::AbortedByUser)), ExitCode::AbortedByUser);
-    }
-
-    #[test]
-    fn an_internal_inconsistency_is_a_generic_error() {
-        assert_eq!(code(GuardRejection::Inconsistent("bug".into())), ExitCode::GenericError);
     }
 
     #[test]

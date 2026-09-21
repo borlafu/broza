@@ -10,7 +10,7 @@ help: the trait `guard::seal::Sealed` is not implemented for `Forged`
  8 | struct Forged;
    | ^^^^^^^^^^^^^
 help: the following other types implement trait `guard::seal::Sealed`
-  --> src/safety/guard/mod.rs
+  --> src/safety/guard/token.rs
    |
    | impl seal::Sealed for Write {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `broza::safety::Write`
@@ -19,7 +19,7 @@ help: the following other types implement trait `guard::seal::Sealed`
    | impl seal::Sealed for SnapshotDelete {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SnapshotDelete`
 note: required by a bound in `WriteKind`
-  --> src/safety/guard/mod.rs
+  --> src/safety/guard/token.rs
    |
    | pub trait WriteKind: seal::Sealed {
    |                      ^^^^^^^^^^^^ required by this bound in `WriteKind`

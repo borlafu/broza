@@ -1,16 +1,116 @@
-//! Minimal fakes for the safety-kernel integration test.
+//! Minimal fakes and the shared scenario for the safety-kernel integration tests.
 //!
 //! Deliberately local: the shared fakes in `broza::testing` belong to another
 //! milestone slice, and the safety kernel must be testable on its own.
+//!
+//! Two test binaries include this module and each uses part of it.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use broza::BrozaError;
-use broza::model::{Volume, VolumeRole};
+use broza::clean::{PlanOutcome, Selection, plan_dry_run};
+use broza::model::{Category, Finding, FindingPath, SessionId, Volume, VolumeRole};
 use broza::ports::{Answer, ConfirmationRequest, EntryMetadata, FileOps, Prompter};
+use broza::safety::guard::{Verdict, WriteRequest, approve};
+use broza::safety::rejection::GuardRejection;
 use broza::scan::{MountEntry, MountTable};
+use broza::{BrozaError, ExitCode};
+
+/// The home directory of the fake user.
+pub const HOME: &str = "/Users/dana";
+/// A cache file inside that home.
+pub const CACHE: &str = "/Users/dana/Library/Caches/app.cache";
+/// A second cache file, for size arithmetic.
+pub const OTHER: &str = "/Users/dana/Library/Caches/other.cache";
+/// The quarantine store of that home.
+pub const STORE: &str = "/Users/dana/.local/share/broza/quarantine";
+
+/// A fixed session id, so failures are reproducible.
+pub fn session() -> SessionId {
+    "cln_20260921103608_a1b2".parse().unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// A finding with the given paths and sizes.
+pub fn finding(id: &str, category: Category, paths: &[(&str, u64)]) -> Finding {
+    Finding::builder(id.parse().unwrap_or_else(|e| panic!("{e}")), category, "title")
+        .paths(
+            paths
+                .iter()
+                .map(|(path, size)| FindingPath {
+                    path: PathBuf::from(path),
+                    size_bytes: *size,
+                    last_used: None,
+                })
+                .collect(),
+        )
+        .reclaimable_bytes(paths.iter().map(|(_, size)| *size).fold(0_u64, u64::saturating_add))
+        .build()
+        .unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// One green `user-cache` finding covering the given paths.
+pub fn caches(paths: &[(&str, u64)]) -> Vec<Finding> {
+    vec![finding("user-cache.app", Category::UserCache, paths)]
+}
+
+/// The planner's outcome for a selection, or a panic with its error.
+pub fn planned(findings: &[Finding], selection: &Selection) -> PlanOutcome {
+    plan_dry_run(findings, selection, session(), None).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// A request that applies the plan on an interactive terminal.
+pub fn applying() -> WriteRequest {
+    WriteRequest { apply: true, tty: true, ..WriteRequest::new(HOME) }
+}
+
+/// The filesystem every safety-kernel test runs against.
+pub fn fs() -> MemFs {
+    MemFs::new()
+        .file(CACHE, 10)
+        .file(OTHER, 20)
+        .file("/System/Library/Caches/system.cache", 30)
+        .file("/System/Volumes/VM/swapfile0", 40)
+        .file("/System/Volumes/Data/Users/dana/Library/Caches/twin.cache", 10)
+        .file("/Users/dana/Documents/report.pdf", 50)
+        .file("/Users/other/Documents/secret.txt", 1)
+        .symlink("/Users/dana/Library/Caches/linked")
+        .symlink("/Users/dana/Library/evil")
+        .file("/Volumes/External/.Trashes/501/old.dmg", 60)
+        .file("/System/Volumes/Data/private/var/db/.Trashes/victim", 70)
+        .file("/Users/dana/Library/Mobile Documents/synced.key", 70)
+        .dir(STORE)
+        .file("/Users/dana/.local/share/broza/quarantine/cln_20260921103608_a1b2/items/1/a", 5)
+}
+
+/// Plans and approves the given cache paths.
+pub fn approve_paths(paths: &[(&str, u64)], req: &WriteRequest) -> Result<Verdict, GuardRejection> {
+    let findings = caches(paths);
+    let plan = planned(&findings, &Selection::everything()).plan;
+    approve(plan, &findings, req, &mount_table(), &fs())
+}
+
+/// The rejection those paths produce, or a panic if they are approved.
+pub fn rejection(paths: &[(&str, u64)], req: &WriteRequest) -> GuardRejection {
+    match approve_paths(paths, req) {
+        Err(rejection) => rejection,
+        Ok(verdict) => panic!("expected a rejection, got {verdict:?}"),
+    }
+}
+
+/// The exit code the CLI would return for a rejection.
+pub fn exit_code(rejection: GuardRejection) -> ExitCode {
+    ExitCode::from(&BrozaError::from(rejection))
+}
+
+/// The pending approval for one cache file, or a panic.
+pub fn pending_or_panic(request: &WriteRequest) -> broza::safety::PendingApproval {
+    match approve_paths(&[(CACHE, 10)], request) {
+        Ok(Verdict::NeedsConfirmation(pending)) => pending,
+        other => panic!("expected a pending approval, got {other:?}"),
+    }
+}
 
 /// In-memory filesystem: a flat map from path to `lstat` metadata.
 #[derive(Debug, Clone, Default)]

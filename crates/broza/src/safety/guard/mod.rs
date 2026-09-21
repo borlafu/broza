@@ -7,26 +7,38 @@
 //! The flow of one `clean --apply` is:
 //!
 //! ```text
-//! approve(plan, request, mounts, fs)   checks 1-7 of docs/cli-spec.md 3.4
-//!   -> Verdict::DryRun                 nothing may be written
-//!   -> Verdict::NeedsConfirmation(p)   p.confirm(prompter) or p.seal(answer)
-//!        -> Approved<Write>            the executor's ticket
+//! approve(plan, findings, request, mounts, fs)   checks 1-7 of docs/cli-spec.md 3.4
+//!   -> Verdict::Nothing                          empty selection, exit 0
+//!   -> Verdict::DryRun                           nothing may be written
+//!   -> Verdict::NeedsConfirmation(p)             p.confirm(prompter)
+//!        -> Approved<Write>                      the executor's ticket
 //! ```
+//!
+//! The token carries the plan **and** an [`ApprovedItem`] per path with the
+//! `(device, inode)` observed during the checks. Those two numbers are how the
+//! executor closes the time-of-check/time-of-use gap: see [`ApprovedItem`].
 
 mod checks;
+mod narrow;
+mod token;
 
-pub use checks::{approve, approve_quarantine_write, narrow_to_snapshot_delete};
+pub use checks::approve;
+pub use narrow::{approve_quarantine_write, narrow_to_snapshot_delete};
+pub use token::{Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, SnapshotDelete, Write, WriteKind};
 
-use std::fmt;
-use std::marker::PhantomData;
+/// Shared with `clean::planner` so the plan and the guard agree on what
+/// `--purge` means; see [`checks::expected_action`].
+pub(crate) use checks::expected_action;
+
 use std::path::PathBuf;
 
-use crate::model::{CleanPlan, Risk};
+use crate::model::{CleanPlan, FindingId, Risk};
 use crate::ports::{Answer, ConfirmationRequest, Prompter};
 use crate::safety::exclusions::Exclusions;
-use crate::safety::path::AllowedRoots;
+use crate::safety::guard::token::issue;
 use crate::safety::policy::{ConfirmationMode, PolicyInput};
 use crate::safety::rejection::{GuardRejection, PolicyError};
+use crate::safety::roots::AllowedRoots;
 
 /// Types only nameable inside this module; they are what makes the token unforgeable.
 mod seal {
@@ -38,92 +50,10 @@ mod seal {
     pub trait Sealed {}
 }
 
-/// What an [`Approved`] token authorises.
-pub trait WriteKind: seal::Sealed {
-    /// What the token carries to the executor.
-    type Payload;
-    /// Short description, used in `Debug` output.
-    const DESCRIPTION: &'static str;
-}
-
-/// Execution of a clean plan (quarantine or purge).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Write;
-/// A write inside the quarantine store (restore, expire, purge).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QuarantineWrite;
-/// Deletion of APFS local snapshots through `tmutil`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SnapshotDelete;
-
-impl seal::Sealed for Write {}
-impl seal::Sealed for QuarantineWrite {}
-impl seal::Sealed for SnapshotDelete {}
-
-impl WriteKind for Write {
-    type Payload = CleanPlan;
-    const DESCRIPTION: &'static str = "clean plan execution";
-}
-
-impl WriteKind for QuarantineWrite {
-    type Payload = Vec<PathBuf>;
-    const DESCRIPTION: &'static str = "quarantine store write";
-}
-
-impl WriteKind for SnapshotDelete {
-    type Payload = CleanPlan;
-    const DESCRIPTION: &'static str = "snapshot deletion";
-}
-
-/// Proof that the safety kernel approved a write. Cannot be constructed elsewhere.
-pub struct Approved<K: WriteKind> {
-    payload: K::Payload,
-    /// Never read: its type is the point. Only `guard` can name it, so only
-    /// `guard` can build this struct (`docs/adr/0003-...` "private unit-struct seal").
-    #[allow(dead_code)]
-    seal: seal::Seal,
-    kind: PhantomData<fn() -> K>,
-}
-
-impl<K: WriteKind> fmt::Debug for Approved<K> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Approved<{}>", K::DESCRIPTION)
-    }
-}
-
-impl<K: WriteKind<Payload = CleanPlan>> Approved<K> {
-    /// The approved plan.
-    pub fn plan(&self) -> &CleanPlan {
-        &self.payload
-    }
-
-    /// Consumes the token and yields the plan.
-    pub fn into_plan(self) -> CleanPlan {
-        self.payload
-    }
-}
-
-impl Approved<QuarantineWrite> {
-    /// The approved paths, all inside the quarantine store.
-    pub fn paths(&self) -> &[PathBuf] {
-        &self.payload
-    }
-
-    /// Consumes the token and yields the paths.
-    pub fn into_paths(self) -> Vec<PathBuf> {
-        self.payload
-    }
-}
-
-/// Builds a token. The only constructor of [`Approved`] in the whole crate.
-fn issue<K: WriteKind>(payload: K::Payload) -> Approved<K> {
-    Approved { payload, seal: seal::Seal, kind: PhantomData }
-}
-
 /// Everything the guard needs to know about the invocation.
 ///
-/// The five flags mirror the flags of `broza clean`; see
-/// [`crate::safety::policy::PolicyInput`] for why they are not enums.
+/// The risk level is *not* here: the guard derives it from the findings the plan
+/// refers to, so a caller cannot understate it.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteRequest {
@@ -137,15 +67,17 @@ pub struct WriteRequest {
     pub tty: bool,
     /// The `CI` environment variable is set.
     pub ci: bool,
-    /// Highest risk in the selection the plan was built from; `None` for an empty plan.
-    pub max_risk: Option<Risk>,
     /// `--max-size` cap in bytes.
     pub max_size: Option<u64>,
     /// Exclusions from the configuration and the command line.
     pub exclusions: Exclusions,
-    /// The user's home directory.
+    /// Inform-only findings the selection matched, from
+    /// [`crate::clean::PlanOutcome`]. Not empty means the user asked to clean
+    /// something Broza only reports, which refuses the whole plan under `--apply`.
+    pub informed_only: Vec<FindingId>,
+    /// The user's home directory (`/Users/<name>`).
     pub home: PathBuf,
-    /// Per-uid temporary directories (`/private/var/folders/<xx>/<uid dir>`).
+    /// Per-uid temporary directories (`/private/var/folders/<xx>/<hash>`).
     pub uid_temp_dirs: Vec<PathBuf>,
 }
 
@@ -158,18 +90,18 @@ impl WriteRequest {
             yes: false,
             tty: false,
             ci: false,
-            max_risk: None,
             max_size: None,
             exclusions: Exclusions::none(),
+            informed_only: Vec::new(),
             home: home.into(),
             uid_temp_dirs: Vec::new(),
         }
     }
 
-    fn policy_input(&self) -> PolicyInput {
+    fn policy_input(&self, max_risk: Option<Risk>) -> PolicyInput {
         PolicyInput {
             apply: self.apply,
-            max_risk: self.max_risk,
+            max_risk,
             purge: self.purge,
             yes: self.yes,
             tty: self.tty,
@@ -177,7 +109,7 @@ impl WriteRequest {
         }
     }
 
-    fn allowed_roots(&self) -> AllowedRoots {
+    fn allowed_roots(&self) -> Result<AllowedRoots, GuardRejection> {
         AllowedRoots::new(&self.home, self.uid_temp_dirs.clone())
     }
 }
@@ -185,6 +117,8 @@ impl WriteRequest {
 /// What the guard decided.
 #[derive(Debug)]
 pub enum Verdict {
+    /// The plan is empty: there is nothing to confirm and nothing to write (exit `0`).
+    Nothing,
     /// No `--apply`: the plan is reported and nothing is written.
     DryRun(CleanPlan),
     /// Every safety check passed; the confirmation still has to happen.
@@ -192,9 +126,13 @@ pub enum Verdict {
 }
 
 /// A plan that passed every check and is waiting for the user's answer.
+///
+/// The only way out is [`PendingApproval::confirm`], which picks the prompt the
+/// mode requires. There is deliberately no way to hand in an answer directly: a
+/// plain "yes" must never satisfy a `--purge`, which demands the typed word.
 #[derive(Debug)]
 pub struct PendingApproval {
-    plan: CleanPlan,
+    payload: ApprovedPlan,
     mode: ConfirmationMode,
     request: ConfirmationRequest,
     /// Never read; see [`Approved`].
@@ -205,7 +143,12 @@ pub struct PendingApproval {
 impl PendingApproval {
     /// The plan that will be executed once confirmed.
     pub fn plan(&self) -> &CleanPlan {
-        &self.plan
+        &self.payload.plan
+    }
+
+    /// The paths that passed the checks, with their identity at that moment.
+    pub fn items(&self) -> &[ApprovedItem] {
+        &self.payload.items
     }
 
     /// How the user must confirm.
@@ -218,19 +161,13 @@ impl PendingApproval {
         &self.request
     }
 
-    /// Turns the user's answer into a token.
+    /// Runs the prompt this plan requires and turns the answer into a token.
     ///
     /// `Yes` produces the token, `No` aborts (exit `6`) and `NoTty` means the
-    /// confirmation could not be obtained (exit `7`).
-    pub fn seal(self, answer: Answer) -> Result<Approved<Write>, GuardRejection> {
-        match answer {
-            Answer::Yes => Ok(issue::<Write>(self.plan)),
-            Answer::No => Err(PolicyError::AbortedByUser.into()),
-            Answer::NoTty => Err(PolicyError::ConfirmationRequired.into()),
-        }
-    }
-
-    /// Runs the prompt this plan requires and seals the answer.
+    /// confirmation could not be obtained (exit `7`). For
+    /// [`ConfirmationMode::TypedLiteral`] the answer must come from
+    /// [`Prompter::confirm_literal`]: that is the only way the typed `PURGE`
+    /// reaches the guard.
     pub fn confirm(self, prompter: &dyn Prompter) -> Result<Approved<Write>, GuardRejection> {
         let answer = match self.mode {
             ConfirmationMode::None => Answer::Yes,
@@ -245,14 +182,26 @@ impl PendingApproval {
         };
         self.seal(answer)
     }
+
+    /// Private: an answer only ever comes from the prompt [`Self::confirm`] ran.
+    fn seal(self, answer: Answer) -> Result<Approved<Write>, GuardRejection> {
+        match answer {
+            Answer::Yes => Ok(issue::<Write>(self.payload)),
+            Answer::No => Err(PolicyError::AbortedByUser.into()),
+            Answer::NoTty => Err(PolicyError::ConfirmationRequired.into()),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Approved, PendingApproval, QuarantineWrite, Write, WriteRequest, issue, seal};
+    use super::{
+        Approved, ApprovedItem, ApprovedPlan, PendingApproval, QuarantineWrite, Write, WriteRequest, issue,
+        seal,
+    };
     use crate::model::{CleanPlan, Risk, SessionId};
-    use crate::ports::{Answer, ConfirmationRequest};
-    use crate::safety::policy::{ConfirmationMode, RejectReason};
+    use crate::ports::{Answer, ConfirmationRequest, Prompter};
+    use crate::safety::policy::{ConfirmationMode, PURGE_LITERAL, RejectReason};
     use crate::safety::rejection::{GuardRejection, PolicyError};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -260,13 +209,16 @@ mod tests {
         "cln_20260921103608_a1b2".parse().unwrap_or_else(|error| panic!("{error}"))
     }
 
-    fn plan() -> CleanPlan {
-        CleanPlan::dry_run(session(), Vec::new()).unwrap_or_else(|error| panic!("{error}"))
+    fn payload() -> ApprovedPlan {
+        ApprovedPlan {
+            plan: CleanPlan::dry_run(session(), Vec::new()).unwrap_or_else(|error| panic!("{error}")),
+            items: vec![ApprovedItem { path: "/Users/dana/x".into(), device: 2, inode: 7 }],
+        }
     }
 
     fn pending(mode: ConfirmationMode) -> PendingApproval {
         PendingApproval {
-            plan: plan(),
+            payload: payload(),
             mode,
             request: ConfirmationRequest {
                 max_risk: Risk::Green,
@@ -279,33 +231,59 @@ mod tests {
         }
     }
 
+    /// Answers each kind of prompt separately and counts both.
+    struct ScriptedPrompter {
+        on_confirm: Answer,
+        on_literal: Answer,
+        confirms: AtomicUsize,
+        literals: AtomicUsize,
+    }
+
+    impl ScriptedPrompter {
+        fn new(on_confirm: Answer, on_literal: Answer) -> Self {
+            Self { on_confirm, on_literal, confirms: AtomicUsize::new(0), literals: AtomicUsize::new(0) }
+        }
+
+        fn always(answer: Answer) -> Self {
+            Self::new(answer, answer)
+        }
+    }
+
+    impl Prompter for ScriptedPrompter {
+        fn confirm(&self, _request: &ConfirmationRequest) -> Answer {
+            self.confirms.fetch_add(1, Ordering::Relaxed);
+            self.on_confirm
+        }
+
+        fn confirm_literal(&self, _request: &ConfirmationRequest, expected: &str) -> Answer {
+            assert_eq!(expected, PURGE_LITERAL);
+            self.literals.fetch_add(1, Ordering::Relaxed);
+            self.on_literal
+        }
+    }
+
     #[test]
     fn yes_produces_a_token_and_no_aborts() {
-        let approved = pending(ConfirmationMode::SimpleYesNo).seal(Answer::Yes);
-        assert!(approved.is_ok(), "{approved:?}");
+        let yes = pending(ConfirmationMode::SimpleYesNo).confirm(&ScriptedPrompter::always(Answer::Yes));
+        assert!(yes.is_ok(), "{yes:?}");
         assert_eq!(
-            pending(ConfirmationMode::SimpleYesNo).seal(Answer::No).err(),
+            pending(ConfirmationMode::SimpleYesNo).confirm(&ScriptedPrompter::always(Answer::No)).err(),
             Some(GuardRejection::Policy(PolicyError::AbortedByUser))
         );
         assert_eq!(
-            pending(ConfirmationMode::SimpleYesNo).seal(Answer::NoTty).err(),
+            pending(ConfirmationMode::SimpleYesNo).confirm(&ScriptedPrompter::always(Answer::NoTty)).err(),
             Some(GuardRejection::Policy(PolicyError::ConfirmationRequired))
         );
     }
 
-    /// A prompter that says yes and counts how often it was consulted.
-    struct CountingPrompter(AtomicUsize);
-
-    impl crate::ports::Prompter for CountingPrompter {
-        fn confirm(&self, _request: &ConfirmationRequest) -> Answer {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Answer::Yes
-        }
-
-        fn confirm_literal(&self, _request: &ConfirmationRequest, _expected: &str) -> Answer {
-            self.0.fetch_add(1, Ordering::Relaxed);
-            Answer::Yes
-        }
+    /// A plain "y" must never stand in for the typed word `PURGE`.
+    #[test]
+    fn a_yes_to_the_simple_question_does_not_satisfy_a_purge() {
+        let prompter = ScriptedPrompter::new(Answer::Yes, Answer::No);
+        let refused = pending(ConfirmationMode::TypedLiteral(PURGE_LITERAL)).confirm(&prompter);
+        assert_eq!(refused.err(), Some(GuardRejection::Policy(PolicyError::AbortedByUser)));
+        assert_eq!(prompter.confirms.load(Ordering::Relaxed), 0, "the y/N prompt is not used");
+        assert_eq!(prompter.literals.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -318,10 +296,11 @@ mod tests {
             ),
         ];
         for (mode, expected) in stopping {
-            let prompter = CountingPrompter(AtomicUsize::new(0));
+            let prompter = ScriptedPrompter::always(Answer::Yes);
             let rejected = pending(mode).confirm(&prompter);
             assert_eq!(rejected.err(), Some(GuardRejection::Policy(expected)), "{mode:?}");
-            assert_eq!(prompter.0.load(Ordering::Relaxed), 0, "{mode:?}");
+            assert_eq!(prompter.confirms.load(Ordering::Relaxed), 0, "{mode:?}");
+            assert_eq!(prompter.literals.load(Ordering::Relaxed), 0, "{mode:?}");
         }
     }
 
@@ -330,21 +309,26 @@ mod tests {
         let waiting = pending(ConfirmationMode::DetailedExplicit);
         assert_eq!(waiting.mode(), ConfirmationMode::DetailedExplicit);
         assert!(waiting.plan().is_dry_run());
-        let prompter = CountingPrompter(AtomicUsize::new(0));
+        assert_eq!(waiting.items().len(), 1);
+        assert_eq!(waiting.request().item_count, 0);
+        let prompter = ScriptedPrompter::always(Answer::Yes);
         let approved = waiting.confirm(&prompter).unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(approved.plan().items().len(), 0);
-        assert_eq!(prompter.0.load(Ordering::Relaxed), 1);
+        assert_eq!(prompter.confirms.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn a_token_describes_what_it_authorises_without_leaking_the_plan() {
-        let token: Approved<Write> = issue::<Write>(plan());
+        let token: Approved<Write> = issue::<Write>(payload());
         assert_eq!(format!("{token:?}"), "Approved<clean plan execution>");
         assert!(token.plan().is_dry_run());
+        assert_eq!(token.items()[0].inode, 7);
         assert_eq!(token.into_plan().items().len(), 0);
-        let paths: Approved<QuarantineWrite> = issue::<QuarantineWrite>(vec!["/q/items/1".into()]);
-        assert_eq!(paths.paths().len(), 1);
-        assert_eq!(paths.into_paths(), vec![std::path::PathBuf::from("/q/items/1")]);
+
+        let entries: Approved<QuarantineWrite> =
+            issue::<QuarantineWrite>(vec![ApprovedItem { path: "/q/items/1".into(), device: 2, inode: 9 }]);
+        assert_eq!(entries.items().len(), 1);
+        assert_eq!(entries.into_items()[0].path, std::path::PathBuf::from("/q/items/1"));
     }
 
     #[test]
@@ -353,6 +337,14 @@ mod tests {
         assert!(!request.apply && !request.purge && !request.yes && !request.tty && !request.ci);
         assert_eq!(request.max_size, None);
         assert!(request.exclusions.is_empty());
-        assert_eq!(request.allowed_roots().roots().len(), 6, "three roots, two spellings each");
+        assert!(request.informed_only.is_empty());
+        let roots = request.allowed_roots().unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(roots.roots().len(), 6, "three roots, two spellings each");
+    }
+
+    #[test]
+    fn a_request_with_an_impossible_home_cannot_produce_roots() {
+        let request = WriteRequest::new("/");
+        assert!(matches!(request.allowed_roots(), Err(GuardRejection::InvalidRoot { .. })));
     }
 }

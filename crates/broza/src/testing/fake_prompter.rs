@@ -42,6 +42,11 @@ impl FakePrompter {
         Self { constant: Some(answer), ..Self::default() }
     }
 
+    /// Append `answers` to the queue, for a prompter already wired into a bundle.
+    pub fn queue(&self, answers: &[Answer]) {
+        lock(&self.answers).extend(answers.iter().copied());
+    }
+
     /// Every prompt received, in order.
     pub fn prompts(&self) -> Vec<RecordedPrompt> {
         lock(&self.prompts).clone()
@@ -118,6 +123,16 @@ mod tests {
 
         assert_eq!(prompter.confirm(&request()), EXHAUSTED_ANSWER);
         assert_eq!(EXHAUSTED_ANSWER, Answer::No);
+    }
+
+    #[test]
+    fn answers_can_be_queued_after_construction() {
+        let prompter = FakePrompter::scripted(&[]);
+
+        prompter.queue(&[Answer::Yes]);
+
+        assert_eq!(prompter.confirm(&request()), Answer::Yes);
+        assert_eq!(prompter.confirm(&request()), EXHAUSTED_ANSWER);
     }
 
     #[test]

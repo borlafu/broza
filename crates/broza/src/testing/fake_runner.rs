@@ -50,7 +50,7 @@ enum Scripted {
 #[derive(Debug, Default)]
 pub struct FakeRunner {
     /// Scripted answers keyed by the rendered command line.
-    scripted: BTreeMap<String, Scripted>,
+    scripted: Mutex<BTreeMap<String, Scripted>>,
     /// Every invocation, in order.
     calls: Mutex<Vec<RecordedCall>>,
 }
@@ -62,29 +62,54 @@ impl FakeRunner {
     }
 
     /// Script `output` for `program` invoked with exactly `args`.
-    #[must_use]
-    pub fn with_output(mut self, program: &str, args: &[&str], output: ProcessOutput) -> Self {
-        self.scripted.insert(command_key(program, args), Scripted::Output(Box::new(output)));
-        self
+    pub fn script_output(&self, program: &str, args: &[&str], output: ProcessOutput) {
+        lock(&self.scripted).insert(command_key(program, args), Scripted::Output(Box::new(output)));
     }
 
     /// Script a failure to run `program` with exactly `args`.
+    pub fn script_failure(&self, program: &str, args: &[&str], message: &str) {
+        lock(&self.scripted).insert(command_key(program, args), Scripted::Failure(message.to_owned()));
+    }
+
+    /// Builder form of [`FakeRunner::script_output`].
     #[must_use]
-    pub fn with_failure(mut self, program: &str, args: &[&str], message: &str) -> Self {
-        self.scripted.insert(command_key(program, args), Scripted::Failure(message.to_owned()));
+    pub fn with_output(self, program: &str, args: &[&str], output: ProcessOutput) -> Self {
+        self.script_output(program, args, output);
+        self
+    }
+
+    /// Builder form of [`FakeRunner::script_failure`].
+    #[must_use]
+    pub fn with_failure(self, program: &str, args: &[&str], message: &str) -> Self {
+        self.script_failure(program, args, message);
         self
     }
 
     /// Script a successful run whose standard output is the fixture at
     /// `relative_path` inside `crates/broza/tests/fixtures/`.
-    pub fn with_fixture(self, program: &str, args: &[&str], relative_path: &str) -> Result<Self, BrozaError> {
-        let path = Path::new(FIXTURE_DIR).join(relative_path);
+    pub fn script_fixture(
+        &self,
+        program: &str,
+        args: &[&str],
+        relative_path: &str,
+    ) -> Result<(), BrozaError> {
+        let path = Self::fixture_path(relative_path);
         let stdout = std::fs::read(&path).map_err(|source| BrozaError::Io {
             context: format!("read fixture {}", path.display()),
             source,
         })?;
-        let output = ProcessOutput { success: true, code: Some(0), stdout, stderr: Vec::new() };
-        Ok(self.with_output(program, args, output))
+        self.script_output(
+            program,
+            args,
+            ProcessOutput { success: true, code: Some(0), stdout, stderr: Vec::new() },
+        );
+        Ok(())
+    }
+
+    /// Builder form of [`FakeRunner::script_fixture`].
+    pub fn with_fixture(self, program: &str, args: &[&str], relative_path: &str) -> Result<Self, BrozaError> {
+        self.script_fixture(program, args, relative_path)?;
+        Ok(self)
     }
 
     /// Absolute path of a fixture, for tests that need to read one directly.
@@ -99,7 +124,7 @@ impl FakeRunner {
 
     /// Rendered command lines this runner can answer, for assertions and messages.
     pub fn expected_keys(&self) -> Vec<String> {
-        self.scripted.keys().cloned().collect()
+        lock(&self.scripted).keys().cloned().collect()
     }
 
     /// Error describing that `key` was not scripted.
@@ -119,7 +144,8 @@ impl ProcessRunner for FakeRunner {
             timeout,
         };
         lock(&self.calls).push(call);
-        match self.scripted.get(&key) {
+        let scripted = lock(&self.scripted).get(&key).cloned();
+        match scripted.as_ref() {
             Some(Scripted::Output(output)) => Ok((**output).clone()),
             Some(Scripted::Failure(message)) => Err(BrozaError::Other(message.clone())),
             None => Err(self.unmatched(&key)),

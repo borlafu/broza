@@ -278,6 +278,63 @@ mod tests {
         assert!(matches!(error, Some(BrozaError::Cache(_))), "{error:?}");
     }
 
+    /// A filesystem where the store exists when asked and is gone when read.
+    ///
+    /// The real race: another Broza (or the user) removed the cache between the
+    /// two calls. It must read as "no cache yet", not as a corrupt one.
+    #[derive(Debug)]
+    struct VanishingStore;
+
+    impl FileOps for VanishingStore {
+        fn metadata(&self, path: &Path) -> Result<crate::ports::EntryMetadata, BrozaError> {
+            Err(BrozaError::TargetNotFound(path.display().to_string()))
+        }
+        fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, BrozaError> {
+            Err(BrozaError::TargetNotFound(path.display().to_string()))
+        }
+        fn exists(&self, _path: &Path) -> bool {
+            true
+        }
+        fn rename(&self, from: &Path, _to: &Path) -> Result<(), BrozaError> {
+            Err(BrozaError::TargetNotFound(from.display().to_string()))
+        }
+        fn create_dir_all(&self, _path: &Path) -> Result<(), BrozaError> {
+            Ok(())
+        }
+        fn remove_tree(&self, path: &Path) -> Result<(), BrozaError> {
+            Err(BrozaError::TargetNotFound(path.display().to_string()))
+        }
+        fn write_atomic(&self, _path: &Path, _contents: &[u8]) -> Result<(), BrozaError> {
+            Ok(())
+        }
+        fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError> {
+            Err(BrozaError::TargetNotFound(path.display().to_string()))
+        }
+    }
+
+    #[test]
+    fn the_vanishing_filesystem_says_everything_else_is_gone() {
+        let store = VanishingStore;
+        let path = path();
+
+        assert!(store.exists(&path));
+        assert!(store.metadata(&path).is_err());
+        assert!(store.read_dir(&path).is_err());
+        assert!(store.read(&path).is_err());
+        assert!(store.rename(&path, &path).is_err());
+        assert!(store.remove_tree(&path).is_err());
+        assert!(store.create_dir_all(&path).is_ok());
+        assert!(store.write_atomic(&path, b"x").is_ok());
+    }
+
+    #[test]
+    fn a_store_that_disappears_between_the_check_and_the_read_is_simply_empty() {
+        let store = CacheStore::load(&path(), &VanishingStore, &FixedClock::default(), TTL)
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(store.is_empty());
+    }
+
     #[test]
     fn the_store_of_a_volume_lives_under_the_layout_version() {
         let path = store_path(Path::new("/Users/dana/.cache/broza"), "disk3s5");

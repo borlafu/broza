@@ -365,6 +365,22 @@ mod tests {
     }
 
     #[test]
+    fn the_debug_of_the_options_shows_the_switches_and_hides_the_callbacks() {
+        let options = WalkOptions {
+            max_depth: Some(3),
+            exclude: vec![PathBuf::from("/vol/a")],
+            ..WalkOptions::default()
+        };
+
+        let shown = format!("{options:?}");
+
+        assert!(shown.contains("max_depth: Some(3)"), "{shown}");
+        assert!(shown.contains("same_device_only: true"), "{shown}");
+        assert!(shown.contains("/vol/a"), "{shown}");
+        assert!(!shown.contains("skip_hook"), "a closure has nothing to show: {shown}");
+    }
+
+    #[test]
     fn progress_counts_every_entry_and_every_byte() {
         let clock = FixedClock::default();
         let sink = |_progress| {};

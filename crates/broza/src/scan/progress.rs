@@ -177,6 +177,20 @@ mod tests {
     }
 
     #[test]
+    fn the_debug_of_a_reporter_shows_the_running_total() {
+        let seen = Mutex::new(Vec::new());
+        let report = sink(&seen);
+        let clock = FixedClock::default();
+        let reporter = ProgressReporter::new(&report, &clock);
+
+        reporter.record(2, 20);
+
+        let shown = format!("{reporter:?}");
+        assert!(shown.contains("entries_scanned: 2"), "{shown}");
+        assert!(shown.contains("bytes_scanned: 20"), "{shown}");
+    }
+
+    #[test]
     fn the_default_interval_is_a_tenth_of_a_second() {
         assert_eq!(PROGRESS_INTERVAL, Duration::from_millis(100));
     }

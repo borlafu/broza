@@ -198,6 +198,16 @@ mod tests {
     }
 
     #[test]
+    fn a_volume_mounted_at_the_root_is_named_by_its_path() {
+        let nodes = vec![dir("/", 10), dir("/Users", 4)];
+
+        let root = root_of(&nodes, 1, 0);
+
+        assert_eq!(root.name, "/");
+        assert_eq!(names(&root), vec!["Users"]);
+    }
+
+    #[test]
     fn an_empty_walk_has_no_tree() {
         assert!(tree(&[], 3, 0).root.is_none());
     }

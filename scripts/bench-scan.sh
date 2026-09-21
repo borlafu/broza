@@ -38,7 +38,11 @@ BENCH_ROOT="${BENCH_ROOT:-${HOME}}"
 export BENCH_ROOT
 
 if [[ -z "${BENCH_EXCLUDE:-}" ]]; then
-  cloud=("${BENCH_ROOT}/Library/CloudStorage" "${BENCH_ROOT}/Dropbox")
+  cloud=(
+    "${BENCH_ROOT}/Library/CloudStorage"      # OneDrive, Box, the new Dropbox
+    "${BENCH_ROOT}/Library/Mobile Documents"  # iCloud Drive
+    "${BENCH_ROOT}/Dropbox"
+  )
   while IFS= read -r folder; do
     [[ -n "${folder}" ]] && cloud+=("${folder}")
   done < <(find "${BENCH_ROOT}" -maxdepth 1 -name '*Drive*' -type d 2>/dev/null || true)

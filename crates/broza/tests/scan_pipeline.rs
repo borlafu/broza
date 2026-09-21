@@ -143,6 +143,17 @@ fn no_cache_skips_reading_the_store_but_still_writes_one() {
 }
 
 #[test]
+fn a_scan_without_a_cache_root_writes_nothing_and_still_reports() {
+    let (ports, handles) = ports();
+    let before = handles.fs.paths();
+
+    let scan = scan_data(&ports, &ScanRequest { cache_root: None, ..request() });
+
+    assert_eq!(scan.root.size_bytes, 8000);
+    assert_eq!(handles.fs.paths(), before, "no cache root, no file written");
+}
+
+#[test]
 fn a_corrupt_cache_stops_the_scan_with_exit_nine() {
     let (ports, handles) = ports();
     handles.fs.add_file(DATA_STORE, b"BRZC\x07nonsense");

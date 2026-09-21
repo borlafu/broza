@@ -73,8 +73,13 @@ mod tests {
             allocated_bytes: 8192,
             file_count: 2,
             dir_count: 3,
-            recorded_at: "2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap_or_else(|e| panic!("{e}")),
+            recorded_at: Timestamp::UNIX_EPOCH,
         }
+    }
+
+    /// Unwrap what the test expects to succeed, through one shared panic site.
+    fn ok<T>(result: Result<T, BrozaError>) -> T {
+        result.unwrap_or_else(|error| panic!("unexpected failure: {error}"))
     }
 
     fn expect_cache_error(bytes: &[u8]) -> String {
@@ -91,15 +96,15 @@ mod tests {
     fn records_survive_a_round_trip() {
         let records = vec![record(1), record(2)];
 
-        let encoded = encode(&records).unwrap_or_else(|e| panic!("{e}"));
-        let decoded = decode(&encoded).unwrap_or_else(|e| panic!("{e}"));
+        let encoded = ok(encode(&records));
+        let decoded = ok(decode(&encoded));
 
         assert_eq!(decoded, records);
     }
 
     #[test]
     fn the_file_starts_with_the_magic_and_the_version() {
-        let encoded = encode(&[record(1)]).unwrap_or_else(|e| panic!("{e}"));
+        let encoded = ok(encode(&[record(1)]));
 
         assert_eq!(&encoded[..MAGIC.len()], MAGIC);
         assert_eq!(encoded[MAGIC.len()], STORE_VERSION);
@@ -107,10 +112,10 @@ mod tests {
 
     #[test]
     fn an_empty_store_still_carries_a_header() {
-        let encoded = encode(&[]).unwrap_or_else(|e| panic!("{e}"));
+        let encoded = ok(encode(&[]));
 
         assert!(encoded.len() > MAGIC.len());
-        assert_eq!(decode(&encoded).unwrap_or_else(|e| panic!("{e}")), Vec::new());
+        assert_eq!(ok(decode(&encoded)), Vec::new());
     }
 
     #[test]
@@ -122,7 +127,7 @@ mod tests {
 
     #[test]
     fn a_version_from_the_future_is_refused() {
-        let mut bytes = encode(&[record(1)]).unwrap_or_else(|e| panic!("{e}"));
+        let mut bytes = ok(encode(&[record(1)]));
         bytes[MAGIC.len()] = STORE_VERSION + 1;
 
         let message = expect_cache_error(&bytes);
@@ -132,7 +137,7 @@ mod tests {
 
     #[test]
     fn a_truncated_file_is_refused() {
-        let bytes = encode(&[record(1), record(2)]).unwrap_or_else(|e| panic!("{e}"));
+        let bytes = ok(encode(&[record(1), record(2)]));
 
         let message = expect_cache_error(&bytes[..bytes.len() - 3]);
 
@@ -147,7 +152,7 @@ mod tests {
 
     #[test]
     fn trailing_rubbish_after_the_records_is_refused() {
-        let mut bytes = encode(&[record(1)]).unwrap_or_else(|e| panic!("{e}"));
+        let mut bytes = ok(encode(&[record(1)]));
         bytes.extend_from_slice(b"and then some");
 
         let _ = expect_cache_error(&bytes);

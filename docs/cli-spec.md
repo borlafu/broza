@@ -585,11 +585,16 @@ Every `--json` output shares this structure:
 }
 ```
 
-`purgeable_bytes` is an estimate derived from Foundation's `NSURLVolumeAvailableCapacityForImportantUsageKey` minus `NSURLVolumeAvailableCapacityKey` for the same volume, clamped at 0 (both values come from one Foundation call, so they are mutually consistent; `free_bytes` comes from `diskutil` and may differ by a few MB); the human output labels it as an estimate. Hard links and APFS clones are counted once in `size_bytes`.
+`purgeable_bytes` is an estimate derived from Foundation's `NSURLVolumeAvailableCapacityForImportantUsageKey` minus `NSURLVolumeAvailableCapacityKey` for the same volume, clamped at 0 (both values come from one Foundation call, so they are mutually consistent; `free_bytes` comes from `diskutil` and may differ by a few MB); the human output labels it as an estimate. Hard links are counted once in `size_bytes`; APFS clones are counted once where detectable (best-effort, completed post-1.0, PRD RF-02). Cloud placeholders whose contents are not on the disk (`SF_DATALESS`: iCloud Drive, Files On-Demand) contribute 0 bytes and are never listed in `largest_items`.
 
 `volumes[].mount_point` is **optional**: volumes that macOS does not mount, typically `Preboot`
 and `Recovery`, are enumerated with their role and size but without a mount point, and the field
 is then absent.
+
+`volumes[].uuid` is **optional** too: the filesystem UUID (`APFSVolumeUUID`, or `VolumeUUID` for
+`HFS+`), absent when macOS does not report one. It is what the scan cache of §7 is filed under,
+because a BSD name like `disk3s5` belongs to whatever is plugged in today while the UUID follows
+the volume.
 
 ### 4.3 `suggest`
 
@@ -913,7 +918,9 @@ If `tmutil` refuses a snapshot deletion for lack of privileges, the item is mark
 | Full `suggest` | < 15 s |
 | First visible result on screen | < 500 ms |
 
-Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<volume_uuid>/`, one store per volume, keyed by `(dev, inode, mtime)` of each directory and expired by the configured `cache-ttl`. A directory whose key is unchanged is served from cache and its subtree is skipped. The store carries a versioned magic header; any decode error is reported as exit `9` (`CACHE_ERROR`) with the hint to retry with `--no-cache`, and Broza never attempts to "repair" a corrupt cache silently. `--no-cache` bypasses reads but still writes a fresh cache.
+Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<volume_uuid>/`, one store per volume, keyed by `(dev, inode, mtime)` of each directory and expired by the configured `cache-ttl`. A directory whose key is unchanged is served from cache and its subtree is skipped. The store carries a versioned magic header; any decode error is reported as exit `9` (`CACHE_ERROR`) with the hint to retry with `--no-cache`, and Broza never attempts to "repair" a corrupt cache silently. `--no-cache` bypasses reads but still writes a fresh cache. A volume with no UUID falls back to its BSD name, with a `cache_keyed_by_bsd_id` warning.
+
+Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) are excluded from the walk by default: `lstat` on a file the provider has not downloaded blocks on that provider, and a scan that walks into them measures the network rather than the disk. They can be scanned explicitly by passing the path.
 
 ---
 
@@ -985,3 +992,4 @@ Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<vol
   value that names nothing is `4`. The folder-walking inputs (`PATH`, `--depth`, `--top`,
   `--min-size`, `--tree`) are accepted and raise the warning `folder_scan_pending`, which
   disappears once the walker is wired.
+- §4.2 and §7 (M2 scanner, unreleased, so no bump): APFS clone accounting stated as best-effort and deferred to post-1.0 (PRD RF-02), cloud placeholders (`SF_DATALESS`) documented as 0 bytes and never listed; new optional `volumes[].uuid`, which the scan cache is filed under, with a `cache_keyed_by_bsd_id` warning when it is missing; cloud-provider roots excluded from the walk by default.

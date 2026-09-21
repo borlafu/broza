@@ -160,6 +160,7 @@ relative/path\trelative
         Volume {
             id: id.parse().unwrap_or_else(|e| panic!("{e}")),
             name: id.to_owned(),
+            uuid: None,
             role,
             mount_point: mount.map(PathBuf::from),
             used_bytes: 0,

@@ -53,6 +53,7 @@ mod tests {
             volume: Volume {
                 id: id.parse::<VolumeId>().unwrap_or_else(|e| panic!("{e}")),
                 name: name.to_owned(),
+                uuid: None,
                 role,
                 mount_point: Some(PathBuf::from(mount)),
                 used_bytes: 0,

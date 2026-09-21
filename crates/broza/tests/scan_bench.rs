@@ -35,6 +35,12 @@ const BENCH_TOP: usize = 20;
 /// Levels the benchmark reports, as `--depth` would; the cache may not answer
 /// above this, because those levels are what a report shows.
 const BENCH_DEPTH: usize = 2;
+/// Share of the total a live home directory may drift between two walks.
+///
+/// Nothing here is frozen: browsers write caches, Spotlight indexes, mail
+/// arrives. A hundredth of the disk is noise; more would mean the warm walk
+/// measured something else.
+const DRIFT_DIVISOR: u64 = 100;
 /// Entries per second a cold walk must manage.
 ///
 /// The budget of `docs/cli-spec.md` §7 is under ten seconds for the boot disk.
@@ -72,6 +78,11 @@ fn timed_walk(root: &Path, store: &CacheStore) -> (WalkResult, Duration) {
     let started = Instant::now();
     let result = walk(root, &options, &StdFileOps);
     (result, started.elapsed())
+}
+
+/// Apparent bytes the walk reported for its root.
+fn root_bytes(result: &WalkResult) -> u64 {
+    result.root().map_or(0, |node| node.size_bytes)
 }
 
 /// Entries the walk looked at: every directory plus every file it counted.
@@ -121,10 +132,11 @@ fn bench_home_walk() {
     println!("store: {store_bytes} bytes for {} records", loaded.len());
 
     assert!(cold_result.root().is_some(), "the walk found nothing at {}", home.display());
-    assert_eq!(
-        warm_result.root().map(|node| node.size_bytes),
-        cold_result.root().map(|node| node.size_bytes),
-        "a warm walk must report the same disk as the cold one"
+    let (cold_bytes, warm_bytes) = (root_bytes(&cold_result), root_bytes(&warm_result));
+    let drift = cold_bytes.abs_diff(warm_bytes);
+    assert!(
+        drift <= cold_bytes / DRIFT_DIVISOR,
+        "warm reported {warm_bytes} against {cold_bytes} cold: more than a live home drifts"
     );
     let rate = entries_per_second(&cold_result, cold);
     assert!(

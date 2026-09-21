@@ -8,18 +8,26 @@
 //!
 //! A flat "biggest directories" list is useless on a real disk: `~/Library`,
 //! `~/Library/Developer`, `~/Library/Developer/Xcode` and its `DerivedData` are
-//! four entries for the same bytes. Broza applies one rule, and only one:
+//! four entries for the same bytes. Broza drills down instead of listing chains:
 //!
-//! > **A directory that is reported hides its descendants, unless a descendant is
-//! > at least half of the nearest reported ancestor.**
+//! > **A directory is reported when no single child holds at least half of it.
+//! > When one child does, Broza descends into that child, and every other child
+//! > above `--min-size` is judged on its own by the same rule.**
 //!
-//! So `~/Library` is reported once; `~/Library/Developer` also appears when it
-//! carries at least half of `~/Library`, because then the parent's line alone
-//! would hide where the space actually is. The scanned root itself is never
+//! So a home folder whose bytes sit in `~/Library/Developer/Xcode/DerivedData`
+//! is reported as that one `DerivedData` line (its many projects share the
+//! space, so nothing below dominates), while `~/Library/Caches` and
+//! `~/Documents` — smaller siblings on the way down — still get their own
+//! lines. A file is a leaf and is reported as itself. The scanned root is never
 //! reported: it is the volume, and it would hide everything.
+//!
+//! Dominance is read from the walker's `largest_item_bytes`, which every
+//! directory carries whether it was walked this run or served from the cache,
+//! so a warm scan lists exactly what a cold one does.
 
 pub mod tree;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 pub use tree::{TreeNode, TreeView, tree};
@@ -27,8 +35,7 @@ pub use tree::{TreeNode, TreeView, tree};
 use crate::model::{ItemKind, LargestItem, VolumeId};
 use crate::scan::walker::WalkResult;
 
-/// Smallest share of its nearest reported ancestor an entry must carry to be
-/// reported as well, expressed as the divisor of that ancestor's size.
+/// Divisor of a directory's size a child must reach to be "dominant" (one half).
 const DOMINANT_SHARE_DIVISOR: u64 = 2;
 
 /// One entry competing for a place in the list, borrowed from the walk.
@@ -36,78 +43,115 @@ const DOMINANT_SHARE_DIVISOR: u64 = 2;
 struct Candidate<'a> {
     /// Absolute path.
     path: &'a Path,
-    /// Apparent size in bytes.
-    size_bytes: u64,
+    /// Allocated size in bytes: what the report prints and what every rule
+    /// here compares, because it is what deleting the item would free
+    /// (`AGENTS.md` §2.7). Apparent lengths never enter this module.
+    allocated_bytes: u64,
     /// File or directory.
     kind: ItemKind,
+    /// Largest single item inside a directory, in allocated bytes (`0` for a
+    /// file). Equal to the largest direct child, so it decides dominance even
+    /// when the children themselves are not in the walk — a subtree served
+    /// from the cache.
+    largest_inside: u64,
+}
+
+/// Every reported directory and collected file, indexed by parent directory.
+struct Children<'a> {
+    by_parent: HashMap<&'a Path, Vec<Candidate<'a>>>,
+}
+
+impl<'a> Children<'a> {
+    fn of(walk: &'a WalkResult) -> Self {
+        let mut by_parent: HashMap<&'a Path, Vec<Candidate<'a>>> = HashMap::new();
+        let dirs = walk.nodes.iter().map(|node| Candidate {
+            path: node.path.as_path(),
+            allocated_bytes: node.allocated_bytes,
+            kind: ItemKind::Directory,
+            largest_inside: node.largest_item_bytes,
+        });
+        let files = walk.files.iter().map(|file| Candidate {
+            path: file.path.as_path(),
+            allocated_bytes: file.allocated_bytes,
+            kind: ItemKind::File,
+            largest_inside: 0,
+        });
+        for candidate in dirs.chain(files) {
+            if let Some(parent) = candidate.path.parent() {
+                by_parent.entry(parent).or_default().push(candidate);
+            }
+        }
+        Self { by_parent }
+    }
+
+    fn under(&self, path: &Path) -> &[Candidate<'a>] {
+        self.by_parent.get(path).map_or(&[], Vec::as_slice)
+    }
 }
 
 /// The `top` largest items of a walk, biggest first.
 ///
-/// Directories and files compete in the same list; the suppression rule of the
-/// module documentation decides which descendants survive. Items smaller than
-/// `min_size` never appear, and neither do cloud placeholders: the walk does not
-/// collect them, because none of their bytes are on this disk. Ties are broken
-/// by path, so two runs of the same scan produce the same list.
+/// Sizes are **allocated** bytes — blocks on the disk — because that is what
+/// removing the item gives back. Apparent lengths can exceed the volume (sparse
+/// files, APFS clones) and would make the list lie about what is freeable.
 ///
-/// Nothing is copied until the list is decided: the candidates borrow from the
-/// walk, and only the survivors — at most `top` of them — become owned items.
+/// Directories and files compete in the same list; the drill-down rule of the
+/// module documentation decides which directories speak for their contents.
+/// Items smaller than `min_size` never appear, and neither do cloud
+/// placeholders: the walk does not collect them, because none of their bytes
+/// are on this disk. Ties are broken by path, so two runs of the same scan
+/// produce the same list.
 pub fn largest_items(walk: &WalkResult, top: usize, min_size: u64, volume_id: &VolumeId) -> Vec<LargestItem> {
-    let root = walk.root().map(|node| node.path.as_path());
-    ranked_candidates(walk, min_size, root)
+    let Some(root) = walk.root() else { return Vec::new() };
+    let children = Children::of(walk);
+    let mut reported: Vec<Candidate<'_>> = Vec::new();
+    for child in children.under(&root.path) {
+        report(*child, &children, min_size, &mut reported);
+    }
+    reported.sort_by(|left, right| {
+        right.allocated_bytes.cmp(&left.allocated_bytes).then(left.path.cmp(right.path))
+    });
+    reported
         .into_iter()
-        .fold(Vec::new(), |accepted, candidate| accept(accepted, candidate, top))
-        .into_iter()
+        .take(top)
         .map(|candidate| LargestItem {
             path: candidate.path.to_path_buf(),
-            size_bytes: candidate.size_bytes,
+            size_bytes: candidate.allocated_bytes,
             kind: candidate.kind,
             volume_id: volume_id.clone(),
         })
         .collect()
 }
 
-/// Every item above `min_size`, largest first and then by path.
-fn ranked_candidates<'a>(walk: &'a WalkResult, min_size: u64, root: Option<&Path>) -> Vec<Candidate<'a>> {
-    let dirs = walk.nodes.iter().filter(|node| Some(node.path.as_path()) != root).map(|node| Candidate {
-        path: node.path.as_path(),
-        size_bytes: node.size_bytes,
-        kind: ItemKind::Directory,
-    });
-    let files = walk.files.iter().map(|file| Candidate {
-        path: file.path.as_path(),
-        size_bytes: file.size_bytes,
-        kind: ItemKind::File,
-    });
-    let mut candidates: Vec<Candidate<'a>> =
-        dirs.chain(files).filter(|candidate| candidate.size_bytes >= min_size).collect();
-    candidates.sort_by(|left, right| right.size_bytes.cmp(&left.size_bytes).then(left.path.cmp(right.path)));
-    candidates
-}
-
-/// Add `candidate` to the list when the suppression rule allows it.
-fn accept<'a>(accepted: Vec<Candidate<'a>>, candidate: Candidate<'a>, top: usize) -> Vec<Candidate<'a>> {
-    if accepted.len() >= top || !is_worth_reporting(&accepted, &candidate) {
-        return accepted;
+/// Report `entry` itself, or drill into it when one child dominates it.
+fn report<'a>(entry: Candidate<'a>, children: &Children<'a>, min_size: u64, out: &mut Vec<Candidate<'a>>) {
+    if entry.allocated_bytes < min_size {
+        return;
     }
-    let mut accepted = accepted;
-    accepted.push(candidate);
-    accepted
+    if entry.kind == ItemKind::File {
+        out.push(entry);
+        return;
+    }
+    if !is_dominated(&entry) {
+        out.push(entry);
+        return;
+    }
+    // The dominant child may be a file too small to have been collected, or
+    // the whole subtree may have come from the cache: either way, whatever is
+    // visible below is judged on its own and the rest is too small to list.
+    for child in children.under(entry.path) {
+        report(*child, children, min_size, out);
+    }
 }
 
-/// `true` when no reported ancestor already speaks for this entry.
-fn is_worth_reporting(accepted: &[Candidate<'_>], candidate: &Candidate<'_>) -> bool {
-    nearest_ancestor(accepted, candidate.path)
-        .is_none_or(|ancestor| candidate.size_bytes >= ancestor.size_bytes / DOMINANT_SHARE_DIVISOR)
-}
-
-/// The deepest already reported directory that contains `path`.
-fn nearest_ancestor<'a, 'b>(accepted: &'a [Candidate<'b>], path: &Path) -> Option<&'a Candidate<'b>> {
-    accepted
-        .iter()
-        .filter(|other| other.kind == ItemKind::Directory && path.starts_with(other.path))
-        .filter(|other| other.path != path)
-        .max_by_key(|other| other.path.components().count())
+/// `true` when one item inside `entry` alone holds at least half of it.
+///
+/// The walker records the largest item of every directory from *every* entry it
+/// saw, collected or not, so this answer is the same for a directory walked
+/// this run and for one served from the cache.
+fn is_dominated(entry: &Candidate<'_>) -> bool {
+    entry.allocated_bytes > 0
+        && entry.largest_inside.saturating_mul(DOMINANT_SHARE_DIVISOR) >= entry.allocated_bytes
 }
 
 #[cfg(test)]
@@ -118,6 +162,13 @@ mod tests {
     use crate::model::{ItemKind, VolumeId};
     use crate::scan::walker::{DirNode, FileEntry, WalkResult};
 
+    /// A directory whose biggest item is `largest`: the walker's
+    /// `largest_item_bytes`, which the drill-down rule reads.
+    fn dir_holding(path: &str, size_bytes: u64, largest: u64) -> DirNode {
+        DirNode { largest_item_bytes: largest, ..dir(path, size_bytes) }
+    }
+
+    /// A directory of many small things: nothing inside dominates it.
     fn dir(path: &str, size_bytes: u64) -> DirNode {
         DirNode {
             path: PathBuf::from(path),
@@ -126,7 +177,7 @@ mod tests {
             file_count: 1,
             dir_count: 0,
             dataless_count: 0,
-            largest_item_bytes: size_bytes,
+            largest_item_bytes: size_bytes / 4,
             has_hard_links: false,
             has_truncation: false,
             device: 1,
@@ -183,9 +234,15 @@ mod tests {
     }
 
     #[test]
-    fn a_reported_directory_hides_the_descendants_it_dwarfs() {
+    fn a_directory_nothing_dominates_is_reported_and_hides_its_contents() {
         let walk = result(
-            vec![dir("/vol", 1000), dir("/vol/a", 900), dir("/vol/a/small", 100), dir("/vol/b", 80)],
+            vec![
+                dir("/vol", 1000),
+                dir_holding("/vol/a", 900, 400),
+                dir("/vol/a/x", 400),
+                dir("/vol/a/y", 400),
+                dir("/vol/b", 80),
+            ],
             Vec::new(),
         );
 
@@ -195,50 +252,53 @@ mod tests {
     }
 
     #[test]
-    fn a_descendant_that_is_half_of_its_parent_is_worth_reporting_too() {
+    fn a_dominating_child_is_drilled_into_and_its_siblings_are_judged_on_their_own() {
         let walk = result(
             vec![
                 dir("/vol", 1000),
-                dir("/vol/a", 900),
-                dir("/vol/a/most", 450),
-                dir("/vol/a/most/some", 200),
+                dir_holding("/vol/a", 900, 700),
+                dir_holding("/vol/a/most", 700, 300),
+                dir("/vol/a/most/p", 300),
+                dir("/vol/a/most/q", 300),
+                dir("/vol/a/rest", 150),
             ],
             Vec::new(),
         );
 
         let paths: Vec<_> = reported(&walk, 10, 0).into_iter().map(|item| item.0).collect();
 
-        // `most` is exactly half of `a`, so it is reported; `some` is under half
-        // of `most`, its nearest reported ancestor, so it is not.
-        assert_eq!(paths, vec!["/vol/a".to_owned(), "/vol/a/most".to_owned()]);
+        // `a` is dominated by `most`, so `a` itself is not a line: `most` is
+        // (nothing under it dominates), and the sibling `rest` gets its own line.
+        assert_eq!(paths, vec!["/vol/a/most".to_owned(), "/vol/a/rest".to_owned()]);
     }
 
     #[test]
-    fn a_chain_of_dominant_directories_is_reported_all_the_way_down() {
+    fn a_chain_of_dominant_directories_collapses_to_where_the_bytes_are() {
         let walk = result(
-            vec![dir("/vol", 1000), dir("/vol/a", 900), dir("/vol/a/most", 890), dir("/vol/a/most/all", 880)],
-            Vec::new(),
+            vec![
+                dir("/vol", 1000),
+                dir_holding("/vol/a", 900, 890),
+                dir_holding("/vol/a/most", 890, 880),
+                dir_holding("/vol/a/most/all", 880, 870),
+            ],
+            vec![file("/vol/a/most/all/blob.bin", 870)],
         );
 
         let paths: Vec<_> = reported(&walk, 10, 0).into_iter().map(|item| item.0).collect();
 
-        assert_eq!(
-            paths,
-            vec!["/vol/a".to_owned(), "/vol/a/most".to_owned(), "/vol/a/most/all".to_owned()],
-            "when the space is all in one deep folder, saying so is the point"
-        );
+        assert_eq!(paths, vec!["/vol/a/most/all/blob.bin".to_owned()], "one line, not four, for one file");
     }
 
     #[test]
-    fn a_file_inside_a_reported_directory_follows_the_same_rule() {
+    fn a_file_that_dominates_its_directory_is_the_line_and_a_small_sibling_is_not() {
         let walk = result(
-            vec![dir("/vol", 1000), dir("/vol/a", 900)],
+            vec![dir("/vol", 1000), dir_holding("/vol/a", 900, 800)],
             vec![file("/vol/a/huge.bin", 800), file("/vol/a/tiny.bin", 20)],
         );
 
-        let paths: Vec<_> = reported(&walk, 10, 0).into_iter().map(|item| item.0).collect();
+        let paths: Vec<_> = reported(&walk, 10, 100).into_iter().map(|item| item.0).collect();
 
-        assert_eq!(paths, vec!["/vol/a".to_owned(), "/vol/a/huge.bin".to_owned()]);
+        assert_eq!(paths, vec!["/vol/a/huge.bin".to_owned()]);
     }
 
     #[test]

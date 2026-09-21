@@ -179,9 +179,9 @@ Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
    └ VM                   VM          3.0 GB   swap
 
 Largest consumers on Macintosh HD - Data:
-  312.4 GB  ~/Library/Developer            (Xcode)
-   84.1 GB  ~/Library/Caches
-   61.7 GB  ~/Documents
+  312.4 GB  ~/Library/Developer/Xcode/DerivedData/
+   84.1 GB  ~/Library/Caches/
+   61.7 GB  ~/Documents/
 ```
 
 A disk macOS does not report as internal is marked `(external)` after its size; a partition
@@ -601,7 +601,7 @@ Every `--json` output shares this structure:
       }]
     }],
     "largest_items": [{
-      "path": "/Users/x/Library/Developer",
+      "path": "/Users/x/Library/Developer/Xcode/DerivedData",
       "size_bytes": 312400000000,
       "kind": "directory",
       "volume_id": "disk3s5"
@@ -610,7 +610,7 @@ Every `--json` output shares this structure:
 }
 ```
 
-`purgeable_bytes` is an estimate derived from Foundation's `NSURLVolumeAvailableCapacityForImportantUsageKey` minus `NSURLVolumeAvailableCapacityKey` for the same volume, clamped at 0 (both values come from one Foundation call, so they are mutually consistent; `free_bytes` comes from `diskutil` and may differ by a few MB); the human output labels it as an estimate. Hard links are counted once in `size_bytes`; APFS clones are counted once where detectable (best-effort, completed post-1.0, PRD RF-02). Cloud placeholders whose contents are not on the disk (`SF_DATALESS`: iCloud Drive, Files On-Demand) contribute 0 bytes and are never listed in `largest_items`.
+`purgeable_bytes` is an estimate derived from Foundation's `NSURLVolumeAvailableCapacityForImportantUsageKey` minus `NSURLVolumeAvailableCapacityKey` for the same volume, clamped at 0 (both values come from one Foundation call, so they are mutually consistent; `free_bytes` comes from `diskutil` and may differ by a few MB); the human output labels it as an estimate. `largest_items[].size_bytes` is the **allocated** size on disk — the blocks removing the item would free — not the apparent length, which sparse files inflate. Hard links are counted once; APFS clones are counted once where detectable (best-effort, completed post-1.0, PRD RF-02), so a folder of cloned files can measure more than the volume holds — when a whole-volume walk exceeds the volume's `used_bytes`, the envelope carries the warning `size_exceeds_volume` and the sizes inside are upper bounds. Which items make the list follows one rule: a directory is listed when no single item inside it holds at least half of it; otherwise Broza descends into that item and judges every other child above `--min-size` on its own. Files are leaves. The scanned root is never listed. Cloud placeholders whose contents are not on the disk (`SF_DATALESS`: iCloud Drive, Files On-Demand) contribute 0 bytes and are never listed in `largest_items`.
 
 `volumes[].mount_point` is **optional**: volumes that macOS does not mount, typically `Preboot`
 and `Recovery`, are enumerated with their role and size but without a mount point, and the field
@@ -1044,3 +1044,4 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §3.5/§3.8 (M3, unreleased): every operation that writes to a session holds `<session>/.lock`
   for its duration; a session another Broza holds is reported `session_busy` and left alone.
 - §4.1 (M3, unreleased): `lock_unreadable` store code; a lock Broza cannot open never aborts a multi-session run.
+- §3.1 and §4.2 (M2-D, unreleased): the folder walker is wired into `scan`. `largest_items` is populated (allocated sizes, drill-down rule), `--tree` draws the folder tree, `PATH` arguments scan from those paths on the volume they live on (exit `4` on a protected or unknown volume, `2` when relative), progress is drawn on stderr on a TTY, `size_exceeds_volume` warns about clone overcount. The `folder_scan_pending` warning is gone.

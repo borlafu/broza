@@ -34,7 +34,7 @@ use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::BrozaError;
 use crate::model::{Diagnostic, Volume};
-use crate::ports::Ports;
+use crate::ports::{FileOps, Ports};
 
 /// Where progress updates go while a scan runs.
 pub type ProgressSink<'a> = &'a (dyn Fn(ScanProgress) + Sync);
@@ -103,27 +103,135 @@ fn scan_each(
 }
 
 /// The whole pipeline for one mounted volume.
+/// Scan every `root` the request names, each on the volume it lives on.
+///
+/// `broza scan <PATH>...`: a path is walked from itself down, on the volume
+/// [`MountTable::volume_for`] resolves it to. A path on a volume Broza may not
+/// write to, or on no known volume, is [`BrozaError::TargetNotFound`]; a
+/// relative path is a usage error. Results keep the order of `roots`.
+pub fn scan_paths(
+    roots: &[PathBuf],
+    request: &ScanRequest,
+    ports: &Ports,
+    mounts: &MountTable,
+    progress: Option<ProgressSink<'_>>,
+) -> Result<Vec<VolumeScan>, BrozaError> {
+    let targets = roots
+        .iter()
+        .map(|root| resolve_root(root, mounts, ports.fs.as_ref()).map(|entry| (entry, root.as_path())))
+        .collect::<Result<Vec<_>, BrozaError>>()?;
+    let Some(sink) = progress else {
+        return scan_each_root(&targets, request, ports, None);
+    };
+    let reporter = ProgressReporter::new(sink, ports.clock.as_ref());
+    let scans = scan_each_root(&targets, request, ports, Some(&reporter));
+    reporter.flush();
+    scans
+}
+
+/// The mount entry a scan root belongs to, when Broza may walk it at all.
+fn resolve_root<'a>(
+    root: &Path,
+    mounts: &'a MountTable,
+    fs: &dyn FileOps,
+) -> Result<&'a MountEntry, BrozaError> {
+    if !root.is_absolute() {
+        return Err(BrozaError::Usage(format!("{}: a scan path must be absolute", root.display())));
+    }
+    if !fs.exists(root) {
+        return Err(BrozaError::TargetNotFound(format!("{} does not exist", root.display())));
+    }
+    let entry = mounts
+        .volume_for(root)
+        .ok_or_else(|| BrozaError::TargetNotFound(format!("{} is on no known volume", root.display())))?;
+    if !entry.volume.writable_by_broza {
+        return Err(BrozaError::TargetNotFound(format!(
+            "{} is on {}, a volume Broza only reads about and never walks",
+            root.display(),
+            entry.volume.name
+        )));
+    }
+    Ok(entry)
+}
+
+/// Scan each root, grouped by volume so that one volume's cache is loaded once
+/// and written once however many roots live on it. Results keep root order;
+/// the first failure in that order wins.
+fn scan_each_root(
+    targets: &[(&MountEntry, &Path)],
+    request: &ScanRequest,
+    ports: &Ports,
+    reporter: Option<&ProgressReporter<'_>>,
+) -> Result<Vec<VolumeScan>, BrozaError> {
+    let mut groups: Vec<(&MountEntry, Vec<(usize, &Path)>)> = Vec::new();
+    for (index, (entry, root)) in targets.iter().enumerate() {
+        match groups.iter_mut().find(|(known, _)| known.volume.id == entry.volume.id) {
+            Some((_, roots)) => roots.push((index, root)),
+            None => groups.push((entry, vec![(index, root)])),
+        }
+    }
+    let mut indexed: Vec<(usize, VolumeScan)> = groups
+        .par_iter()
+        .map(|(entry, roots)| scan_roots_on(entry, roots, request, ports, reporter))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<Result<Vec<_>, BrozaError>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+    indexed.sort_by_key(|(index, _)| *index);
+    Ok(indexed.into_iter().map(|(_, scan)| scan).collect())
+}
+
+/// The whole pipeline for one mounted volume: its cache, then every root on it.
 fn scan_mounted(
     entry: &MountEntry,
     request: &ScanRequest,
     ports: &Ports,
     reporter: Option<&ProgressReporter<'_>>,
 ) -> Result<VolumeScan, BrozaError> {
-    let volume_id = entry.volume.id.clone();
+    let mut scans = scan_roots_on(entry, &[(0, entry.mount_point.as_path())], request, ports, reporter)?;
+    scans
+        .pop()
+        .map(|(_, scan)| scan)
+        .ok_or_else(|| BrozaError::Other("a volume scan produced nothing".into()))
+}
+
+/// Walk every `root` of one volume against one loaded store, save it once.
+fn scan_roots_on(
+    entry: &MountEntry,
+    roots: &[(usize, &Path)],
+    request: &ScanRequest,
+    ports: &Ports,
+    reporter: Option<&ProgressReporter<'_>>,
+) -> Result<Vec<(usize, VolumeScan)>, BrozaError> {
     let store_path = request.cache_root.as_ref().map(|root| cache_path_for(root, &entry.volume));
     let store = load_store(store_path.as_deref(), request, ports)?;
-    let walked = walk_volume(&entry.mount_point, request, ports, &store, reporter);
-    save_store(store, store_path.as_deref(), &walked, ports)?;
-    let root = walked.root().cloned().unwrap_or_else(|| unreadable_root(entry));
-    let mut warnings = walked.errors.clone();
+    let walks: Vec<(usize, &Path, WalkResult)> = roots
+        .par_iter()
+        .map(|(index, root)| (*index, *root, walk_volume(root, request, ports, &store, reporter)))
+        .collect();
+    save_store(store, store_path.as_deref(), walks.iter().map(|(_, _, walked)| walked), ports)?;
+    Ok(walks
+        .into_iter()
+        .map(|(index, root, walked)| (index, assemble(entry, root, &walked, request)))
+        .collect())
+}
+
+/// One root's walk, turned into what the report shows.
+fn assemble(entry: &MountEntry, root_path: &Path, walked: &WalkResult, request: &ScanRequest) -> VolumeScan {
+    let volume_id = entry.volume.id.clone();
+    let root = walked.root().cloned().unwrap_or_else(|| unreadable_root(entry, root_path));
+    let mut warnings = collapse_permission_warnings(walked.errors.clone(), request.verbose_warnings);
     warnings.extend(cache_key_warning(request, &entry.volume));
-    Ok(VolumeScan {
-        largest: aggregate::largest_items(&walked, request.top, request.min_size, &volume_id),
+    warnings.extend(overcount_warning(&root, entry));
+    VolumeScan {
+        largest: aggregate::largest_items(walked, request.top, request.min_size, &volume_id),
         tree: aggregate::tree(&root, &walked.nodes, request.depth, request.min_size),
         root,
         warnings,
         volume_id,
-    })
+    }
 }
 
 /// Where this volume's cache lives: under its UUID, or under its BSD name.
@@ -148,6 +256,69 @@ fn cache_key_warning(request: &ScanRequest, volume: &Volume) -> Option<Diagnosti
     Some(Diagnostic { code: cache::BSD_ID_KEY_CODE.to_owned(), message, path: volume.mount_point.clone() })
 }
 
+/// How many refused paths a collapsed warning still names.
+const PERMISSION_EXAMPLES: usize = 5;
+/// Stable code of the one warning that stands in for many refused paths.
+pub const PERMISSION_SUMMARY_CODE: &str = "permission_denied_summary";
+
+/// Fold a flood of `permission_denied` warnings into one that counts them.
+///
+/// A Mac without Full Disk Access refuses hundreds of paths in one scan; one
+/// line per path buries every other warning. The summary keeps the first few
+/// paths as examples; `verbose` keeps them all.
+fn collapse_permission_warnings(warnings: Vec<Diagnostic>, verbose: bool) -> Vec<Diagnostic> {
+    let refused = warnings.iter().filter(|w| w.code == walker::PERMISSION_DENIED_CODE).count();
+    if verbose || refused <= PERMISSION_EXAMPLES {
+        return warnings;
+    }
+    let examples: Vec<String> = warnings
+        .iter()
+        .filter(|w| w.code == walker::PERMISSION_DENIED_CODE)
+        .take(PERMISSION_EXAMPLES)
+        .filter_map(|w| w.path.as_ref().map(|p| p.display().to_string()))
+        .collect();
+    let summary = Diagnostic {
+        code: PERMISSION_SUMMARY_CODE.to_owned(),
+        message: format!(
+            "{refused} locations could not be read (for example {}); their sizes are missing from \
+             the totals. Grant Full Disk Access to include them, or pass -v to list every path.",
+            examples.join(", ")
+        ),
+        path: None,
+    };
+    std::iter::once(summary)
+        .chain(warnings.into_iter().filter(|w| w.code != walker::PERMISSION_DENIED_CODE))
+        .collect()
+}
+
+/// Stable code of the warning raised when a walk measures more than the volume holds.
+pub const OVERCOUNT_CODE: &str = "size_exceeds_volume";
+
+/// The warning a whole-volume walk earns when its total exceeds what macOS says
+/// is in use.
+///
+/// Allocated blocks are summed per file, and an APFS clone reports the blocks it
+/// shares with its original as its own, so a folder of cloned media can measure
+/// bigger than the disk. Broza says so rather than letting the list imply more
+/// space is freeable than exists (`AGENTS.md` §2.7; clone accounting is
+/// post-1.0, PRD RF-02).
+fn overcount_warning(root: &DirNode, entry: &MountEntry) -> Option<Diagnostic> {
+    let used = entry.volume.used_bytes;
+    if root.path != entry.mount_point || used == 0 || root.allocated_bytes <= used {
+        return None;
+    }
+    Some(Diagnostic {
+        code: OVERCOUNT_CODE.to_owned(),
+        message: format!(
+            "{} measures {} bytes but macOS reports {} in use on the volume. Each APFS clone is \
+             counted separately, so the sizes listed are upper bounds until clone accounting \
+             lands; the volume figure also includes snapshots and metadata a walk never sees.",
+            entry.volume.name, root.allocated_bytes, used
+        ),
+        path: Some(entry.mount_point.clone()),
+    })
+}
+
 /// The store for this volume, or an empty one when it is disabled or bypassed.
 fn load_store(path: Option<&Path>, request: &ScanRequest, ports: &Ports) -> Result<CacheStore, BrozaError> {
     let clock = ports.clock.as_ref();
@@ -163,15 +334,15 @@ fn load_store(path: Option<&Path>, request: &ScanRequest, ports: &Ports) -> Resu
 ///
 /// `--no-cache` arrives here with an empty store, so the file is rewritten from
 /// this walk alone: bypassing the cache still leaves a usable one behind.
-fn save_store(
+fn save_store<'a>(
     store: CacheStore,
     path: Option<&Path>,
-    walked: &WalkResult,
+    walked: impl Iterator<Item = &'a WalkResult>,
     ports: &Ports,
 ) -> Result<(), BrozaError> {
     let Some(path) = path else { return Ok(()) };
     let now = ports.clock.now();
-    let fresh = walked.nodes.iter().filter_map(|node| DirRecord::of(node, now));
+    let fresh = walked.flat_map(|walk| walk.nodes.iter()).filter_map(|node| DirRecord::of(node, now));
     let updated = store.with_records(fresh);
     if !updated.has_changes() {
         // Nothing the file does not already say. On a big volume this is tens
@@ -213,10 +384,10 @@ fn walk_volume(
     walk(root, &options, ports.fs.as_ref())
 }
 
-/// The node reported for a volume whose own mount point could not be read.
-fn unreadable_root(entry: &MountEntry) -> DirNode {
+/// The node reported for a root that could not be read at all.
+fn unreadable_root(entry: &MountEntry, root: &Path) -> DirNode {
     DirNode {
-        path: entry.mount_point.clone(),
+        path: root.to_path_buf(),
         size_bytes: 0,
         allocated_bytes: 0,
         file_count: 0,

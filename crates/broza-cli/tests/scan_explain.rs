@@ -92,14 +92,6 @@ fn explain_a_path_json_matches_its_snapshot() {
 }
 
 #[test]
-fn largest_items_is_empty_until_the_walker_lands() {
-    let envelope = json_of(&["scan", "--json"]);
-
-    assert_eq!(envelope["data"]["largest_items"], serde_json::json!([]));
-    assert!(envelope["data"]["disks"].as_array().is_some_and(|disks| !disks.is_empty()));
-}
-
-#[test]
 fn purgeable_is_reported_and_never_added_to_free() {
     let envelope = json_of(&["scan", "--json"]);
     let boot = envelope["data"]["disks"][0]["containers"][2].clone();
@@ -176,30 +168,47 @@ fn csv_is_rejected_on_explain() {
 }
 
 #[test]
-fn the_folder_flags_are_accepted_with_a_warning_and_never_an_error() {
-    let home = temp_home();
-    let output =
-        broza(home.path()).args(["scan", "--tree", "--top", "5"]).output().unwrap_or_else(|e| panic!("{e}"));
+fn scan_lists_the_largest_consumers_of_the_data_volume() {
+    let text = stdout_of(&["scan", "--volume", "Data"]);
 
-    assert_eq!(output.status.code(), Some(0));
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("warning:"), "{stderr}");
-    assert!(stderr.contains("next release"), "{stderr}");
-    assert!(stderr.contains("--tree") && stderr.contains("--top"), "{stderr}");
+    assert!(text.contains("Largest consumers on Data:"), "{text}");
+    assert!(text.contains("212.4 GB  /System/Volumes/Data/Users/dana/Library/Developer"), "{text}");
 }
 
 #[test]
-fn the_folder_scan_warning_reaches_a_json_consumer_too() {
-    let envelope = json_of(&["scan", "--json", "--tree"]);
+fn scan_json_carries_the_largest_items_with_their_volume() {
+    let envelope = json_of(&["scan", "--json", "--volume", "Data", "--top", "2"]);
 
-    let codes: Vec<&str> = envelope["warnings"]
-        .as_array()
-        .map(|warnings| warnings.iter().filter_map(|warning| warning["code"].as_str()).collect())
-        .unwrap_or_default();
-    assert!(codes.contains(&"folder_scan_pending"), "{codes:?}");
-    assert_eq!(envelope["data"]["largest_items"], serde_json::json!([]));
-    // A warning never changes the exit code (`docs/cli-spec.md` §4.1).
+    let items = envelope["data"]["largest_items"].as_array().cloned().unwrap_or_default();
+    assert_eq!(items.len(), 2, "{items:?}");
+    assert_eq!(items[0]["volume_id"], "disk3s5");
+    assert!(items[0]["size_bytes"].as_u64().unwrap() >= items[1]["size_bytes"].as_u64().unwrap());
     assert_eq!(envelope["errors"], serde_json::json!([]));
+}
+
+#[test]
+fn scan_tree_draws_the_folder_tree_to_the_requested_depth() {
+    let text = stdout_of(&["scan", "--volume", "Data", "--tree", "--depth", "1", "--min-size", "1GB"]);
+
+    assert!(text.contains("Folder tree of Data:"), "{text}");
+    assert!(text.contains("100.0%  /System/Volumes/Data/"), "{text}");
+    assert!(text.contains("Users/"), "{text}");
+    assert!(!text.contains("dana/"), "depth 1 stops below the first level: {text}");
+}
+
+#[test]
+fn scan_of_a_path_walks_only_that_path() {
+    let text = stdout_of(&["scan", "/System/Volumes/Data/Users/dana/Documents", "--min-size", "1GB"]);
+
+    assert!(text.contains("61.7 GB  /System/Volumes/Data/Users/dana/Documents/thesis.pdf"), "{text}");
+    assert!(!text.contains("DerivedData"), "{text}");
+}
+
+#[test]
+fn scan_of_a_path_on_the_sealed_volume_is_refused() {
+    let (code, stderr) = failure_of(&["scan", "/System/Library"]);
+
+    assert_eq!(code, Some(4), "{stderr}");
 }
 
 #[test]

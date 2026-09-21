@@ -12,11 +12,15 @@
 //!
 //! The volumes table of each container lives in [`volumes`].
 
+pub mod folders;
 pub mod volumes;
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use broza::model::{Container, Disk, FsKind, ScanReport};
+
+use crate::commands::scan::folders::VolumeTree;
 
 use crate::output::bar::{Fullness, fullness, usage_bar, usage_percentage};
 use crate::output::{ColorPolicy, Style, format_bytes, paint};
@@ -42,6 +46,45 @@ pub fn render(report: &ScanReport, policy: ColorPolicy) -> String {
         return NO_DISKS.to_owned();
     }
     report.disks.iter().map(|disk| render_disk(disk, policy)).collect::<Vec<_>>().join("\n\n")
+}
+
+/// What the folder half of the output needs beyond the report.
+pub struct Folders<'a> {
+    /// One tree per walked volume.
+    pub trees: &'a [VolumeTree],
+    /// `--tree`: draw the trees instead of the consumers list.
+    pub tree_view: bool,
+    /// The walk measured more than the volume holds: say the sizes are upper bounds.
+    pub upper_bounds: bool,
+    /// Home directory, so paths under it print as `~/…`.
+    pub home: Option<&'a Path>,
+}
+
+/// What is printed when the selection left nothing Broza may walk.
+const NOTHING_WALKED: &str =
+    "No folder scan: none of the selected volumes is one Broza may walk (only data and user volumes are).";
+/// The line that keeps the consumers list honest under clone overcount.
+const UPPER_BOUNDS_NOTE: &str = "Sizes below are upper bounds: this volume holds APFS clones, which are \
+                                 counted separately (see the warning on stderr).";
+
+/// The disk map followed by the folder half: consumers list, or trees with `--tree`.
+pub fn render_with_folders(report: &ScanReport, folders: &Folders<'_>, policy: ColorPolicy) -> String {
+    let map = render(report, policy);
+    if report.disks.is_empty() {
+        return map;
+    }
+    if folders.trees.is_empty() {
+        return format!("{map}\n\n{NOTHING_WALKED}");
+    }
+    let below = if folders.tree_view {
+        folders::render_trees(folders.trees, folders.home)
+    } else {
+        folders::render_largest(&report.largest_items, folders.trees, folders.home)
+    };
+    if folders.upper_bounds {
+        return format!("{map}\n\n{UPPER_BOUNDS_NOTE}\n\n{below}");
+    }
+    format!("{map}\n\n{below}")
 }
 
 /// One physical disk and every container on it.

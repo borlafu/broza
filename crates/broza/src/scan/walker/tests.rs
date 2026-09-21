@@ -195,8 +195,11 @@ fn a_depth_limit_hides_deep_nodes_without_losing_their_bytes() {
 
 #[test]
 fn files_are_collected_only_above_the_reporting_threshold() {
+    // The threshold is in allocated bytes, like every size the report prints;
+    // the fake allocates in 4 KiB units, so only the 5000-byte file (8192
+    // allocated) clears a 5000-byte threshold.
     let options = WalkOptions {
-        report_files_min_size: Some(2500),
+        report_files_min_size: Some(5000),
         report_files_top: KEEP_FILES,
         ..WalkOptions::default()
     };
@@ -204,7 +207,7 @@ fn files_are_collected_only_above_the_reporting_threshold() {
     let result = walk_sample(&sample(), &options);
 
     let collected: Vec<_> = result.files.iter().map(|file| (file.path.clone(), file.size_bytes)).collect();
-    assert_eq!(collected, vec![(PathBuf::from("/vol/a/sub/f3"), 3000), (PathBuf::from("/vol/b/big"), 5000)]);
+    assert_eq!(collected, vec![(PathBuf::from("/vol/b/big"), 5000)]);
 }
 
 #[test]
@@ -313,13 +316,15 @@ fn two_names_of_one_file_always_credit_the_same_directory() {
 }
 
 #[test]
-fn a_root_that_is_itself_excluded_reports_nothing() {
+fn a_root_that_is_itself_excluded_is_still_walked_when_named() {
+    // Naming an excluded folder is how the user asks to see inside it; the
+    // exclusion applies to what is met *below* a root, never to the root.
     let options = WalkOptions { exclude: vec![PathBuf::from("/vol")], ..WalkOptions::default() };
 
     let result = walk_sample(&sample(), &options);
 
-    assert!(result.nodes.is_empty(), "{:?}", result.paths());
-    assert!(result.files.is_empty());
+    assert!(!result.nodes.is_empty(), "the named root is walked");
+    assert_eq!(node(&result, "/vol").size_bytes, 11_000);
     assert!(result.errors.is_empty(), "an exclusion is a choice, not a failure");
 }
 
@@ -346,4 +351,80 @@ fn progress_counts_every_entry_and_every_byte() {
 
     assert_eq!(reporter.snapshot().entries_scanned, 8);
     assert_eq!(reporter.snapshot().bytes_scanned, node(&result, "/vol").size_bytes);
+}
+
+#[test]
+fn a_discounted_hard_link_is_not_a_directory_s_biggest_item() {
+    // `/vol/mid` holds ten real 90-byte files and one name of a big file whose
+    // other name, in `/vol/aaa`, wins the credit. The link must not pose as a
+    // dominant item of `mid`: nothing there is bigger than one block.
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/aaa/keeper.bin", &[]);
+    fs.set_size("/vol/aaa/keeper.bin", 100_000);
+    fs.add_hard_link("/vol/aaa/keeper.bin", "/vol/mid/alias.bin");
+    for index in 0..10 {
+        fs.add_file(format!("/vol/mid/real{index}.bin"), &[]);
+        fs.set_size(format!("/vol/mid/real{index}.bin"), 90);
+    }
+
+    let result = walk_sample(&fs, &WalkOptions::default());
+
+    let mid = node(&result, "/vol/mid");
+    assert_eq!(mid.largest_item_bytes, 4096, "one 4 KiB block: the biggest *real* file");
+    assert!(mid.largest_item_bytes * 2 < mid.allocated_bytes, "so nothing dominates `mid`");
+    let aaa = node(&result, "/vol/aaa");
+    assert_eq!(aaa.largest_item_bytes, aaa.allocated_bytes, "the credited name is the whole directory");
+}
+
+#[test]
+fn a_directory_holding_only_a_discounted_link_has_no_item_at_all() {
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/aaa/keeper.bin", &[]);
+    fs.set_size("/vol/aaa/keeper.bin", 100_000);
+    fs.add_hard_link("/vol/aaa/keeper.bin", "/vol/zzz/alias.bin");
+
+    let result = walk_sample(&fs, &WalkOptions::default());
+
+    let zzz = node(&result, "/vol/zzz");
+    assert_eq!(zzz.allocated_bytes, 0, "the bytes were credited to `aaa`");
+    assert_eq!(zzz.largest_item_bytes, 0);
+}
+
+#[test]
+fn a_depth_limit_keeps_the_largest_item_of_what_it_hides() {
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/a/b/c/huge.bin", &[]);
+    fs.set_size("/vol/a/b/c/huge.bin", 900_000);
+    fs.add_file("/vol/a/small.bin", &[]);
+    fs.set_size("/vol/a/small.bin", 10);
+    let options = WalkOptions { max_depth: Some(1), ..WalkOptions::default() };
+
+    let limited = walk_sample(&fs, &options);
+    let full = walk_sample(&fs, &WalkOptions::default());
+
+    assert_eq!(
+        node(&limited, "/vol/a").largest_item_bytes,
+        node(&full, "/vol/a").largest_item_bytes,
+        "`max_depth` limits what is reported, never what is measured"
+    );
+}
+
+#[test]
+fn a_depth_limit_does_not_resurrect_a_discounted_link_below_it() {
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    fs.add_file("/vol/aaa/keeper.bin", &[]);
+    fs.set_size("/vol/aaa/keeper.bin", 1_000_000);
+    fs.add_hard_link("/vol/aaa/keeper.bin", "/vol/mid/deep/alias.bin");
+    for name in ["half1.bin", "half2.bin"] {
+        fs.add_file(format!("/vol/mid/deep/{name}"), &[]);
+        fs.set_size(format!("/vol/mid/deep/{name}"), 300_000);
+    }
+    let options = WalkOptions { max_depth: Some(1), ..WalkOptions::default() };
+
+    let limited = walk_sample(&fs, &options);
+    let full = walk_sample(&fs, &WalkOptions::default());
+
+    assert_eq!(node(&limited, "/vol/mid").largest_item_bytes, node(&full, "/vol/mid").largest_item_bytes);
+    assert!(node(&limited, "/vol/mid").largest_item_bytes <= node(&limited, "/vol/mid").allocated_bytes);
+    assert!(limited.nodes.iter().all(|n| n.path != Path::new("/vol/mid/deep")), "hidden stays hidden");
 }

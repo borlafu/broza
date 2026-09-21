@@ -25,7 +25,7 @@ pub struct TreeNode {
     pub name: String,
     /// Absolute path of the directory.
     pub path: PathBuf,
-    /// Apparent bytes of the subtree.
+    /// Allocated bytes of the subtree: what is really on the disk.
     pub size_bytes: u64,
     /// Share of the parent, in percent; `100.0` for the root, `0.0` when the
     /// parent holds no bytes at all.
@@ -74,16 +74,18 @@ fn build(
     } else {
         children_of(node, min_size, index)
             .into_iter()
-            .map(|child| build(child, share(child.size_bytes, node.size_bytes), depth - 1, min_size, index))
+            .map(|child| {
+                build(child, share(child.allocated_bytes, node.allocated_bytes), depth - 1, min_size, index)
+            })
             .collect()
     };
-    let listed: u64 = children.iter().map(|child| child.size_bytes).sum();
+    let listed_allocated: u64 = children.iter().map(|child| child.size_bytes).sum();
     TreeNode {
         name: name_of(&node.path),
         path: node.path.clone(),
-        size_bytes: node.size_bytes,
+        size_bytes: node.allocated_bytes,
         percent_of_parent,
-        other_bytes: node.size_bytes.saturating_sub(listed),
+        other_bytes: node.allocated_bytes.saturating_sub(listed_allocated),
         children,
     }
 }
@@ -96,9 +98,11 @@ fn children_of<'a>(
 ) -> Vec<&'a DirNode> {
     let mut children: Vec<&DirNode> = index
         .get(node.path.as_path())
-        .map(|children| children.iter().copied().filter(|child| child.size_bytes >= min_size).collect())
+        .map(|children| children.iter().copied().filter(|child| child.allocated_bytes >= min_size).collect())
         .unwrap_or_default();
-    children.sort_by(|left, right| right.size_bytes.cmp(&left.size_bytes).then(left.path.cmp(&right.path)));
+    children.sort_by(|left, right| {
+        right.allocated_bytes.cmp(&left.allocated_bytes).then(left.path.cmp(&right.path))
+    });
     children
 }
 

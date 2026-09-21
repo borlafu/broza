@@ -60,6 +60,14 @@ const FIRMLINKS: &[u8] = b"/Applications\tApplications\n\
 /opt\topt\n\
 /private\tprivate\n\
 /usr/local\tusr/local\n";
+/// A handful of sized files on the Data volume, so a replayed `scan` has
+/// consumers to list. Sizes are round on purpose: they are a fixture, not a
+/// recording, and the snapshot should read as one.
+const RECORDED_FILES: [(&str, u64); 3] = [
+    ("/System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o", 212_400_000_000),
+    ("/System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db", 84_100_000_000),
+    ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", 61_700_000_000),
+];
 /// Directories a test may ask `explain` about; the firmlinks send them to Data.
 const FIRMLINKED_DIRS: [&str; 5] = ["/Applications", "/Library", "/Users", "/opt", "/private"];
 
@@ -87,6 +95,10 @@ fn filesystem() -> FakeFileOps {
     fs.add_file(FIRMLINKS_PATH, FIRMLINKS);
     for directory in FIRMLINKED_DIRS {
         fs.add_dir(directory);
+    }
+    for (path, size_bytes) in RECORDED_FILES {
+        fs.add_file(path, &[]);
+        fs.set_size(path, size_bytes);
     }
     fs
 }

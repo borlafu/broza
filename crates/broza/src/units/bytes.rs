@@ -72,6 +72,10 @@ impl FromStr for ByteSize {
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         let trimmed = raw.trim();
+        if trimmed == "0" {
+            // Zero needs no unit: `--min-size 0` means "everything".
+            return Ok(Self(0));
+        }
         let invalid = |reason: &str| BrozaError::Usage(format!("invalid size `{raw}`: {reason}"));
         let boundary = trimmed
             .find(|c: char| !c.is_ascii_digit() && c != '.')

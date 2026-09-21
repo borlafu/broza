@@ -331,6 +331,40 @@ mod tests {
         assert!(entries.iter().any(|(_, meta)| meta.is_dir));
     }
 
+    fn sane_metadata() -> crate::ports::EntryMetadata {
+        crate::ports::EntryMetadata {
+            device: 16_777_232,
+            inode: 42,
+            size_bytes: 1234,
+            allocated_bytes: 4096,
+            link_count: 1,
+            is_dir: false,
+            is_symlink: false,
+            is_dataless: false,
+            modified: jiff::Timestamp::from_second(1_700_000_000).ok(),
+            accessed: None,
+        }
+    }
+
+    #[test]
+    fn an_entry_that_could_not_have_come_from_this_filesystem_is_refused() {
+        use crate::ports::EntryMetadata;
+
+        assert!(super::is_plausible(&sane_metadata()));
+        assert!(!super::is_plausible(&EntryMetadata { inode: 0, ..sane_metadata() }));
+        assert!(!super::is_plausible(&EntryMetadata { device: 0, ..sane_metadata() }));
+        assert!(!super::is_plausible(&EntryMetadata { link_count: 0, ..sane_metadata() }));
+        let far_future = jiff::Timestamp::from_second(super::IMPLAUSIBLE_AFTER + 1).ok();
+        assert!(!super::is_plausible(&EntryMetadata { modified: far_future, ..sane_metadata() }));
+    }
+
+    #[test]
+    fn an_entry_with_no_readable_time_is_still_plausible() {
+        use crate::ports::EntryMetadata;
+
+        assert!(super::is_plausible(&EntryMetadata { modified: None, ..sane_metadata() }));
+    }
+
     #[test]
     fn a_reader_that_was_given_up_on_answers_nothing() {
         let _state = keep_state();

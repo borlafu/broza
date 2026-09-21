@@ -11,6 +11,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::BrozaError;
 use crate::adapters::io_error::from_io;
@@ -65,10 +66,12 @@ impl FileOps for StdFileOps {
             return Ok(entries.into_iter().map(|(child, meta)| (child, Ok(meta))).collect());
         }
         // The kernel would not answer in bulk here: pair up `readdir` and
-        // `lstat` like everybody else.
+        // `lstat` like everybody else, but spread the `lstat`s over the pool.
+        // They are independent, and on a cold cache each one waits on the disk
+        // rather than on a core.
         let children = self.read_dir(path)?;
         Ok(children
-            .into_iter()
+            .into_par_iter()
             .map(|child| {
                 let meta = self.metadata(&child);
                 (child, meta)

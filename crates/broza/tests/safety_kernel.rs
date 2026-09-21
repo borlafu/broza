@@ -2,9 +2,12 @@
 //!
 //! Checks 1 to 7 of `docs/cli-spec.md` §3.4: paths, volumes, roots, exclusions,
 //! sizes and inform-only. The confirmation half lives in `safety_confirmation.rs`.
-//! Only the public API is used here, exactly as `broza-cli` will use it.
+//! Only the public API is used here, exactly as `broza-cli` will use it, and only
+//! the `test-support` feature exposes `broza::testing`: without it this file
+//! compiles to nothing.
+#![cfg(feature = "test-support")]
 
-mod fakes;
+mod scenario;
 
 use std::path::{Path, PathBuf};
 
@@ -18,23 +21,24 @@ use broza::ports::Answer;
 use broza::safety::guard::{Verdict, WriteRequest, approve};
 use broza::safety::rejection::{GuardRejection, PolicyError};
 use broza::safety::{Exclusions, RejectReason};
+use broza::testing::FakePrompter;
 
-use fakes::{
-    CACHE, FakePrompter, HOME, OTHER, applying, approve_paths, caches, exit_code, finding, fs, mount_table,
-    pending_or_panic, planned, rejection, session,
+use scenario::{
+    CACHE, HOME, OTHER, applying, approve_paths, caches, exit_code, finding, fs, mounts, pending_or_panic,
+    planned, rejection, session,
 };
 
 #[test]
 fn a_firmlinked_home_path_resolves_to_the_data_volume_and_is_approved() {
     let verdict = approve_paths(&[(CACHE, 10)], &applying());
     assert!(matches!(verdict, Ok(Verdict::NeedsConfirmation(_))), "{verdict:?}");
-    assert_eq!(mount_table().role_for(Path::new(CACHE)), Some(VolumeRole::Data));
+    assert_eq!(mounts().role_for(Path::new(CACHE)), Some(VolumeRole::Data));
 }
 
 #[test]
 fn the_data_volume_spelling_of_a_home_path_is_approved_too() {
     let twin = "/System/Volumes/Data/Users/dana/Library/Caches/twin.cache";
-    assert_eq!(mount_table().role_for(Path::new(twin)), Some(VolumeRole::Data));
+    assert_eq!(mounts().role_for(Path::new(twin)), Some(VolumeRole::Data));
     let verdict = approve_paths(&[(twin, 10)], &applying());
     assert!(matches!(verdict, Ok(Verdict::NeedsConfirmation(_))), "{verdict:?}");
 }
@@ -80,7 +84,7 @@ fn a_path_that_walks_through_a_symlink_with_dot_dot_is_rejected() {
 #[test]
 fn a_path_outside_the_allowlist_is_rejected() {
     let outside = "/Users/other/Documents/secret.txt";
-    assert_eq!(mount_table().role_for(Path::new(outside)), Some(VolumeRole::Data));
+    assert_eq!(mounts().role_for(Path::new(outside)), Some(VolumeRole::Data));
     let rejection = rejection(&[(outside, 1)], &applying());
     assert_eq!(rejection, GuardRejection::OutsideAllowedRoots(outside.into()));
     assert_eq!(exit_code(rejection), ExitCode::UsageError);
@@ -97,7 +101,7 @@ fn a_home_that_is_not_a_home_directory_is_refused() {
     let findings = caches(&[(CACHE, 10)]);
     let plan = planned(&findings, &Selection::everything()).plan;
     let request = WriteRequest { apply: true, tty: true, ..WriteRequest::new("/Users") };
-    let rejection = approve(plan, &findings, &request, &mount_table(), &fs())
+    let rejection = approve(plan, &findings, &request, &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("`/Users` must not be an allowed root"));
     assert!(matches!(rejection, GuardRejection::InvalidRoot { .. }), "{rejection}");
@@ -109,7 +113,7 @@ fn a_trash_at_the_root_of_a_non_system_volume_is_approved() {
     let findings =
         vec![finding("trash.volumes", Category::Trash, &[("/Volumes/External/.Trashes/501/old.dmg", 60)])];
     let plan = planned(&findings, &Selection::everything()).plan;
-    let verdict = approve(plan, &findings, &applying(), &mount_table(), &fs());
+    let verdict = approve(plan, &findings, &applying(), &mounts(), &fs());
     assert!(matches!(verdict, Ok(Verdict::NeedsConfirmation(_))), "{verdict:?}");
 }
 
@@ -119,7 +123,7 @@ fn a_trashes_directory_buried_in_the_system_tree_is_rejected() {
     let victim = "/System/Volumes/Data/private/var/db/.Trashes/victim";
     let findings = vec![finding("trash.volumes", Category::Trash, &[(victim, 70)])];
     let plan = planned(&findings, &Selection::everything()).plan;
-    let rejection = approve(plan, &findings, &applying(), &mount_table(), &fs())
+    let rejection = approve(plan, &findings, &applying(), &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("a buried .Trashes is not a trash folder"));
     assert_eq!(rejection, GuardRejection::OutsideAllowedRoots(victim.into()));
@@ -176,7 +180,7 @@ fn a_vanished_path_is_skipped_and_the_rest_of_the_plan_survives() {
 #[test]
 fn the_token_carries_the_checked_path_and_its_identity() {
     let approved = pending_or_panic(&applying())
-        .confirm(&FakePrompter::answering(Answer::Yes))
+        .confirm(&FakePrompter::always(Answer::Yes))
         .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(approved.plan().items()[0].path, PathBuf::from(CACHE));
     assert_eq!(approved.items()[0].path, PathBuf::from(CACHE));
@@ -212,7 +216,7 @@ fn an_inform_only_selection_rejects_the_whole_plan_under_apply() {
 
     // Under --apply, having asked for it at all refuses the whole plan.
     let request = WriteRequest { informed_only: outcome.informed_only, ..applying() };
-    let rejection = approve(outcome.plan, std::slice::from_ref(&cloud), &request, &mount_table(), &fs())
+    let rejection = approve(outcome.plan, std::slice::from_ref(&cloud), &request, &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("an inform-only selection must be refused"));
     assert_eq!(rejection, GuardRejection::InformOnlySelected(cloud.id().clone()));
@@ -249,7 +253,7 @@ fn an_inform_only_item_forced_into_a_plan_rejects_it_at_check_seven() {
         }],
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    let rejection = approve(forced, &[docker], &applying(), &mount_table(), &fs())
+    let rejection = approve(forced, &[docker], &applying(), &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("an inform-only item must reject the plan"));
     assert_eq!(rejection, GuardRejection::InformOnlyItem(CACHE.into()));
@@ -271,7 +275,7 @@ fn a_red_finding_is_rejected_before_any_path_is_touched() {
     .unwrap_or_else(|error| panic!("{error}"));
     let findings = vec![red];
     let plan = planned(&findings, &Selection::everything()).plan;
-    let rejection = approve(plan, &findings, &applying(), &mount_table(), &fs())
+    let rejection = approve(plan, &findings, &applying(), &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("a red selection must be refused"));
     assert_eq!(
@@ -289,14 +293,14 @@ fn a_plan_and_the_purge_flag_must_agree() {
     let findings = caches(&[(CACHE, 10)]);
     let plan = planned(&findings, &Selection::everything()).plan;
     let request = WriteRequest { purge: true, ..applying() };
-    let rejection = approve(plan, &findings, &request, &mount_table(), &fs())
+    let rejection = approve(plan, &findings, &request, &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("a quarantine item under --purge is inconsistent"));
     assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
 
     let purging = Selection { purge: true, ..Selection::everything() };
     let purged = planned(&findings, &purging).plan;
-    let rejection = approve(purged, &findings, &applying(), &mount_table(), &fs())
+    let rejection = approve(purged, &findings, &applying(), &mounts(), &fs())
         .err()
         .unwrap_or_else(|| panic!("a purge item without --purge is inconsistent"));
     assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");

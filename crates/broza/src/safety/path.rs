@@ -73,17 +73,20 @@ fn reject_symlinked_components(path: &Path, fs: &dyn FileOps) -> Result<EntryMet
 mod tests {
     use super::canonicalize_no_follow;
     use crate::safety::rejection::GuardRejection;
-    use crate::safety::test_fs::MemFs;
+    use crate::testing::FakeFileOps;
     use std::path::{Path, PathBuf};
 
-    fn tree() -> MemFs {
-        MemFs::new()
-            .dir("/Users/dana/Library/Caches")
-            .file("/Users/dana/Library/Caches/app.cache", 10)
-            .symlink("/Users/dana/Library/Caches/link")
-            .symlink("/Users/dana/Library/evil")
-            .file("/Users/dana/linked/inside.cache", 10)
-            .symlink("/Users/dana/linked")
+    /// A home on the Data volume with two symlinks in it.
+    fn tree() -> FakeFileOps {
+        FakeFileOps::new()
+            .with_root("/", 1)
+            .with_root("/Users", 2)
+            .with_dir("/Users/dana/Library/Caches")
+            .with_sized_file("/Users/dana/Library/Caches/app.cache", 10)
+            .with_symlink("/Users/dana/Library/Caches/link", "/Users/dana/Library/Caches/app.cache")
+            .with_symlink("/Users/dana/Library/evil", "/Users/dana/Library")
+            .with_dir("/Users/dana/target")
+            .with_symlink("/Users/dana/linked", "/Users/dana/target")
     }
 
     #[test]
@@ -116,7 +119,8 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(resolved.path, PathBuf::from("/Users/dana/Library/Caches/app.cache"));
         assert_eq!(resolved.metadata.size_bytes, 10);
-        assert_eq!(resolved.metadata.inode, 1);
+        assert_eq!(resolved.metadata.device, 2, "the home lives on the Data volume");
+        assert!(resolved.metadata.inode > 0);
     }
 
     #[test]

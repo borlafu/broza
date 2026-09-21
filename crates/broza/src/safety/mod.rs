@@ -60,8 +60,6 @@ pub mod policy;
 pub mod rejection;
 pub mod roles;
 pub mod roots;
-#[cfg(test)]
-pub(crate) mod test_fs;
 
 pub use exclusions::Exclusions;
 pub use exit_code::ExitCode;

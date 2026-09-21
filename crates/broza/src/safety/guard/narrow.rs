@@ -68,8 +68,8 @@ mod tests {
     use crate::safety::guard::token::issue;
     use crate::safety::guard::{Approved, ApprovedItem, ApprovedPlan, Write};
     use crate::safety::rejection::GuardRejection;
-    use crate::safety::test_fs::MemFs;
     use crate::scan::{MountEntry, MountTable};
+    use crate::testing::FakeFileOps;
     use std::path::{Path, PathBuf};
 
     const STORE: &str = "/Users/dana/.local/share/broza/quarantine";
@@ -113,8 +113,11 @@ mod tests {
         }])
     }
 
-    fn store_fs() -> MemFs {
-        MemFs::new().dir(STORE).file(format!("{STORE}/cln_20260921103608_a1b2/items/1/a"), 5)
+    fn store_fs() -> FakeFileOps {
+        FakeFileOps::new()
+            .with_root("/", 1)
+            .with_dir(STORE)
+            .with_sized_file(format!("{STORE}/cln_20260921103608_a1b2/items/1/a"), 5)
     }
 
     #[test]

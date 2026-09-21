@@ -284,8 +284,8 @@ mod tests {
     };
     use crate::safety::guard::WriteRequest;
     use crate::safety::rejection::GuardRejection;
-    use crate::safety::test_fs::MemFs;
     use crate::scan::{MountEntry, MountTable};
+    use crate::testing::FakeFileOps;
     use std::path::PathBuf;
 
     const STORE: &str = "/Users/dana/.local/share/broza/quarantine";
@@ -350,16 +350,21 @@ mod tests {
         let applied = plan(Vec::new())
             .into_applied(Some(PathBuf::from(STORE)))
             .unwrap_or_else(|error| panic!("{error}"));
-        let rejection =
-            approve(applied, &[], &WriteRequest::new("/Users/dana"), &table(VolumeRole::Data), &MemFs::new())
-                .err()
-                .unwrap_or_else(|| panic!("an applied plan without --apply must be refused"));
+        let rejection = approve(
+            applied,
+            &[],
+            &WriteRequest::new("/Users/dana"),
+            &table(VolumeRole::Data),
+            &FakeFileOps::new(),
+        )
+        .err()
+        .unwrap_or_else(|| panic!("an applied plan without --apply must be refused"));
         assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
     }
 
     #[test]
     fn an_item_whose_finding_is_missing_is_refused() {
-        let fs = MemFs::new().file(CACHE, 1);
+        let fs = FakeFileOps::new().with_root("/", 1).with_sized_file(CACHE, 1);
         let rejection = approve(
             plan(vec![item(CACHE, Action::Quarantine)]),
             &[],
@@ -374,7 +379,7 @@ mod tests {
 
     #[test]
     fn a_path_on_no_known_volume_is_refused() {
-        let fs = MemFs::new().file(CACHE, 1);
+        let fs = FakeFileOps::new().with_root("/", 1).with_sized_file(CACHE, 1);
         let findings = [finding("user-cache.app", Category::UserCache)];
         let rejection = approve(
             plan(vec![item(CACHE, Action::Quarantine)]),

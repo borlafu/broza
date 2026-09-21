@@ -28,6 +28,7 @@ use crate::testing::fake_tree::{NodeKind, Tree};
 use crate::testing::sync::lock;
 
 mod builders;
+mod exclusive;
 
 /// An in-memory filesystem.
 ///
@@ -44,9 +45,9 @@ pub struct FakeFileOps {
     /// The tree, behind a lock so the fake can be shared as `Arc<dyn FileOps>`.
     pub(super) tree: Mutex<Tree>,
     /// Paths currently locked by a live [`FsLock`] guard.
-    locks: Arc<Mutex<BTreeSet<PathBuf>>>,
+    pub(super) locks: Arc<Mutex<BTreeSet<PathBuf>>>,
     /// Prefixes whose filesystem has no `renamex_np`, as exFAT does not.
-    no_exclusive_rename: Mutex<Vec<PathBuf>>,
+    pub(super) no_exclusive_rename: Mutex<Vec<PathBuf>>,
 }
 
 impl Default for FakeFileOps {
@@ -63,35 +64,6 @@ impl FakeFileOps {
     /// An empty filesystem with no roots.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Make everything under `prefix` answer `ENOTSUP` to an exclusive rename.
-    ///
-    /// What exFAT and several network filesystems do: the rename still happens,
-    /// but only after a separate existence check, and the caller is told so
-    /// with [`RenameMode::CheckedFallback`].
-    pub fn deny_exclusive_rename(&self, prefix: impl AsRef<Path>) {
-        lock(&self.no_exclusive_rename).push(prefix.as_ref().to_path_buf());
-    }
-
-    /// Builder form of [`FakeFileOps::deny_exclusive_rename`].
-    #[must_use]
-    pub fn with_denied_exclusive_rename(self, prefix: impl AsRef<Path>) -> Self {
-        self.deny_exclusive_rename(prefix);
-        self
-    }
-
-    /// `true` when `path` is currently locked by a live guard.
-    pub fn is_locked(&self, path: impl AsRef<Path>) -> bool {
-        lock(&self.locks).contains(path.as_ref())
-    }
-
-    /// Which kind of exclusive rename this destination supports.
-    fn rename_mode_for(&self, destination: &Path) -> RenameMode {
-        if lock(&self.no_exclusive_rename).iter().any(|prefix| destination.starts_with(prefix)) {
-            return RenameMode::CheckedFallback;
-        }
-        RenameMode::Exclusive
     }
 
     /// Insert `kind` at `path`, creating the parents a test did not spell out.
@@ -278,7 +250,7 @@ fn rename_in(tree: &mut Tree, from: &Path, to: &Path) -> Result<(), BrozaError> 
 /// A lock held in memory, released when the guard is dropped.
 struct FakeFsLock {
     /// The set every [`FakeFileOps`] lock lives in.
-    locks: Arc<Mutex<BTreeSet<PathBuf>>>,
+    pub(super) locks: Arc<Mutex<BTreeSet<PathBuf>>>,
     /// What this guard holds.
     path: PathBuf,
 }

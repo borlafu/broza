@@ -161,20 +161,14 @@ fn a_filesystem_that_cannot_do_this_at_all_is_refused_once() {
     BULK_STATE.store(super::STATE_TESTING, Ordering::SeqCst);
 
     set_errno(libc::ENOTSUP);
-    assert!(super::unsupported_or_none::<()>().is_none());
-    assert_eq!(
-        BULK_STATE.load(Ordering::SeqCst),
-        STATE_REFUSED,
+    assert!(
+        matches!(super::failed_call(), super::Collected::Unsupported),
         "a filesystem without the call will not grow one"
     );
 
-    reset_bulk_state_for_tests();
-    BULK_STATE.store(super::STATE_TESTING, Ordering::SeqCst);
     set_errno(libc::EIO);
-    assert!(super::unsupported_or_none::<()>().is_none());
-    assert_eq!(
-        BULK_STATE.load(Ordering::SeqCst),
-        STATE_UNTESTED,
+    assert!(
+        matches!(super::failed_call(), super::Collected::Unavailable),
         "one unhappy directory says nothing about the next"
     );
 }
@@ -187,12 +181,41 @@ fn set_errno(value: i32) {
 }
 
 #[test]
-fn a_path_that_is_not_a_directory_is_not_read() {
+fn a_path_the_reader_cannot_open_does_not_count_against_it() {
     let _state = keep_state();
     reset_bulk_state_for_tests();
     let dir = scratch();
 
+    // A file is not a directory, and a directory with no search permission is
+    // not readable: both are about the path, not about `getattrlistbulk`.
     assert!(read_dir_with_attributes(&dir.path().join("file")).is_none());
+    assert_eq!(BULK_STATE.load(Ordering::SeqCst), STATE_UNTESTED, "the reader is still on trial");
+    let locked = locked_directory(dir.path());
+    assert!(read_dir_with_attributes(&locked).is_none());
+    assert_eq!(BULK_STATE.load(Ordering::SeqCst), STATE_UNTESTED);
+    unlock(&locked);
+
+    // And the next directory that *can* be read still settles the question.
+    assert!(read_dir_with_attributes(dir.path()).is_some());
+    assert_eq!(BULK_STATE.load(Ordering::SeqCst), STATE_TRUSTED);
+}
+
+/// A directory the process may not open, or `None` when running as root.
+fn locked_directory(root: &Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let locked = root.join("locked");
+    std::fs::create_dir(&locked).unwrap_or_else(|e| panic!("{e}"));
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+        .unwrap_or_else(|e| panic!("{e}"));
+    locked
+}
+
+/// Give the permissions back so the temporary directory can be removed.
+fn unlock(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
 }
 
 #[test]

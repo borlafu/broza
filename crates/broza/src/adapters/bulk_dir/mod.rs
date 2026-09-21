@@ -40,6 +40,18 @@ use crate::BrozaError;
 use crate::ports::{DirListing, EntryMetadata, FileOps};
 use parse::ParsedEntry;
 
+/// What came back from trying to read one directory in bulk.
+enum Collected {
+    /// The directory was read.
+    Entries(Vec<ParsedEntry>),
+    /// This directory could not be opened or read — no permission, gone,
+    /// something else. That says nothing about the reader itself.
+    Unavailable,
+    /// The kernel cannot do this here at all, or the buffer did not read the
+    /// way [`parse`] expects. Either way, stop using the reader.
+    Unsupported,
+}
+
 /// Bytes handed to the kernel per call; big enough for a large directory.
 const BUFFER_BYTES: usize = 256 * 1024;
 /// Nothing has been read yet; the next caller cross-checks.
@@ -75,7 +87,11 @@ pub fn reset_bulk_state_for_tests() {
 /// or a buffer that did not read the way [`parse`] expects.
 pub(crate) fn read_dir_with_attributes(path: &Path) -> Option<DirListing> {
     match BULK_STATE.load(Ordering::Acquire) {
-        STATE_TRUSTED => Some(resolve(path, collect(path)?)),
+        STATE_TRUSTED => match collect(path) {
+            Collected::Entries(parsed) => Some(resolve(path, parsed)),
+            Collected::Unavailable => None,
+            Collected::Unsupported => refuse(),
+        },
         STATE_UNTESTED => try_first_directory(path),
         // Refused for good, or somebody else is deciding right now.
         _ => None,
@@ -93,12 +109,26 @@ fn try_first_directory(path: &Path) -> Option<DirListing> {
     {
         return None;
     }
-    let Some(parsed) = collect(path) else {
-        return refuse();
+    let parsed = match collect(path) {
+        Collected::Entries(parsed) => parsed,
+        // One directory Broza may not read says nothing about the kernel.
+        Collected::Unavailable => {
+            release_claim();
+            return None;
+        }
+        Collected::Unsupported => return refuse(),
     };
     let Some(verified) = agrees_with_lstat(path, &parsed) else {
         return refuse();
     };
+    let from_buffer = parsed.iter().filter(|entry| entry.meta.is_some()).count();
+    if from_buffer > 0 && verified == 0 {
+        // The buffer described entries and not one of them could be confirmed:
+        // hand the answer back rather than trusting it, and let the next
+        // directory decide.
+        release_claim();
+        return None;
+    }
     // A directory holding nothing the buffer itself described proves nothing —
     // every entry was stated the plain way — so leave the question open.
     let settled = if verified > 0 { STATE_TRUSTED } else { STATE_UNTESTED };
@@ -107,8 +137,12 @@ fn try_first_directory(path: &Path) -> Option<DirListing> {
 }
 
 /// Every entry of `path` as the buffer described it.
-fn collect(path: &Path) -> Option<Vec<ParsedEntry>> {
-    let dir = open_directory(path).ok()?;
+fn collect(path: &Path) -> Collected {
+    let Ok(dir) = open_directory(path) else {
+        // No permission, not a directory, gone between listing and opening:
+        // all of them are about this path, not about `getattrlistbulk`.
+        return Collected::Unavailable;
+    };
     let mut request = request_list();
     let mut entries = Vec::new();
     loop {
@@ -121,9 +155,9 @@ fn collect(path: &Path) -> Option<Vec<ParsedEntry>> {
             (count, parsed)
         });
         match read {
-            (count, _) if count < 0 => return unsupported_or_none(),
-            (0, _) => return Some(entries),
-            (_, None) => return refuse(),
+            (count, _) if count < 0 => return failed_call(),
+            (0, _) => return Collected::Entries(entries),
+            (_, None) => return Collected::Unsupported,
             (_, Some(parsed)) => entries.extend(parsed),
         }
     }
@@ -210,17 +244,16 @@ fn agrees_with_lstat(parent: &Path, parsed: &[ParsedEntry]) -> Option<usize> {
     Some(verified)
 }
 
-/// A kernel that cannot do this at all is refused; one bad directory is not.
+/// Read the errno of a failed call: a kernel that cannot do this at all is a
+/// different thing from one directory that went wrong.
 ///
 /// `ENOTSUP` means the filesystem does not implement the call, and no other
 /// directory on it will either.
-fn unsupported_or_none<T>() -> Option<T> {
-    let errno = std::io::Error::last_os_error().raw_os_error();
-    if errno == Some(libc::ENOTSUP) {
-        return refuse();
+fn failed_call() -> Collected {
+    if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP) {
+        return Collected::Unsupported;
     }
-    release_claim();
-    None
+    Collected::Unavailable
 }
 
 /// Give up on the bulk reader for the rest of the process.

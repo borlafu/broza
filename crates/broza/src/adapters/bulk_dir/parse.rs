@@ -136,7 +136,11 @@ pub(super) fn parse_entry(entry: &[u8]) -> Option<ParsedEntry> {
     }
     let meta = metadata_of(entry, &layout)?;
     if !is_plausible(&meta) {
-        return None;
+        // Numbers that cannot be true mean the buffer was read wrong, but the
+        // remedy is to state this entry rather than to throw the directory
+        // away: `lstat` is always right, and a reader that never verifies an
+        // entry never earns the caller's trust either.
+        return Some(ParsedEntry { name, meta: None });
     }
     Some(ParsedEntry { name, meta: Some(meta) })
 }
@@ -210,7 +214,8 @@ fn device_of(raw: u32) -> u64 {
 ///
 /// A buffer read at the wrong offset still parses; it just yields nonsense. An
 /// inode of zero, no device, no links at all, or a modification time beyond the
-/// year 2100 are the cheap signs of exactly that.
+/// year 2100 are the cheap signs of exactly that. Such an entry is handed to
+/// `lstat` instead of being believed.
 fn is_plausible(meta: &EntryMetadata) -> bool {
     let times_are_sane =
         meta.modified.is_none_or(|time| time.as_second() >= 0 && time.as_second() < IMPLAUSIBLE_AFTER);

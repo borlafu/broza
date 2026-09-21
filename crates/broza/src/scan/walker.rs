@@ -103,8 +103,9 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
         .map(|(child, child_meta)| walk_dir(&child, &child_meta, depth.saturating_add(1), context))
         .reduce(|| Partial::empty(cap), Partial::merge);
     let reports_children = context.options.max_depth.is_none_or(|max| depth < max);
-    let totals = leaves.totals.merge(below.totals).with_child_dirs(child_dirs);
-    let node = DirNode::new(&identity, totals, skipped || !reports_children);
+    let truncated = skipped || !reports_children;
+    let totals = leaves.totals.merge(below.totals).with_child_dirs(child_dirs).with_truncation(truncated);
+    let node = DirNode::new(&identity, totals, truncated);
     let mut nodes = if reports_children { below.nodes } else { Vec::new() };
     nodes.push(node);
     let mut links = leaves.links;
@@ -137,6 +138,8 @@ fn cached_dir(identity: &DirIdentity, record: &DirRecord, context: &Context<'_>)
         dir_count: record.dir_count,
         dataless_count: record.dataless_count,
         largest_item_bytes: record.largest_item_bytes,
+        has_hard_links: record.has_hard_links,
+        has_truncation: record.has_truncation,
     };
     context.report(record.file_count.saturating_add(record.dir_count).saturating_add(1), record.size_bytes);
     Partial {
@@ -149,8 +152,10 @@ fn cached_dir(identity: &DirIdentity, record: &DirRecord, context: &Context<'_>)
 /// A directory Broza may not read: a warning, an empty node, and the walk goes on.
 fn unreadable_dir(identity: &DirIdentity, error: &BrozaError, context: &Context<'_>) -> Partial {
     context.report(1, 0);
+    let totals = Totals::default().with_truncation(true);
     Partial {
-        nodes: vec![parts::truncated_node(identity, Totals::default())],
+        nodes: vec![parts::truncated_node(identity, totals)],
+        totals,
         errors: vec![parts::diagnostic(&identity.path, error)],
         ..Partial::empty(context.options.report_files_top)
     }

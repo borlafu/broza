@@ -79,6 +79,8 @@ mod tests {
             dir_count: 3,
             dataless_count: 0,
             largest_item_bytes: 4096,
+            has_hard_links: false,
+            has_truncation: false,
             recorded_at: Timestamp::UNIX_EPOCH,
         }
     }

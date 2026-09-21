@@ -127,6 +127,8 @@ mod tests {
             dir_count: 0,
             dataless_count: 0,
             largest_item_bytes: size_bytes,
+            has_hard_links: false,
+            has_truncation: false,
             device: 1,
             inode: 7,
             mtime: None,

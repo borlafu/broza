@@ -63,9 +63,13 @@ fn exclusions() -> Vec<PathBuf> {
 
 /// Walk `root` once, with `store` answering for unchanged subtrees.
 fn timed_walk(root: &Path, store: &CacheStore) -> (WalkResult, Duration) {
+    // The same policy `scan_volume` applies, so the benchmark measures what
+    // the product does: a record is only served when nothing inside could be
+    // listed on its own and the subtree holds no hard link and no hole.
     let hook = |identity: &DirIdentity| {
         let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
-        (record.largest_item_bytes < BENCH_MIN_FILE_BYTES).then(|| record.clone())
+        let reportable_inside = record.largest_item_bytes >= BENCH_MIN_FILE_BYTES;
+        (record.is_usable() && !reportable_inside).then(|| record.clone())
     };
     let options = WalkOptions {
         skip_hook: Some(&hook),

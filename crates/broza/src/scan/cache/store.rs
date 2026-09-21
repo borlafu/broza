@@ -112,7 +112,15 @@ impl CacheStore {
     /// [`CacheStore::has_changes`] and [`CacheStore::save`].
     #[must_use]
     pub fn with_record(self, record: DirRecord) -> Self {
-        if self.records.get(&record.key).is_some_and(|stored| stored.measures_the_same_as(&record)) {
+        // Only a record that is *still fresh* may be kept: an expired one is
+        // about to be dropped on the next write, and keeping it in preference
+        // to the measurement that just replaced it would empty the cache at
+        // every TTL boundary.
+        let keep_the_old_one = self
+            .records
+            .get(&record.key)
+            .is_some_and(|stored| stored.measures_the_same_as(&record) && self.is_fresh(stored));
+        if keep_the_old_one {
             return self;
         }
         let mut records = self.records;
@@ -186,6 +194,8 @@ mod tests {
 
     /// A day, the default `cache-ttl`.
     const TTL: Duration = Duration::from_secs(24 * 60 * 60);
+    /// How many records the TTL-boundary probe writes.
+    const RECORDS_IN_THE_PROBE: u64 = 13;
 
     fn at(text: &str) -> Timestamp {
         text.parse().unwrap_or_else(|e| panic!("{e}"))
@@ -204,6 +214,8 @@ mod tests {
             dir_count: 0,
             dataless_count: 0,
             largest_item_bytes: 4096,
+            has_hard_links: false,
+            has_truncation: false,
             recorded_at,
         }
     }
@@ -214,6 +226,11 @@ mod tests {
 
     fn path() -> PathBuf {
         PathBuf::from("/cache/v1/disk3s5/dirs.bin")
+    }
+
+    /// How many records the file holds, as a `u64` the probe can compare.
+    fn stored_count(fs: &FakeFileOps, clock: &FixedClock) -> u64 {
+        u64::try_from(load(fs, clock).len()).unwrap_or_default()
     }
 
     fn load(fs: &FakeFileOps, clock: &FixedClock) -> CacheStore {
@@ -252,6 +269,28 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
 
         assert!(fs.exists(&path()));
+    }
+
+    #[test]
+    fn the_records_survive_the_ttl_boundary_when_the_disk_has_not_changed() {
+        let fs = fs();
+        let clock = FixedClock::at(at("2026-01-01T00:00:00Z"));
+        let first = (1..=RECORDS_IN_THE_PROBE)
+            .fold(load(&fs, &clock), |store, inode| store.with_record(record(inode, clock.now())));
+        first.save(&path(), &fs).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(stored_count(&fs, &clock), RECORDS_IN_THE_PROBE);
+
+        // A day and a minute later every record has expired. The scan walks
+        // the same unchanged directories and measures the same numbers: the
+        // store must take those fresh measurements, not keep the stale ones it
+        // is about to drop, or the whole cache empties at every TTL boundary.
+        clock.set(at("2026-01-02T00:01:00Z"));
+        let renewed = (1..=RECORDS_IN_THE_PROBE)
+            .fold(load(&fs, &clock), |store, inode| store.with_record(record(inode, clock.now())));
+        renewed.save(&path(), &fs).unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(stored_count(&fs, &clock), RECORDS_IN_THE_PROBE, "the cache emptied itself");
+        assert_eq!(load(&fs, &clock).lookup(&key(1)).map(|record| record.size_bytes), Some(1001));
     }
 
     #[test]

@@ -34,18 +34,22 @@ cd "$(dirname "$0")/.."
 
 export PATH="/opt/homebrew/opt/rustup/bin:${HOME}/.cargo/bin:${PATH}"
 
+REAL_HOME="${HOME}"
 BENCH_ROOT="${BENCH_ROOT:-${HOME}}"
 export BENCH_ROOT
 
 if [[ -z "${BENCH_EXCLUDE:-}" ]]; then
+  # Anchored to the home directory, not to what is being walked: the cloud
+  # providers put their roots there whatever subtree the benchmark is aimed at.
+  home="${REAL_HOME}"
   cloud=(
-    "${BENCH_ROOT}/Library/CloudStorage"      # OneDrive, Box, the new Dropbox
-    "${BENCH_ROOT}/Library/Mobile Documents"  # iCloud Drive
-    "${BENCH_ROOT}/Dropbox"
+    "${home}/Library/CloudStorage"      # OneDrive, Box, the new Dropbox
+    "${home}/Library/Mobile Documents"  # iCloud Drive
+    "${home}/Dropbox"
   )
   while IFS= read -r folder; do
     [[ -n "${folder}" ]] && cloud+=("${folder}")
-  done < <(find "${BENCH_ROOT}" -maxdepth 1 -name '*Drive*' -type d 2>/dev/null || true)
+  done < <(find "${home}" -maxdepth 1 -name '*Drive*' -type d 2>/dev/null || true)
   BENCH_EXCLUDE="$(
     IFS=:
     echo "${cloud[*]}"

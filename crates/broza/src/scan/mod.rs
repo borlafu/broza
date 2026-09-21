@@ -172,7 +172,13 @@ fn save_store(
     let Some(path) = path else { return Ok(()) };
     let now = ports.clock.now();
     let fresh = walked.nodes.iter().filter_map(|node| DirRecord::of(node, now));
-    store.with_records(fresh).save(path, ports.fs.as_ref())
+    let updated = store.with_records(fresh);
+    if !updated.has_changes() {
+        // Nothing the file does not already say. On a big volume this is tens
+        // of megabytes of writing saved on every warm scan.
+        return Ok(());
+    }
+    updated.save(path, ports.fs.as_ref())
 }
 
 /// Walk the volume, letting the cache answer for unchanged subtrees.
@@ -188,7 +194,8 @@ fn walk_volume(
     // a cold scan shows, and the two would disagree about the same disk.
     let hook = |identity: &DirIdentity| {
         let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
-        (record.largest_item_bytes < request.min_size).then(|| record.clone())
+        let reportable_inside = record.largest_item_bytes >= request.min_size;
+        (record.is_usable() && !reportable_inside).then(|| record.clone())
     };
     let options = WalkOptions {
         // The whole tree is reported: `--depth` shapes the tree view, and the
@@ -216,6 +223,8 @@ fn unreadable_root(entry: &MountEntry) -> DirNode {
         dir_count: 0,
         dataless_count: 0,
         largest_item_bytes: 0,
+        has_hard_links: false,
+        has_truncation: true,
         device: entry.device,
         inode: 0,
         mtime: None,

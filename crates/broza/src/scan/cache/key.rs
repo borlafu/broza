@@ -53,11 +53,29 @@ pub struct DirRecord {
     /// from the cache when nothing inside it could have been *listed* on its
     /// own, and that is decided by comparing this against `--min-size`.
     pub largest_item_bytes: u64,
+    /// `true` when a file with more than one name lives inside the subtree.
+    /// Such a record is written but never served: see [`DirRecord::is_usable`].
+    pub has_hard_links: bool,
+    /// `true` when something inside the subtree was not walked. Such a record
+    /// is written but never served either.
+    pub has_truncation: bool,
     /// When the aggregate was measured; the TTL is counted from here.
     pub recorded_at: Timestamp,
 }
 
 impl DirRecord {
+    /// `true` when this record may stand in for walking the subtree again.
+    ///
+    /// Two things make a subtree unfit to be served, however fresh the record
+    /// is. A hard link is settled by looking at every name in one walk, so a
+    /// subtree that was not walked hides names the rest of the scan would then
+    /// count twice. And a subtree with a hole in it — an unreadable directory,
+    /// a cloud placeholder — is both incomplete and the source of the warnings
+    /// that say so, which a warm scan would otherwise lose.
+    pub fn is_usable(&self) -> bool {
+        !self.has_hard_links && !self.has_truncation
+    }
+
     /// `true` when both records say the same thing about the same directory.
     ///
     /// Everything but *when* it was measured: two walks of an unchanged
@@ -71,6 +89,8 @@ impl DirRecord {
             && self.dir_count == other.dir_count
             && self.dataless_count == other.dataless_count
             && self.largest_item_bytes == other.largest_item_bytes
+            && self.has_hard_links == other.has_hard_links
+            && self.has_truncation == other.has_truncation
     }
 
     /// Record of a freshly walked directory.
@@ -93,6 +113,8 @@ impl DirRecord {
             dir_count: node.dir_count,
             dataless_count: node.dataless_count,
             largest_item_bytes: node.largest_item_bytes,
+            has_hard_links: node.has_hard_links,
+            has_truncation: node.has_truncation,
             recorded_at,
         })
     }
@@ -124,6 +146,8 @@ mod tests {
             dir_count: 1,
             dataless_count: 2,
             largest_item_bytes: 300,
+            has_hard_links: false,
+            has_truncation: false,
             device: 3,
             inode: 42,
             mtime: Some(at("2026-01-01T00:00:00Z")),

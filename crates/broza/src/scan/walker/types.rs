@@ -47,6 +47,12 @@ impl DirIdentity {
 }
 
 /// One directory and the aggregate of everything below it.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "four independent facts about one directory, not a state machine: whether its own \
+              children were all reported, whether anything below was skipped, whether a \
+              multiply-linked file lives inside, and whether the numbers were measured or recalled"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirNode {
     /// Absolute path of the directory.
@@ -64,6 +70,10 @@ pub struct DirNode {
     /// Biggest single reportable thing inside: the largest file, or the largest
     /// descendant directory's subtree.
     pub largest_item_bytes: u64,
+    /// `true` when a file with more than one name lives anywhere inside.
+    pub has_hard_links: bool,
+    /// `true` when something inside was not walked, at any depth.
+    pub has_truncation: bool,
     /// Device id (`st_dev`).
     pub device: u64,
     /// Inode number (`st_ino`).
@@ -92,6 +102,8 @@ impl DirNode {
             dir_count: totals.dir_count,
             dataless_count: totals.dataless_count,
             largest_item_bytes: totals.largest_item_bytes,
+            has_hard_links: totals.has_hard_links,
+            has_truncation: totals.has_truncation || children_truncated,
             device: identity.device,
             inode: identity.inode,
             mtime: identity.mtime,

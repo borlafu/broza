@@ -78,13 +78,28 @@ pub(super) struct Totals {
     /// descendant directory's subtree. The cache uses it to know whether
     /// skipping this subtree could hide an entry the report would have shown.
     pub largest_item_bytes: u64,
+    /// `true` when a file with more than one name lives anywhere inside.
+    ///
+    /// Such a subtree cannot be served from the cache: the walk settles hard
+    /// links by looking at every name at once, and a subtree it did not walk
+    /// is a set of names it cannot see — the other names would then be counted
+    /// again on top of the cached total.
+    pub has_hard_links: bool,
+    /// `true` when something inside was not walked: an unreadable directory, a
+    /// cloud placeholder, another device, an exclusion, a depth limit.
+    ///
+    /// Such a subtree cannot be served from the cache either. Its aggregate is
+    /// incomplete by construction, and the warnings that explain why are
+    /// produced by walking — a warm scan that skipped it would report the same
+    /// bytes with none of the reasons.
+    pub has_truncation: bool,
 }
 
 impl Totals {
     /// Totals of a single non-directory entry.
     pub fn leaf(meta: &EntryMetadata) -> Self {
         if meta.is_dataless {
-            return Self { file_count: 1, dataless_count: 1, ..Self::default() };
+            return Self { file_count: 1, dataless_count: 1, has_truncation: true, ..Self::default() };
         }
         Self {
             size_bytes: meta.size_bytes,
@@ -93,6 +108,8 @@ impl Totals {
             dir_count: 0,
             dataless_count: 0,
             largest_item_bytes: meta.size_bytes,
+            has_hard_links: meta.link_count > 1,
+            has_truncation: false,
         }
     }
 
@@ -105,12 +122,19 @@ impl Totals {
             dir_count: self.dir_count.saturating_add(other.dir_count),
             dataless_count: self.dataless_count.saturating_add(other.dataless_count),
             largest_item_bytes: self.largest_item_bytes.max(other.largest_item_bytes),
+            has_hard_links: self.has_hard_links || other.has_hard_links,
+            has_truncation: self.has_truncation || other.has_truncation,
         }
     }
 
     /// The same totals, plus the directories that are direct children.
     pub fn with_child_dirs(self, count: u64) -> Self {
         Self { dir_count: self.dir_count.saturating_add(count), ..self }
+    }
+
+    /// The same totals, knowing something inside was not walked.
+    pub fn with_truncation(self, truncated: bool) -> Self {
+        Self { has_truncation: self.has_truncation || truncated, ..self }
     }
 
     /// The same totals as the directory *above* sees them.

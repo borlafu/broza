@@ -25,6 +25,8 @@ pub(super) fn record(identity: &DirIdentity, size_bytes: u64) -> DirRecord {
         dir_count: 1,
         dataless_count: 0,
         largest_item_bytes: size_bytes,
+        has_hard_links: false,
+        has_truncation: false,
         recorded_at: Timestamp::UNIX_EPOCH,
     }
 }

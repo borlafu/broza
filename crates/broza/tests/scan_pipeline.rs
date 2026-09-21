@@ -37,6 +37,8 @@ const A_MINUTE: Duration = Duration::from_secs(60);
 const A_MEGABYTE: u64 = 1_000_000;
 /// How many files the pile holds.
 const FILES_IN_THE_PILE: usize = 10;
+/// How many names the hard-link probe gives one file.
+const LINKS_IN_THE_PROBE: usize = 40;
 /// Store of the Data volume inside that cache root.
 const DATA_STORE: &str = "/Users/dana/.cache/broza/v1/22222222-2222-4222-8222-222222222222/dirs.bin";
 
@@ -199,6 +201,62 @@ fn a_directory_of_small_files_is_still_a_big_directory() {
         cold.largest
     );
     assert_eq!(warm, cold, "a warm scan may not lose the pile");
+}
+
+#[test]
+fn hard_links_across_a_cached_boundary_are_still_counted_once() {
+    let (ports, handles) = ports();
+    // Forty names of one file, spread over two directories: the walk settles
+    // them by seeing every name at once, so a subtree holding any of them can
+    // never be served from the cache.
+    let original = "/System/Volumes/Data/Users/dana/links/original.bin";
+    handles.fs.add_file(original, &[]);
+    handles.fs.set_size(original, A_MEGABYTE);
+    for index in 0..LINKS_IN_THE_PROBE {
+        handles.fs.add_hard_link(original, format!("/System/Volumes/Data/Users/dana/copies/n{index}"));
+    }
+    let request = ScanRequest { min_size: 5 * A_MEGABYTE, depth: 1, ..request() };
+
+    let cold = scan_data(&ports, &request);
+    let warm = scan_data(&ports, &request);
+
+    assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "the links were counted twice");
+    assert_eq!(warm, cold);
+}
+
+#[test]
+fn a_subtree_with_a_hole_in_it_is_measured_again_and_warned_about_again() {
+    let (ports, handles) = ports();
+    // Everything in `quiet` is too small to be listed, so the cache would
+    // happily answer for it — but one directory *below* it cannot be read, and
+    // the warning that says so only exists while somebody is walking.
+    handles.fs.add_file("/System/Volumes/Data/Users/dana/quiet/sub/secret/hidden.bin", &[]);
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/quiet/sub/secret/hidden.bin", 100);
+    handles.fs.add_denied("/System/Volumes/Data/Users/dana/quiet/sub/secret");
+    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+
+    let cold = scan_data(&ports, &request);
+    let warm = scan_data(&ports, &request);
+
+    assert!(!cold.warnings.is_empty(), "the unreadable directory has to be reported");
+    assert_eq!(warm.warnings, cold.warnings, "a warm scan may not lose the reason");
+    assert_eq!(warm, cold);
+}
+
+#[test]
+fn a_warm_scan_that_measured_nothing_new_leaves_the_store_alone() {
+    let (ports, handles) = ports();
+    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+
+    let _ = scan_data(&ports, &request);
+    let written = handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|e| panic!("{e}"));
+    let _ = scan_data(&ports, &request);
+
+    assert_eq!(
+        handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|e| panic!("{e}")),
+        written,
+        "nothing changed, so the file should not have been rewritten"
+    );
 }
 
 #[test]

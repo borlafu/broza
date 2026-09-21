@@ -118,10 +118,14 @@ fn an_entry_that_does_not_even_carry_a_name_is_not_read() {
 }
 
 #[test]
-fn an_entry_whose_numbers_cannot_be_true_is_not_read() {
+fn an_entry_whose_numbers_cannot_be_true_is_left_to_lstat() {
     let no_inode = entry(COMMON_ATTRS & !ATTR_CMN_ERROR, FILE_ATTRS, b"file", 0, 0);
 
-    assert!(parse_entry(&no_inode).is_none());
+    let parsed = parse_entry(&no_inode).unwrap_or_else(|| panic!("the entry still has a name"));
+
+    // Nonsense in the buffer is this entry's problem: `lstat` answers for it,
+    // and the reader stays untrusted because nothing was ever confirmed.
+    assert_eq!(parsed.meta, None);
 }
 
 #[test]

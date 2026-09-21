@@ -62,8 +62,8 @@ impl FileOps for StdFileOps {
     }
 
     fn read_dir_with_metadata(&self, path: &Path) -> Result<DirListing, BrozaError> {
-        if let Some(entries) = crate::adapters::bulk_dir::read_dir_with_attributes(path) {
-            return Ok(entries.into_iter().map(|(child, meta)| (child, Ok(meta))).collect());
+        if let Some(listing) = crate::adapters::bulk_dir::read_dir_with_attributes(path) {
+            return Ok(listing);
         }
         // The kernel would not answer in bulk here: pair up `readdir` and
         // `lstat` like everybody else, but spread the `lstat`s over the pool.

@@ -17,6 +17,8 @@ pub mod tmutil_destinations;
 
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use bulk_dir::reset_bulk_state_for_tests;
 pub use diskutil::{DiskutilEnumerator, DiskutilSnapshots};
 pub use mount_table::{FIRMLINKS_PATH, MountTableReport, parse_firmlinks, system_mount_table};
 pub use nsurl_space::NsUrlSpaceProvider;

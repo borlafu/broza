@@ -32,6 +32,25 @@ pub const FILE: &str = "dir/file.txt";
 pub const FILE_LINK: &str = "link";
 /// A symlink to the `dir` directory, relative to the root.
 pub const DIR_LINK: &str = "dirlink";
+/// Directory holding what only a real filesystem can express.
+///
+/// It exists on both subjects and is empty on the in-memory one: a FIFO and a
+/// resource fork have no meaning there.
+pub const SPECIAL_DIR: &str = "special";
+/// A file carrying a resource fork, relative to the root. Real subject only.
+///
+/// `lstat` reports the data fork in `st_size` but counts both forks in
+/// `st_blocks`; a reader that asks the kernel for the wrong pair of attributes
+/// disagrees with it here and nowhere else.
+pub const FORKED_FILE: &str = "special/forked.txt";
+/// Contents of the data fork of [`FORKED_FILE`].
+pub const FORKED_CONTENTS: &[u8] = b"data fork";
+/// Bytes written into the resource fork of [`FORKED_FILE`].
+pub const RESOURCE_FORK_BYTES: usize = 77;
+/// A FIFO, relative to the root. Real subject only.
+pub const FIFO: &str = "special/pipe";
+/// An empty directory, relative to the root.
+pub const EMPTY_DIR: &str = "empty";
 
 /// `ENOENT`, a missing path.
 pub const ENOENT: i32 = 2;
@@ -52,6 +71,9 @@ type SymlinkFn = Box<dyn Fn(&Path, &Path)>;
 /// Creates a hard link at the second path for the entry at the first.
 type HardLinkFn = Box<dyn Fn(&Path, &Path)>;
 
+/// Adds the shapes only a real filesystem has: a FIFO, a resource fork.
+type SpecialsFn = Box<dyn Fn(&Path)>;
+
 /// One implementation under test, rooted in its own scratch tree.
 pub struct Subject {
     /// Name reported when an assertion fails.
@@ -64,6 +86,8 @@ pub struct Subject {
     symlink: SymlinkFn,
     /// Creates a hard link, which [`FileOps`] deliberately cannot do.
     hard_link: HardLinkFn,
+    /// Fills [`SPECIAL_DIR`]; does nothing on the in-memory subject.
+    specials: SpecialsFn,
     /// Kept alive so the temporary directory outlives the test.
     _tempdir: Option<TempDir>,
 }
@@ -148,6 +172,9 @@ pub fn fake_subject() -> Subject {
         root: PathBuf::from(FAKE_ROOT),
         symlink: Box::new(move |path, target| for_symlink.add_symlink(path, target)),
         hard_link: Box::new(move |existing, link| for_link.add_hard_link(existing, link)),
+        // A FIFO and a resource fork are filesystem shapes, not tree shapes:
+        // the in-memory subject has nowhere to put them.
+        specials: Box::new(|_root| {}),
         _tempdir: None,
     }
 }
@@ -168,6 +195,21 @@ pub fn std_subject() -> Subject {
             std::fs::hard_link(existing, link)
                 .unwrap_or_else(|e| panic!("hard link {}: {e}", link.display()));
         }),
+        specials: Box::new(|root| {
+            let forked = root.join(FORKED_FILE);
+            std::fs::write(&forked, FORKED_CONTENTS)
+                .unwrap_or_else(|e| panic!("write {}: {e}", forked.display()));
+            // The resource fork is reached through the file's own directory.
+            std::fs::write(forked.join("..namedfork/rsrc"), vec![7_u8; RESOURCE_FORK_BYTES])
+                .unwrap_or_else(|e| panic!("resource fork {}: {e}", forked.display()));
+            // `mkfifo(1)` rather than `libc::mkfifo`: an integration test is
+            // outside `adapters/`, where `unsafe` is denied.
+            let made = std::process::Command::new("mkfifo")
+                .arg(root.join(FIFO))
+                .status()
+                .unwrap_or_else(|e| panic!("mkfifo: {e}"));
+            assert!(made.success(), "mkfifo failed: {made}");
+        }),
         _tempdir: Some(tempdir),
     }
 }
@@ -184,8 +226,13 @@ pub fn subjects() -> Vec<Subject> {
 }
 
 /// Build the shared tree inside `subject`.
+/// Build the shared tree inside one subject, for a test that wants only one.
+pub fn populate_for_test(subject: Subject) -> Subject {
+    populate(subject)
+}
+
 fn populate(subject: Subject) -> Subject {
-    for directory in ["dir", "empty", "full"] {
+    for directory in ["dir", "empty", "full", SPECIAL_DIR] {
         subject
             .fs
             .create_dir_all(&subject.path(directory))
@@ -201,5 +248,6 @@ fn populate(subject: Subject) -> Subject {
     }
     subject.symlink(FILE_LINK, FILE);
     subject.symlink(DIR_LINK, "dir");
+    (subject.specials)(&subject.root);
     subject
 }

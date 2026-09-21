@@ -15,7 +15,8 @@ use std::path::Path;
 
 use broza::BrozaError;
 use fs_subjects::{
-    DIR_LINK, EXDEV, FAKE_OTHER_ROOT, FAKE_ROOT, FILE, FILE_CONTENTS, FILE_LINK, fake_subject, subjects,
+    DIR_LINK, EXDEV, FAKE_OTHER_ROOT, FAKE_ROOT, FIFO, FILE, FILE_CONTENTS, FILE_LINK, FORKED_CONTENTS,
+    FORKED_FILE, SPECIAL_DIR, fake_subject, std_subject, subjects,
 };
 
 #[test]
@@ -83,6 +84,67 @@ fn a_listing_holds_exactly_the_children_read_dir_reports() {
 
         assert_eq!(listed, expected, "{}", subject.name);
     }
+}
+
+#[test]
+fn both_readers_of_the_real_filesystem_answer_the_same_thing() {
+    // The fast reader is a different code path, not a different answer: reset
+    // what it has learned, make it read the tree, and compare it against the
+    // plain `lstat` of every entry — resource fork, FIFO and all.
+    broza::adapters::reset_bulk_state_for_tests();
+    let subject = std_subject();
+    let subject = fs_subjects::populate_for_test(subject);
+
+    for directory in ["dir", SPECIAL_DIR, "empty", ""] {
+        let listing = subject
+            .fs
+            .read_dir_with_metadata(&subject.path(directory))
+            .unwrap_or_else(|e| panic!("{directory}: {e}"));
+        for (path, meta) in listing {
+            let fast = meta.unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let stated = subject.fs.metadata(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert_eq!(fast, stated, "{}", path.display());
+        }
+    }
+}
+
+#[test]
+fn a_file_with_a_resource_fork_is_measured_the_way_lstat_measures_it() {
+    broza::adapters::reset_bulk_state_for_tests();
+    let subject = fs_subjects::populate_for_test(std_subject());
+    let forked = subject.path(FORKED_FILE);
+
+    let listing =
+        subject.fs.read_dir_with_metadata(&subject.path(SPECIAL_DIR)).unwrap_or_else(|e| panic!("{e}"));
+    let entry = listing
+        .into_iter()
+        .find(|(path, _)| path == &forked)
+        .unwrap_or_else(|| panic!("no forked file in the listing"));
+    let fast = entry.1.unwrap_or_else(|e| panic!("{e}"));
+    let stated = subject.fs.metadata(&forked).unwrap_or_else(|e| panic!("{e}"));
+
+    // `st_size` is the data fork; the resource fork shows up in the blocks.
+    assert_eq!(fast.size_bytes, FORKED_CONTENTS.len() as u64);
+    assert_eq!(fast, stated);
+    assert!(stated.allocated_bytes > stated.size_bytes, "the fork takes room: {stated:?}");
+}
+
+#[test]
+fn a_fifo_in_the_tree_is_listed_and_not_opened() {
+    broza::adapters::reset_bulk_state_for_tests();
+    let subject = fs_subjects::populate_for_test(std_subject());
+    let fifo = subject.path(FIFO);
+
+    let listing =
+        subject.fs.read_dir_with_metadata(&subject.path(SPECIAL_DIR)).unwrap_or_else(|e| panic!("{e}"));
+
+    let entry = listing
+        .into_iter()
+        .find(|(path, _)| path == &fifo)
+        .unwrap_or_else(|| panic!("no fifo in the listing"));
+    let meta = entry.1.unwrap_or_else(|e| panic!("{e}"));
+    assert!(!meta.is_dir);
+    assert_eq!(meta, subject.fs.metadata(&fifo).unwrap_or_else(|e| panic!("{e}")));
 }
 
 #[test]
@@ -247,7 +309,12 @@ fn read_dir_lists_the_direct_children_only() {
     for subject in subjects() {
         let names = subject.child_names("");
 
-        assert_eq!(names, ["dir", "dirlink", "empty", "full", "link", "other.txt"], "{}", subject.name);
+        assert_eq!(
+            names,
+            ["dir", "dirlink", "empty", "full", "link", "other.txt", "special"],
+            "{}",
+            subject.name
+        );
     }
 }
 

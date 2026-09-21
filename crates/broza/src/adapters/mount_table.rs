@@ -92,7 +92,7 @@ fn entry_for(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{FIRMLINKS_PATH, mount_table_from, parse_firmlinks};
+    use super::{FIRMLINKS_PATH, mount_table_from, parse_firmlinks, system_mount_table};
     use crate::model::{Container, Disk, FsKind, Volume, VolumeRole};
     use crate::testing::FakeFileOps;
 
@@ -238,6 +238,15 @@ relative/path\trelative
             .unwrap_or_else(|e| panic!("{e}"));
 
         assert_eq!(table.by_device(2).map(|entry| entry.firmlinks.len()), Some(0));
+    }
+
+    #[test]
+    fn the_system_table_of_no_disks_is_empty() {
+        // Enumerates nothing and reads no disk: the only real file it may touch is
+        // the firmlinks list, which every supported macOS ships read-only.
+        let table = system_mount_table(&[]).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(table.entries().is_empty());
     }
 
     #[test]

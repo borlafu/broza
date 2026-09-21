@@ -341,6 +341,15 @@ mod tests {
     }
 
     #[test]
+    fn renaming_a_missing_entry_reports_the_source_as_not_found() {
+        let fs = FakeFileOps::new().with_root("/a", 1);
+
+        let err = fs.rename(Path::new("/a/ghost"), Path::new("/a/f")).err();
+
+        assert!(matches!(err, Some(BrozaError::TargetNotFound(_))), "{err:?}");
+    }
+
+    #[test]
     fn renaming_into_a_missing_directory_fails_and_keeps_the_source() {
         let fs = FakeFileOps::new().with_root("/a", 1).with_file("/a/f", b"x");
 

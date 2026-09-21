@@ -174,6 +174,18 @@ mod tests {
     }
 
     #[test]
+    fn a_program_without_the_execute_bit_is_reported_clearly() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let path = dir.path().join("not-executable");
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap_or_else(|e| panic!("{e}"));
+
+        let err = StdProcessRunner.run(&path.to_string_lossy(), &[], PATIENT).err();
+
+        let Some(BrozaError::Other(message)) = err else { panic!("expected BrozaError::Other") };
+        assert!(message.contains("not executable"), "{message}");
+    }
+
+    #[test]
     fn a_missing_program_is_reported_clearly() {
         let err = StdProcessRunner.run("/nonexistent/broza-ghost", &[], PATIENT).err();
 

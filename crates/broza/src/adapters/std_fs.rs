@@ -161,6 +161,29 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_cannot_be_created_where_a_file_already_is() {
+        let dir = tempdir();
+        let path = dir.path().join("file");
+        StdFileOps.write_atomic(&path, b"x").unwrap_or_else(|e| panic!("{e}"));
+
+        let err = StdFileOps.create_dir_all(&path.join("child")).err();
+
+        assert!(matches!(err, Some(BrozaError::Io { .. })), "{err:?}");
+    }
+
+    #[test]
+    fn writing_over_a_directory_fails_and_leaves_the_directory_alone() {
+        let dir = tempdir();
+        let path = dir.path().join("subdir");
+        StdFileOps.create_dir_all(&path).unwrap_or_else(|e| panic!("{e}"));
+
+        let err = StdFileOps.write_atomic(&path, b"x").err();
+
+        assert!(err.is_some(), "writing over a directory must fail");
+        assert!(StdFileOps.metadata(&path).is_ok_and(|meta| meta.is_dir));
+    }
+
+    #[test]
     fn renaming_a_missing_entry_reports_the_source_as_not_found() {
         let dir = tempdir();
 

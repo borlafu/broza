@@ -138,7 +138,6 @@ fn cached_dir(identity: &DirIdentity, record: &DirRecord, context: &Context<'_>)
         dir_count: record.dir_count,
         dataless_count: record.dataless_count,
         largest_item_bytes: record.largest_item_bytes,
-        has_hard_links: record.has_hard_links,
         has_truncation: record.has_truncation,
     };
     context.report(record.file_count.saturating_add(record.dir_count).saturating_add(1), record.size_bytes);
@@ -175,7 +174,15 @@ fn walk_leaf_root(root: &Path, meta: &EntryMetadata, context: &Context<'_>) -> P
 /// that changes between two identical scans is a report nobody can diff.
 fn sorted(partial: Partial) -> WalkResult {
     let Partial { nodes, files, links, mut errors, .. } = partial;
-    let (mut nodes, mut files) = dedupe::discount_duplicates(nodes, files.into_vec(), links);
+    let (mut nodes, mut files) = dedupe::settle_hard_links(nodes, files.into_vec(), links);
+    for node in &mut nodes {
+        // Nothing inside a subtree can be bigger than the subtree. The walk
+        // measures the largest item before hard links are settled, so a file
+        // counted under several names could leave a directory claiming more
+        // than it holds — and a warm scan, working from the settled record,
+        // would then disagree with the cold one that produced it.
+        node.largest_item_bytes = node.largest_item_bytes.min(node.size_bytes);
+    }
     nodes.sort_by(|left, right| left.path.cmp(&right.path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));

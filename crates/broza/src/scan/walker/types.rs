@@ -70,7 +70,13 @@ pub struct DirNode {
     /// Biggest single reportable thing inside: the largest file, or the largest
     /// descendant directory's subtree.
     pub largest_item_bytes: u64,
-    /// `true` when a file with more than one name lives anywhere inside.
+    /// `true` when a file inside has a name *outside* this subtree.
+    ///
+    /// Not every hard link makes a subtree uncacheable — only one whose other
+    /// names are elsewhere. A directory holding all forty names of one file is
+    /// self-contained: a walk that skips it still counts that file once,
+    /// because nobody else will count it. Settled after the walk, in
+    /// `dedupe.rs`, when every name of every inode is known.
     pub has_hard_links: bool,
     /// `true` when something inside was not walked, at any depth.
     pub has_truncation: bool,
@@ -102,7 +108,7 @@ impl DirNode {
             dir_count: totals.dir_count,
             dataless_count: totals.dataless_count,
             largest_item_bytes: totals.largest_item_bytes,
-            has_hard_links: totals.has_hard_links,
+            has_hard_links: false,
             has_truncation: totals.has_truncation || children_truncated,
             device: identity.device,
             inode: identity.inode,
@@ -115,6 +121,11 @@ impl DirNode {
     /// The same node, marked as having come from the cache.
     pub(super) fn served_from_cache(self) -> Self {
         Self { from_cache: true, ..self }
+    }
+
+    /// The same node, knowing one of its files has a name outside it.
+    pub(super) fn hiding_a_name(self) -> Self {
+        Self { has_hard_links: true, ..self }
     }
 
     /// Identity this node would be cached under.

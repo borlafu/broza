@@ -20,18 +20,25 @@ because they block on the network rather than on the disk):
 | cold, one `getattrlistbulk` per directory | 3 668 920 | 23.7 s | ≈ 155 000 entries/s |
 | cold, same build, second machine state | 3 668 544 | 26.5 s | ≈ 138 000 entries/s |
 | cold, as measured in review | ≈ 3.7 M | ≈ 29 s | ≈ 127 000 entries/s |
-| warm (cache), same tree | 3 694 333 | 0.54 s | — |
+| cold, final, three runs | 3 706 320 | 28.3 s / 29.2 s / 29.3 s | ≈ 127 000 entries/s |
+| warm, same three runs | 3 706 330 | 5.7 s / 3.6 s / 3.9 s | 17 653 of 270 448 directories walked |
 
-The store itself is not where the warm time goes: 14.9 MB holding 270 220
-records takes **0.08 s to encode and write and 0.06 s to read back and decode**.
-An earlier report of a 2.9 s warm scan blamed that decode; re-measuring on an
-idle machine showed the slow runs were contaminated by a concurrent build, and
-the real cost is the walk of the directories the cache may not answer for.
-Indexing the store or sharding it per top-level directory would therefore buy
-about a tenth of a second, and is not planned. What a warm scan still pays for
-is walking every directory above `--depth` and every subtree holding something
-large enough to be listed; that set, not the codec, is the thing to shrink if
-the warm budget is ever missed.
+**The store is not where the warm time goes.** 15.5 MB holding 270 302 records
+takes 0.09 s to encode and write and 0.07 s to read back and decode. An earlier
+report of a 2.9 s warm scan blamed that decode; timing the two separately
+disproved it. Indexing the store or sharding it per top-level directory would
+buy about a tenth of a second and is not planned.
+
+**The warm budget of one second is not met on a tree this size, and the cold
+budget holds with about a quarter of its margin.** A warm scan walks the 6.5%
+of directories the cache may not answer for: everything at or above `--depth`,
+every subtree holding an item at least `--min-size` (so the largest consumers
+are always re-measured, which is the point), every subtree with an unreadable
+directory below it, and every subtree that holds some but not all names of a
+hard-linked file. Those exclusions are what make a warm scan report exactly
+what a cold one reports; they are not tuning knobs. Which of them dominates on
+a given machine has not been attributed — the next measurement worth taking is
+a count of walked directories by reason.
 
 That home directory is 648 GB and 3.7 million entries: several times the size
 of the "512 GB Data volume" the milestone had in mind, and no amount of
@@ -65,3 +72,12 @@ assumption about disk size.
   scan that measures the same numbers again leaves the file alone, which also
   means a reused measurement expires when the TTL says rather than being
   renewed by every scan that read it.
+- A hard link only stops a subtree from being cached when one of its names is
+  outside that subtree. A directory holding every name of a file is
+  self-contained and may be served: skipping it still counts that file once,
+  because nobody outside will count it.
+- The warm budget of `docs/cli-spec.md` §7 stays absolute (< 1 s) and is
+  currently missed on a 3.7 M-entry home. Restating it as a rate, the way the
+  cold budget was restated, is the obvious next question — but not before
+  somebody has attributed the walked directories to their reasons, because the
+  answer may be that a cheaper rule exists rather than a bigger number.

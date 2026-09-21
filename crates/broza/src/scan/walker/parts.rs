@@ -55,6 +55,8 @@ pub(super) struct LinkSighting {
     pub inode: u64,
     /// This name.
     pub path: PathBuf,
+    /// How many names the inode has in total, as the filesystem reports it.
+    pub link_count: u64,
     /// Apparent bytes counted for it.
     pub size_bytes: u64,
     /// Allocated bytes counted for it.
@@ -78,13 +80,6 @@ pub(super) struct Totals {
     /// descendant directory's subtree. The cache uses it to know whether
     /// skipping this subtree could hide an entry the report would have shown.
     pub largest_item_bytes: u64,
-    /// `true` when a file with more than one name lives anywhere inside.
-    ///
-    /// Such a subtree cannot be served from the cache: the walk settles hard
-    /// links by looking at every name at once, and a subtree it did not walk
-    /// is a set of names it cannot see — the other names would then be counted
-    /// again on top of the cached total.
-    pub has_hard_links: bool,
     /// `true` when something inside was not walked: an unreadable directory, a
     /// cloud placeholder, another device, an exclusion, a depth limit.
     ///
@@ -108,7 +103,6 @@ impl Totals {
             dir_count: 0,
             dataless_count: 0,
             largest_item_bytes: meta.size_bytes,
-            has_hard_links: meta.link_count > 1,
             has_truncation: false,
         }
     }
@@ -122,7 +116,6 @@ impl Totals {
             dir_count: self.dir_count.saturating_add(other.dir_count),
             dataless_count: self.dataless_count.saturating_add(other.dataless_count),
             largest_item_bytes: self.largest_item_bytes.max(other.largest_item_bytes),
-            has_hard_links: self.has_hard_links || other.has_hard_links,
             has_truncation: self.has_truncation || other.has_truncation,
         }
     }
@@ -226,6 +219,7 @@ impl Leaves {
                 device: meta.device,
                 inode: meta.inode,
                 path: path.to_path_buf(),
+                link_count: meta.link_count,
                 size_bytes: meta.size_bytes,
                 allocated_bytes: meta.allocated_bytes,
             });

@@ -225,6 +225,32 @@ fn hard_links_across_a_cached_boundary_are_still_counted_once() {
 }
 
 #[test]
+fn a_subtree_holding_every_name_of_its_files_is_still_served_from_the_cache() {
+    let (ports, handles) = ports();
+    // Forty names of one file, all of them in `copies`: nobody outside will
+    // count that file, so skipping the subtree loses nothing.
+    let original = "/System/Volumes/Data/Users/dana/copies/original.bin";
+    handles.fs.add_file(original, &[]);
+    handles.fs.set_size(original, 1000);
+    for index in 0..LINKS_IN_THE_PROBE {
+        handles.fs.add_hard_link(original, format!("/System/Volumes/Data/Users/dana/copies/n{index}"));
+    }
+    handles.fs.add_file("/System/Volumes/Data/Users/dana/copies/extra.bin", &[]);
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/copies/extra.bin", 300);
+    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+
+    let cold = scan_data(&ports, &request);
+    // Growing a file leaves the directory's mtime alone, so a cached subtree
+    // reports the old number — which is how this test knows it was cached.
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/copies/extra.bin", 900);
+    let warm = scan_data(&ports, &request);
+
+    assert_eq!(cold.root.size_bytes, 8000 + 1000 + 300, "the forty names are one file");
+    assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "`copies` came from the cache");
+    assert_eq!(warm, cold);
+}
+
+#[test]
 fn a_subtree_with_a_hole_in_it_is_measured_again_and_warned_about_again() {
     let (ports, handles) = ports();
     // Everything in `quiet` is too small to be listed, so the cache would

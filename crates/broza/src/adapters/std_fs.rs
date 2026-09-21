@@ -162,12 +162,7 @@ impl FileOps for StdFileOps {
 
     fn lock_exclusive(&self, path: &Path) -> Result<Box<dyn FsLock>, BrozaError> {
         let context = format!("lock {}", path.display());
-        let file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(path)
-            .map_err(|source| from_io(context.clone(), path, source))?;
+        let file = open_lock_file(path).map_err(|source| from_io(context.clone(), path, source))?;
         // SAFETY: the descriptor is owned by `file`, which outlives the call and
         // is not closed until the returned guard is dropped. `flock` reads no
         // memory through it.
@@ -187,6 +182,21 @@ impl FileOps for StdFileOps {
     }
 }
 
+/// Open a lock file for `flock`, which needs no write permission.
+///
+/// An existing file is opened read-only, so a `.lock` owned by somebody else
+/// (left behind by `sudo broza`) can still be taken or found busy. Only a
+/// missing file is created.
+fn open_lock_file(path: &Path) -> std::io::Result<fs::File> {
+    match fs::OpenOptions::new().read(true).open(path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// An exclusive `flock`, released when the descriptor closes.
 struct StdFsLock {
     /// Never read: closing it is what releases the lock.
@@ -203,7 +213,7 @@ impl FsLock for StdFsLock {}
 /// ([`RenameMode::CheckedFallback`]) instead of being left to assume the
 /// kernel guaranteed something it did not.
 fn checked_rename(from: &Path, to: &Path, context: String) -> Result<RenameMode, BrozaError> {
-    if path_exists(to) {
+    if from != to && path_exists(to) {
         return Err(BrozaError::Io {
             context,
             source: std::io::Error::from(std::io::ErrorKind::AlreadyExists),

@@ -554,6 +554,7 @@ Every `--json` output shares this structure:
 | `untracked_bytes` | `warnings[]` | `quarantine list`: the session holds more than its manifest accounts for, and its `total_bytes` includes it. |
 | `session_incomplete` | `warnings[]` | The session is not marked finished: a `clean` may still be running. |
 | `session_busy` | `errors[]`, or `warnings[]` on `list` | Another Broza holds the session's lock. Nothing is moved or removed; `list` still shows it. |
+| `lock_unreadable` | `warnings[]` on `list`; `errors[]` on `expire`/`purge`/`restore` | The session's `.lock` exists but cannot be opened (for example a root-owned file left by `sudo broza`). The session is listed and skipped; nothing automatic touches it until the file is readable or removed. |
 | `session_left_behind` | `warnings[]` | Every item was restored but the empty session directory could not be removed. |
 | `session_has_untracked_items` | `errors[]` | A restore emptied the manifest while the directory still holds files. The session is kept in `restoring` and reported; this is the corruption case. |
 | `exclusive_rename_unsupported` | `warnings[]` | The filesystem has no atomic exclusive rename (exFAT, some network volumes), so the destination was checked first. Nothing was replaced, but the move was not atomic. |
@@ -1042,3 +1043,4 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §4.1 (M3, unreleased): the envelope codes of the quarantine store are listed.
 - §3.5/§3.8 (M3, unreleased): every operation that writes to a session holds `<session>/.lock`
   for its duration; a session another Broza holds is reported `session_busy` and left alone.
+- §4.1 (M3, unreleased): `lock_unreadable` store code; a lock Broza cannot open never aborts a multi-session run.

@@ -13,6 +13,7 @@ use crate::BrozaError;
 use crate::model::{QuarantineList, QuarantineSession, SessionState, Warning};
 use crate::ports::{Clock, FileOps};
 use crate::quarantine::entries::held_bytes;
+use crate::quarantine::layout;
 use crate::quarantine::measure::measure_dir_bytes;
 use crate::quarantine::report::{Reported, diagnostic};
 use crate::quarantine::store::StoredSession;
@@ -24,6 +25,8 @@ pub const SESSION_INCOMPLETE: &str = "session_incomplete";
 pub const UNTRACKED_BYTES: &str = "untracked_bytes";
 /// Warning code for a session another Broza is writing right now.
 pub const SESSION_BUSY: &str = "session_busy";
+/// Warning: the session's lock file cannot be opened by this Broza.
+pub const LOCK_UNREADABLE: &str = "lock_unreadable";
 
 /// Every session in the store, newest first.
 ///
@@ -50,12 +53,7 @@ pub fn list_sessions(
         .iter()
         .map(|stored| summarise(stored, retention, now, fs))
         .collect::<Result<Vec<QuarantineSession>, BrozaError>>()?;
-    let warnings = found
-        .sessions
-        .iter()
-        .map(|stored| session_warnings(stored, fs))
-        .collect::<Result<Vec<Vec<Warning>>, BrozaError>>()?
-        .concat();
+    let warnings = found.sessions.iter().flat_map(|stored| session_warnings(stored, fs)).collect::<Vec<_>>();
     let list = QuarantineList {
         quarantine_path: root.to_path_buf(),
         total_bytes: sum_bytes(&sessions, |_| true),
@@ -107,10 +105,12 @@ fn orphan_bytes(stored: &StoredSession, fs: &dyn FileOps) -> Result<u64, BrozaEr
 /// that the figures are a snapshot of something in motion. Hiding it would be
 /// the one thing worse than showing it: the user would think the space was
 /// already gone.
-fn session_warnings(stored: &StoredSession, fs: &dyn FileOps) -> Result<Vec<Warning>, BrozaError> {
+fn session_warnings(stored: &StoredSession, fs: &dyn FileOps) -> Vec<Warning> {
     let mut warnings = Vec::new();
-    if lock::take_if_present(fs, &stored.dir)?.is_busy() {
-        warnings.push(busy(stored));
+    match lock::take_if_present(fs, &stored.dir) {
+        lock::Taken::Held(_) => {}
+        lock::Taken::Busy => warnings.push(busy(stored)),
+        lock::Taken::Unavailable(error) => warnings.push(unlockable(stored, &error)),
     }
     if stored.session().state == SessionState::InProgress {
         warnings.push(incomplete(stored.id.as_str(), &stored.dir));
@@ -118,7 +118,24 @@ fn session_warnings(stored: &StoredSession, fs: &dyn FileOps) -> Result<Vec<Warn
     if !stored.is_accounted_for() {
         warnings.push(untracked(stored));
     }
-    Ok(warnings)
+    warnings
+}
+
+/// The warning a session whose lock Broza cannot open earns.
+///
+/// Typically a root-owned `.lock` left behind by `sudo broza`. The session is
+/// still listed; nothing automatic will touch it until the lock is readable.
+fn unlockable(stored: &StoredSession, error: &BrozaError) -> Warning {
+    diagnostic(
+        LOCK_UNREADABLE,
+        format!(
+            "session `{}` has a lock file Broza cannot open ({error}); it is listed but no \
+             automatic step will touch it. Fix its permissions or remove `{}`.",
+            stored.id,
+            layout::lock_path(&stored.dir).display()
+        ),
+        Some(&stored.dir),
+    )
 }
 
 /// The warning a session someone is working on earns.

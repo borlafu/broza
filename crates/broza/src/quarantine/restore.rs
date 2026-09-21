@@ -132,10 +132,11 @@ fn restore_one(
         Ok(found) => found,
         Err(error) => return Ok(unreadable(&wanted.session, root, &error)),
     };
-    let held = lock::take(fs, &found.dir)?;
-    if held.is_busy() {
-        return Ok(busy(&found));
-    }
+    let held = match lock::take(fs, &found.dir) {
+        lock::Taken::Held(held) => held,
+        lock::Taken::Busy => return Ok(busy(&found)),
+        lock::Taken::Unavailable(error) => return Ok(unreadable(&wanted.session, root, &error)),
+    };
     let manifest = write_state(&found.dir, &found.manifest, SessionState::Restoring, fs)?;
     let order = restore_order(manifest.session.entries.clone(), wanted);
     let pass = order

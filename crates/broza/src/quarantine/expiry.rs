@@ -65,7 +65,9 @@ pub fn expired_sessions(
         // A session a Broza is writing is not idle, whatever its age says: with
         // `quarantine-ttl 0` every session is past its time the moment it is
         // created, and the one being filled right now must not be swept away.
-        if lock::take_if_present(fs, &found.dir)?.is_busy() {
+        // A lock Broza cannot open is treated like a busy one: `list` reports
+        // it; an unattended sweep never guesses.
+        if !matches!(lock::take_if_present(fs, &found.dir), lock::Taken::Held(_)) {
             continue;
         }
         due.push(found.id);
@@ -166,10 +168,11 @@ fn remove_session(
     if found.session().state == SessionState::Restoring {
         return Ok(refused(&found, &ItemErrorCode::SessionBusy));
     }
-    let held = lock::take(fs, &found.dir)?;
-    if held.is_busy() {
-        return Ok(refused(&found, &ItemErrorCode::SessionBusy));
-    }
+    let held = match lock::take(fs, &found.dir) {
+        lock::Taken::Held(held) => held,
+        lock::Taken::Busy => return Ok(refused(&found, &ItemErrorCode::SessionBusy)),
+        lock::Taken::Unavailable(error) => return Ok(unreadable(id, root, &error)),
+    };
     if operation == OperationKind::Expire && !found.is_accounted_for() {
         return Ok(Removed { errors: found.orphan_errors(), ..refused(&found, &orphaned()) });
     }

@@ -88,13 +88,16 @@ pub fn quarantine_items(
     let (plan, dir) = claim_session(root, token.plan(), fs)?;
     // Held until the move is over: nothing may expire, purge or restore a
     // session while its items are still arriving.
-    let held = lock::take(fs, &dir)?;
-    if held.is_busy() {
-        return Err(desynchronised(&format!(
-            "session `{}` is already being written by another Broza",
-            plan.session_id()
-        )));
-    }
+    let held = match lock::take(fs, &dir) {
+        lock::Taken::Held(held) => held,
+        lock::Taken::Unavailable(error) => return Err(error),
+        lock::Taken::Busy => {
+            return Err(desynchronised(&format!(
+                "session `{}` is already being written by another Broza",
+                plan.session_id()
+            )));
+        }
+    };
     let context = Context::new(&plan, dir, token.items(), request, fs)?;
     let session = new_session(&plan, &context, clock, request.ttl)?;
     let progress = Progress::new(Manifest::new(session), plan);

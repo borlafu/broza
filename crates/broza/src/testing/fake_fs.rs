@@ -144,8 +144,11 @@ impl FileOps for FakeFileOps {
     }
 
     fn exists(&self, path: &Path) -> bool {
+        // `lstat` answers for a denied directory itself; only what is *inside*
+        // one is unreachable, as on a real filesystem.
         let tree = lock(&self.tree);
-        !tree.is_denied(path) && resolve_parent(&tree, path).is_ok_and(|resolved| tree.exists(&resolved))
+        let under_denied = path.parent().is_some_and(|parent| tree.is_denied(parent));
+        !under_denied && resolve_parent(&tree, path).is_ok_and(|resolved| tree.exists(&resolved))
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<(), BrozaError> {
@@ -219,8 +222,9 @@ impl FileOps for FakeFileOps {
             return Err(not_found(from));
         }
         if source == destination {
-            // `rename(2)` on macOS succeeds and changes nothing.
-            return Ok(RenameMode::Exclusive);
+            // `rename(2)` on macOS succeeds and changes nothing; the mode still
+            // says what this filesystem can guarantee.
+            return Ok(self.rename_mode_for(&destination));
         }
         if tree.exists(&destination) {
             let context = format!("rename {} to {} without replacing it", from.display(), to.display());

@@ -54,7 +54,7 @@ pub(super) fn rebuild(plan: &CleanPlan, outcomes: &[Outcome]) -> Result<Approved
             OutcomeKind::Missing => None,
         })
         .collect();
-    Ok(ApprovedPlan { plan, items })
+    Ok(ApprovedPlan::new(plan, items))
 }
 
 fn desynchronised(item: &CleanItem) -> GuardRejection {

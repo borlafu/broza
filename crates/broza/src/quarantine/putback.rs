@@ -1,0 +1,294 @@
+//! Putting one quarantined item back where it came from.
+//!
+//! Two tokens gate every entry, because a restore writes in two places:
+//! [`Approved<QuarantineWrite>`](crate::safety::guard::QuarantineWrite) says the
+//! stored item may be moved, and
+//! [`Approved<RestoreWrite>`](crate::safety::guard::RestoreWrite) says the
+//! destination is somewhere Broza may write. `original_path` comes out of a
+//! file on disk; without the second token a hand-edited manifest would turn
+//! `broza restore` into "put this anywhere I say".
+//!
+//! Broza never overwrites: an entry whose destination already exists is
+//! `skipped` with `collision`, the rename itself refuses to replace anything,
+//! and `--to` changes only *where* the item lands, never that rule
+//! (`docs/cli-spec.md` §3.5).
+//!
+//! A parent directory that disappeared while the item was in quarantine is
+//! recreated with the default mode. Broza does not reproduce the mode the
+//! original directory had — it never recorded it — so an item restored into a
+//! recreated parent inherits `umask`, and a user who cares about the mode of a
+//! directory under `$HOME` should check it after a restore.
+
+use std::path::{Path, PathBuf};
+
+use crate::BrozaError;
+use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry, Warning};
+use crate::ports::FileOps;
+use crate::quarantine::entries::sequence_in;
+use crate::quarantine::guarded::{Recheck, io_code, recheck};
+use crate::quarantine::layout;
+use crate::quarantine::report::rename_warning;
+use crate::safety::guard::{Approved, ApprovedItem, RestoreWrite};
+
+/// Where an entry goes back to.
+///
+/// Without `--to` that is the path it came from. With `--to` it is
+/// `<to>/<seq>_<basename>`: the sequence keeps two entries that share a
+/// basename — `node_modules` from two different projects — apart.
+pub fn destination(entry: &QuarantineEntry, to: Option<&Path>) -> PathBuf {
+    match to {
+        None => entry.original_path.clone(),
+        Some(directory) => directory.join(alternative_name(entry)),
+    }
+}
+
+/// `<seq>_<basename>`, the name an entry takes inside a `--to` directory.
+fn alternative_name(entry: &QuarantineEntry) -> String {
+    let basename = layout::basename(&entry.original_path).to_string_lossy().into_owned();
+    let sequence = sequence_in(entry).map_or_else(|| "0000".to_owned(), layout::sequence_label);
+    format!("{sequence}_{basename}")
+}
+
+/// Move one entry out of the store, and return the entry it became.
+///
+/// # Errors
+///
+/// [`BrozaError::Other`] when a token does not cover the path it is supposed to
+/// authorise. That is a caller bug — the destinations come from
+/// [`session_destinations`](crate::quarantine::restore::session_destinations),
+/// so the approved list and the restored list are the same list — and writing to an
+/// unapproved path is exactly what the tokens exist to prevent. Every other
+/// failure belongs to the entry and comes back as a `skipped` or `failed` entry
+/// carrying the reason.
+pub fn put_back(
+    entry: &QuarantineEntry,
+    to: Option<&Path>,
+    sources: &[ApprovedItem],
+    targets: &Approved<RestoreWrite>,
+    fs: &dyn FileOps,
+) -> Result<PutBack, BrozaError> {
+    let Some(stored) = entry.stored_path.clone() else {
+        return Ok(PutBack::from(refused(entry, ItemStatus::Failed, ItemErrorCode::NotFound)));
+    };
+    let destination = destination(entry, to);
+    if !targets.covers(&destination) {
+        return Err(unapproved(&destination));
+    }
+    if fs.exists(&destination) {
+        return Ok(PutBack::from(refused(entry, ItemStatus::Skipped, ItemErrorCode::Collision)));
+    }
+    if let Recheck::Refused(code) = recheck(sources, &stored, fs)? {
+        return Ok(PutBack::from(refused(entry, ItemStatus::Failed, code)));
+    }
+    if let Err(error) = make_room(&destination, fs) {
+        return Ok(PutBack::from(refused(entry, ItemStatus::Failed, io_code(&error))));
+    }
+    Ok(match fs.rename_exclusive(&stored, &destination) {
+        Ok(mode) => {
+            PutBack { warning: rename_warning(mode, &destination), entry: restored(entry, destination) }
+        }
+        Err(error) => PutBack::from(refused(entry, ItemStatus::Failed, io_code(&error))),
+    })
+}
+
+/// What putting one entry back produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PutBack {
+    /// The entry it became.
+    pub entry: QuarantineEntry,
+    /// What the user should know about how it got there.
+    pub warning: Option<Warning>,
+}
+
+impl From<QuarantineEntry> for PutBack {
+    fn from(entry: QuarantineEntry) -> Self {
+        Self { entry, warning: None }
+    }
+}
+
+/// A destination the guard never approved.
+fn unapproved(destination: &Path) -> BrozaError {
+    BrozaError::Other(format!(
+        "quarantine restore: `{}` is not one of the destinations the guard approved",
+        destination.display()
+    ))
+}
+
+/// Recreate the parent directory the item used to live in, if it is gone.
+fn make_room(destination: &Path, fs: &dyn FileOps) -> Result<(), BrozaError> {
+    match destination.parent() {
+        Some(parent) if !fs.exists(parent) => fs.create_dir_all(parent),
+        _ => Ok(()),
+    }
+}
+
+/// The entry an item that went back became: it no longer lives in the store.
+fn restored(entry: &QuarantineEntry, destination: PathBuf) -> QuarantineEntry {
+    QuarantineEntry {
+        stored_path: None,
+        restored_to: Some(destination),
+        status: ItemStatus::Restored,
+        error: None,
+        ..entry.clone()
+    }
+}
+
+/// The entry an item that stayed in the store became.
+fn refused(entry: &QuarantineEntry, status: ItemStatus, error: ItemErrorCode) -> QuarantineEntry {
+    QuarantineEntry { status, error: Some(error), ..entry.clone() }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::{destination, put_back};
+    use crate::BrozaError;
+    use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry};
+    use crate::ports::FileOps;
+    use crate::quarantine::fixtures::{HOME, ROOT, entry, session_dir, store_fs};
+    use crate::safety::guard::{
+        Approved, ApprovedItem, RestoreRequest, RestoreWrite, approve_quarantine_write,
+        approve_restore_targets,
+    };
+    use crate::testing::{FakeFileOps, mac_mount_table};
+
+    const ORIGINAL: &str = "/Users/dana/Library/Caches/app.cache";
+    const RESCUED: &str = "/Users/dana/Rescued";
+
+    fn quarantined() -> QuarantineEntry {
+        entry(1, ORIGINAL, 10, ItemStatus::Quarantined)
+    }
+
+    fn stored_path() -> PathBuf {
+        session_dir().join("items/0001/app.cache")
+    }
+
+    fn tree() -> FakeFileOps {
+        store_fs().with_sized_file(stored_path(), 10)
+    }
+
+    fn sources(fs: &FakeFileOps) -> Vec<ApprovedItem> {
+        approve_quarantine_write(&[stored_path()], Path::new(ROOT), &mac_mount_table(), fs)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .items()
+            .to_vec()
+    }
+
+    fn targets(fs: &FakeFileOps, to: Option<&Path>) -> Approved<RestoreWrite> {
+        let wanted = vec![destination(&quarantined(), to)];
+        let request = RestoreRequest {
+            to: to.map(Path::to_path_buf),
+            quarantine_root: Some(PathBuf::from(ROOT)),
+            ..RestoreRequest::new(HOME)
+        };
+        approve_restore_targets(&wanted, &request, &mac_mount_table(), fs)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    fn back(fs: &FakeFileOps, to: Option<&Path>) -> QuarantineEntry {
+        put_back(&quarantined(), to, &sources(fs), &targets(fs, to), fs)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .entry
+    }
+
+    #[test]
+    fn an_item_goes_back_to_the_path_it_came_from() {
+        let fs = tree();
+
+        let restored = back(&fs, None);
+
+        assert_eq!(restored.status, ItemStatus::Restored);
+        assert_eq!(restored.restored_to, Some(PathBuf::from(ORIGINAL)));
+        assert!(restored.stored_path.is_none(), "it no longer lives in the store");
+        assert!(fs.exists(Path::new(ORIGINAL)));
+        assert!(!fs.exists(&stored_path()));
+    }
+
+    #[test]
+    fn a_missing_parent_directory_is_recreated() {
+        let fs = tree();
+
+        back(&fs, None);
+
+        assert!(fs.exists(Path::new("/Users/dana/Library/Caches")));
+    }
+
+    #[test]
+    fn an_occupied_original_path_is_skipped_rather_than_overwritten() {
+        let fs = tree().with_sized_file(ORIGINAL, 999);
+
+        let skipped = back(&fs, None);
+
+        assert_eq!(skipped.status, ItemStatus::Skipped);
+        assert_eq!(skipped.error, Some(ItemErrorCode::Collision));
+        assert_eq!(fs.metadata(Path::new(ORIGINAL)).map(|meta| meta.size_bytes).ok(), Some(999));
+        assert!(fs.exists(&stored_path()), "the item stays in the store");
+    }
+
+    #[test]
+    fn an_alternative_directory_keeps_the_basename_behind_the_sequence() {
+        let fs = tree().with_dir(RESCUED);
+
+        let restored = back(&fs, Some(Path::new(RESCUED)));
+
+        assert_eq!(destination(&quarantined(), Some(Path::new("/x"))), PathBuf::from("/x/0001_app.cache"));
+        assert_eq!(restored.restored_to, Some(PathBuf::from(RESCUED).join("0001_app.cache")));
+        assert!(fs.exists(&PathBuf::from(RESCUED).join("0001_app.cache")));
+        assert!(!fs.exists(Path::new(ORIGINAL)), "--to never touches the original path");
+    }
+
+    #[test]
+    fn an_entry_without_a_stored_path_fails_as_missing() {
+        let fs = tree();
+        let never_moved = QuarantineEntry { stored_path: None, ..quarantined() };
+
+        let failed = put_back(&never_moved, None, &sources(&fs), &targets(&fs, None), &fs)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .entry;
+
+        assert_eq!(failed.status, ItemStatus::Failed);
+        assert_eq!(failed.error, Some(ItemErrorCode::NotFound));
+    }
+
+    #[test]
+    fn a_stored_item_that_changed_since_the_check_is_not_moved() {
+        let fs = tree();
+        let items = sources(&fs);
+        let destinations = targets(&fs, None);
+        fs.remove_tree(&stored_path()).unwrap_or_else(|error| panic!("{error}"));
+        fs.add_file(stored_path(), b"an impostor");
+
+        let failed = put_back(&quarantined(), None, &items, &destinations, &fs)
+            .unwrap_or_else(|error| panic!("{error}"))
+            .entry;
+
+        assert_eq!(failed.status, ItemStatus::Failed);
+        assert!(!fs.exists(Path::new(ORIGINAL)));
+    }
+
+    #[test]
+    fn a_stored_path_the_token_does_not_cover_stops_the_restore() {
+        let fs = tree();
+        let nothing = approve_quarantine_write(&[], Path::new(ROOT), &mac_mount_table(), &fs)
+            .unwrap_or_else(|error| panic!("{error}"));
+
+        let error = put_back(&quarantined(), None, nothing.items(), &targets(&fs, None), &fs);
+
+        assert!(matches!(error, Err(BrozaError::Other(_))), "{error:?}");
+    }
+
+    #[test]
+    fn a_destination_the_guard_never_approved_stops_the_restore() {
+        let fs = tree();
+        let elsewhere = vec![PathBuf::from("/Users/dana/Documents/other")];
+        let approved =
+            approve_restore_targets(&elsewhere, &RestoreRequest::new(HOME), &mac_mount_table(), &fs)
+                .unwrap_or_else(|error| panic!("{error}"));
+
+        let error = put_back(&quarantined(), None, &sources(&fs), &approved, &fs);
+
+        assert!(matches!(error, Err(BrozaError::Other(_))), "{error:?}");
+        assert!(!fs.exists(Path::new(ORIGINAL)), "nothing was written");
+    }
+}

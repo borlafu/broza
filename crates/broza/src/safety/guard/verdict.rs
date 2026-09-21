@@ -12,13 +12,16 @@ use crate::scan::MountTable;
 
 /// Check 0b: a quarantine store outside the allowlist would be a second, unchecked
 /// write target.
+///
+/// Returns the store as the guard resolved it, so the token can carry the only
+/// spelling of it that was actually checked.
 pub(super) fn check_quarantine_root(
     req: &WriteRequest,
     mounts: &MountTable,
     fs: &dyn FileOps,
-) -> Result<(), GuardRejection> {
+) -> Result<Option<std::path::PathBuf>, GuardRejection> {
     let Some(store_root) = req.quarantine_root.as_ref() else {
-        return Ok(());
+        return Ok(None);
     };
     let roots = req.allowed_roots()?;
     let checked = canonicalize_no_follow(store_root, fs).map_err(|error| GuardRejection::InvalidRoot {
@@ -26,7 +29,8 @@ pub(super) fn check_quarantine_root(
         reason: error.to_string(),
     })?;
     let mount = resolve_volume(&checked, mounts)?;
-    validate_quarantine_root(&checked.path, &roots, mount, mounts)
+    validate_quarantine_root(&checked.path, &roots, mount, mounts)?;
+    Ok(Some(checked.path))
 }
 
 /// Check 1: without `--apply` the plan must already be, and stay, a dry run.

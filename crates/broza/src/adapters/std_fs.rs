@@ -1,8 +1,22 @@
 //! Real filesystem adapter built on `std::fs` and `std::os::unix::fs::MetadataExt`.
 //!
-//! No `libc` and no `unsafe`: everything Broza needs from `stat` is already exposed by
-//! [`MetadataExt`]. Symlinks are never followed — `metadata` is an `lstat` and
-//! `remove_tree` on a link removes the link, not what it points at.
+//! Everything Broza needs from `stat` is already exposed by [`MetadataExt`], so
+//! the only `libc` calls here are `renamex_np` and `flock`: `std` wraps neither
+//! the `RENAME_EXCL` flag that makes a rename refuse to replace its
+//! destination, nor an advisory whole-file lock. Symlinks are never followed —
+//! `metadata` is an `lstat` and `remove_tree` on a link removes the link, not
+//! what it points at.
+//!
+//! # Filesystems that do not have `renamex_np`
+//!
+//! APFS and HFS+ implement it. exFAT and several network filesystems answer
+//! `ENOTSUP`, and Broza then checks the destination itself and reports
+//! [`RenameMode::CheckedFallback`] so the caller can warn that the move was not
+//! atomic against a concurrent writer. The behaviour is pinned by a fake that
+//! reproduces `ENOTSUP`
+//! ([`FakeFileOps::deny_exclusive_rename`](crate::testing::FakeFileOps::deny_exclusive_rename));
+//! a real exFAT volume cannot be mounted from a test, so that path is verified
+//! against the documented errno rather than against hardware.
 
 use std::fs::{self, Permissions};
 use std::io::Write;
@@ -15,7 +29,8 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::BrozaError;
 use crate::adapters::io_error::from_io;
-use crate::ports::{DirListing, EntryMetadata, FileOps};
+use crate::adapters::std_fs_exclusive as exclusive;
+use crate::ports::{DirListing, EntryMetadata, FileOps, FsLock, RenameMode};
 
 /// Size of the blocks `st_blocks` counts, fixed at 512 bytes by POSIX.
 const STAT_BLOCK_BYTES: u64 = 512;
@@ -117,6 +132,19 @@ impl FileOps for StdFileOps {
     fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError> {
         fs::read(path).map_err(|source| from_io(format!("read {}", path.display()), path, source))
     }
+
+    fn create_dir_exclusive(&self, path: &Path) -> Result<(), BrozaError> {
+        fs::create_dir(path)
+            .map_err(|source| from_io(format!("create directory {}", path.display()), path, source))
+    }
+
+    fn rename_exclusive(&self, from: &Path, to: &Path) -> Result<RenameMode, BrozaError> {
+        exclusive::rename_exclusive(from, to)
+    }
+
+    fn lock_exclusive(&self, path: &Path) -> Result<Box<dyn FsLock>, BrozaError> {
+        exclusive::lock_exclusive(path)
+    }
 }
 
 /// Permission bits a path the caller already owns keeps through a rewrite.
@@ -132,7 +160,7 @@ fn existing_mode(path: &Path) -> Option<u32> {
 ///
 /// The kernel reports one errno for the whole operation, so a missing destination
 /// directory arrives as `ENOENT` and would otherwise be blamed on the source.
-fn blame_rename<'a>(from: &'a Path, to: &'a Path, source: &std::io::Error) -> &'a Path {
+pub(super) fn blame_rename<'a>(from: &'a Path, to: &'a Path, source: &std::io::Error) -> &'a Path {
     if source.kind() != std::io::ErrorKind::NotFound || !path_exists(from) {
         return from;
     }
@@ -140,7 +168,7 @@ fn blame_rename<'a>(from: &'a Path, to: &'a Path, source: &std::io::Error) -> &'
 }
 
 /// `true` when something is at `path`, symlinks not followed.
-fn path_exists(path: &Path) -> bool {
+pub(super) fn path_exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 

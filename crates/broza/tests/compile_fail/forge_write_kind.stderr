@@ -16,6 +16,8 @@ help: the following other types implement trait `guard::seal::Sealed`
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `broza::safety::Write`
    | impl seal::Sealed for QuarantineWrite {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `QuarantineWrite`
+   | impl seal::Sealed for RestoreWrite {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `RestoreWrite`
    | impl seal::Sealed for SnapshotDelete {}
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `SnapshotDelete`
 note: required by a bound in `WriteKind`
@@ -27,4 +29,5 @@ note: required by a bound in `WriteKind`
    = help: the following types implement the trait:
              broza::safety::Write
              broza::safety::QuarantineWrite
+             broza::safety::RestoreWrite
              broza::safety::SnapshotDelete

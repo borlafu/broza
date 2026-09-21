@@ -22,12 +22,16 @@ mod checks;
 mod item;
 mod narrow;
 mod rebuild;
+mod restore;
 mod token;
 mod verdict;
 
 pub use checks::approve;
 pub use narrow::{approve_quarantine_write, narrow_to_snapshot_delete};
-pub use token::{Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, SnapshotDelete, Write, WriteKind};
+pub use restore::{RestoreRequest, approve_restore_targets};
+pub use token::{
+    Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, RestoreWrite, SnapshotDelete, Write, WriteKind,
+};
 
 /// Shared with `clean::planner` so the plan and the guard agree on what
 /// `--purge` means; see [`item::expected_action`].
@@ -213,10 +217,10 @@ mod tests {
     }
 
     fn payload() -> ApprovedPlan {
-        ApprovedPlan {
-            plan: CleanPlan::dry_run(session(), Vec::new()).unwrap_or_else(|error| panic!("{error}")),
-            items: vec![evidence_for("/Users/dana/x", 2, 7)],
-        }
+        ApprovedPlan::new(
+            CleanPlan::dry_run(session(), Vec::new()).unwrap_or_else(|error| panic!("{error}")),
+            vec![evidence_for("/Users/dana/x", 2, 7)],
+        )
     }
 
     fn pending(mode: ConfirmationMode) -> PendingApproval {

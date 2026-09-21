@@ -6,21 +6,38 @@
 //! volume of that name — and it is also the cheap-to-expensive order, because
 //! only the last two need to enumerate the machine.
 //!
+//! A volume is named the way `scan --volume` names one — by BSD id, Finder
+//! name or mount point, through the shared matcher in
+//! [`crate::commands::target`] — so a name that works in one command works in
+//! the other.
+//!
 //! A path is normalised **lexically**: `.` and `..` are resolved textually and
-//! `..` can never climb above the root. Nothing is followed and nothing is
-//! opened; asking what a path *would* live on must not require the path to
-//! exist, and must not be answerable by planting a symlink.
+//! `..` can never climb above the root, so no target can name anything above
+//! `/` and no symlink can redirect the answer. It must then exist, because
+//! every string normalises to *some* path and a typo must be an exit `4`
+//! rather than a confident description of the working directory's volume. What
+//! is explained is the volume the path lives on, and the human output says
+//! which volume that is.
+//!
+//! Output is the three-section human form, `--short`'s single line, or the
+//! `--json` envelope of §4.7. There is no `--csv`: an explanation is prose,
+//! not a table, and `Cli::validate` rejects the flag before this module runs.
+//!
+//! Nothing here writes: `explain` reads the disk layout and the filesystem
+//! only to say what it found.
 
 use std::path::{Component, Path, PathBuf};
 
 use broza::detect::ExplainReport;
-use broza::model::{Category, Envelope, Host, Volume, VolumeId, Warning};
+use broza::model::{Category, Disk, Envelope, FsKind, Host, Volume, Warning};
 use broza::ports::Ports;
 use broza::{BrozaError, ExitCode};
 use jiff::Timestamp;
 
 use crate::args::ExplainArgs;
 use crate::commands::Outcome;
+use crate::commands::mount::mount_table;
+use crate::commands::target::matches_volume;
 use crate::output::human::explain as human_explain;
 use crate::output::{ColorPolicy, OutputFormat, Renderer, envelope_to_json};
 
@@ -76,17 +93,40 @@ fn resolve(context: &ExplainContext<'_>) -> Result<(ExplainReport, Vec<Warning>)
     let enumeration = context.ports.disks.enumerate()?;
     let warnings = [context.warnings.clone(), enumeration.warnings].concat();
     if let Some(volume) = volume_named(&enumeration.disks, target) {
-        return Ok((ExplainReport::for_volume(volume), warnings));
+        let report = ExplainReport::for_volume(volume.clone());
+        return Ok((with_filesystem(report, &enumeration.disks, &volume), warnings));
     }
     let path = normalize(Path::new(target), context.cwd);
     if !context.ports.fs.exists(&path) {
         return Err(BrozaError::TargetNotFound(unresolved(target)));
     }
-    let mount = broza::adapters::system_mount_table(&enumeration.disks)?;
+    let mount = mount_table(context.ports, &enumeration.disks)?;
     let warnings = [warnings, mount.warnings].concat();
     let entry =
         mount.table.volume_for(&path).ok_or_else(|| BrozaError::TargetNotFound(unresolved(target)))?;
-    Ok((ExplainReport::for_path(&path, entry.volume.clone()), warnings))
+    let volume = entry.volume.clone();
+    let report = ExplainReport::for_path(&path, volume.clone());
+    Ok((with_filesystem(report, &enumeration.disks, &volume), warnings))
+}
+
+/// Record which filesystem `volume`'s container uses, when `disks` knows.
+///
+/// The header says `APFS role:` or `HFS+ role:` from this; without it the
+/// command would call an `HFS+` volume on a disk image an APFS one.
+fn with_filesystem(report: ExplainReport, disks: &[Disk], volume: &Volume) -> ExplainReport {
+    match filesystem_of(disks, volume) {
+        Some(kind) => report.on_filesystem(kind),
+        None => report,
+    }
+}
+
+/// The `type` of the container `volume` belongs to.
+fn filesystem_of(disks: &[Disk], volume: &Volume) -> Option<FsKind> {
+    disks
+        .iter()
+        .flat_map(|disk| &disk.containers)
+        .find(|container| container.volumes.iter().any(|candidate| candidate.id == volume.id))
+        .map(|container| container.kind.clone())
 }
 
 /// Why nothing matched, in the order the specification resolves targets.
@@ -103,17 +143,12 @@ fn unresolved(target: &str) -> String {
 }
 
 /// The volume `target` names: by BSD id, by Finder name, or by mount point.
-fn volume_named(disks: &[broza::model::Disk], target: &str) -> Option<Volume> {
-    let wanted: Option<VolumeId> = target.parse().ok();
+fn volume_named(disks: &[Disk], target: &str) -> Option<Volume> {
     disks
         .iter()
         .flat_map(|disk| &disk.containers)
         .flat_map(|container| &container.volumes)
-        .find(|volume| {
-            wanted.as_ref() == Some(&volume.id)
-                || volume.name == target
-                || volume.mount_point.as_deref() == Some(Path::new(target))
-        })
+        .find(|volume| matches_volume(volume, target))
         .cloned()
 }
 
@@ -176,7 +211,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use broza::detect::ExplainKind;
-    use broza::model::{Container, Disk, FsKind, VolumeRole};
+    use broza::model::{Container, Disk, FsKind, VolumeId, VolumeRole};
 
     use super::*;
 
@@ -227,6 +262,116 @@ mod tests {
             policy: ColorPolicy::Never,
             short,
         }
+    }
+
+    /// `run` against fakes: no process, no disk, no real filesystem.
+    fn run_with(target: &str, short: bool, format: OutputFormat) -> Result<Outcome, BrozaError> {
+        let (ports, handles) = broza::testing::fake_ports();
+        handles.disks.set_disks(disks());
+        handles.fs.add_root("/", 1);
+        handles.fs.add_root("/System/Volumes/Data", 2);
+        handles.fs.add_dir("/Users");
+        handles.fs.add_file("/usr/share/firmlinks", b"/Users\tUsers\n");
+        let args = ExplainArgs { target: target.to_owned(), short };
+        run(&ExplainContext {
+            ports: &ports,
+            args: &args,
+            cwd: Some(Path::new("/")),
+            host: Host { macos_version: "26.1".into(), arch: "arm64".into() },
+            generated_at: "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}")),
+            warnings: Vec::new(),
+            policy: ColorPolicy::Never,
+            format,
+        })
+    }
+
+    #[test]
+    fn a_category_target_is_answered_without_enumerating_anything() {
+        let (ports, handles) = broza::testing::fake_ports();
+        let args = ExplainArgs { target: "snapshots".to_owned(), short: false };
+
+        let outcome = run(&ExplainContext {
+            ports: &ports,
+            args: &args,
+            cwd: None,
+            host: Host { macos_version: "26.1".into(), arch: "arm64".into() },
+            generated_at: "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}")),
+            warnings: Vec::new(),
+            policy: ColorPolicy::Never,
+            format: OutputFormat::Human,
+        })
+        .unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(outcome.code, ExitCode::Ok);
+        assert!(outcome.rendered.starts_with("snapshots"), "{}", outcome.rendered);
+        assert!(handles.process.calls().is_empty(), "a category needs no command at all");
+    }
+
+    #[test]
+    fn a_volume_target_is_answered_with_the_filesystem_of_its_container() {
+        let outcome = run_with("disk3s5", false, OutputFormat::Human).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(outcome.rendered.contains("APFS role: Data"), "{}", outcome.rendered);
+    }
+
+    #[test]
+    fn a_path_target_is_answered_through_the_mount_table() {
+        let outcome = run_with("/Users", false, OutputFormat::Json).unwrap_or_else(|e| panic!("{e}"));
+
+        let value: serde_json::Value =
+            serde_json::from_str(&outcome.rendered).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(value["data"]["kind"], "path");
+        assert_eq!(value["data"]["path"], "/Users");
+        assert_eq!(value["data"]["volume"]["id"], "disk3s5", "the firmlink sent it to the data volume");
+        assert_eq!(value["data"]["filesystem"], "apfs");
+    }
+
+    #[test]
+    fn a_short_run_is_one_line() {
+        let outcome = run_with("disk3s5", true, OutputFormat::Human).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(!outcome.rendered.contains('\n'), "{}", outcome.rendered);
+    }
+
+    #[test]
+    fn a_target_that_exists_nowhere_is_not_found() {
+        for target in ["disk9s9", "No Such Volume", "/nowhere/at/all"] {
+            let error = run_with(target, false, OutputFormat::Human).expect_err("must fail");
+            assert_eq!(ExitCode::from(&error), ExitCode::TargetNotFound, "{target}");
+        }
+    }
+
+    #[test]
+    fn a_path_on_a_volume_the_mount_table_does_not_know_is_not_found() {
+        let (ports, handles) = broza::testing::fake_ports();
+        // A machine whose only volume is unmounted: the path exists, and no
+        // volume can claim it.
+        let mut unmounted = disks();
+        unmounted[0].containers[0].volumes = vec![volume("disk3s2", "Preboot", VolumeRole::Preboot, None)];
+        handles.disks.set_disks(unmounted);
+        handles.fs.add_dir("/Users");
+        let args = ExplainArgs { target: "/Users".to_owned(), short: false };
+
+        let error = run(&ExplainContext {
+            ports: &ports,
+            args: &args,
+            cwd: None,
+            host: Host { macos_version: "26.1".into(), arch: "arm64".into() },
+            generated_at: "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}")),
+            warnings: Vec::new(),
+            policy: ColorPolicy::Never,
+            format: OutputFormat::Human,
+        })
+        .expect_err("must fail");
+
+        assert_eq!(ExitCode::from(&error), ExitCode::TargetNotFound);
+    }
+
+    #[test]
+    fn the_filesystem_of_a_volume_no_container_claims_is_unknown() {
+        let orphan = volume("disk9s9", "Ghost", VolumeRole::User, None);
+        assert_eq!(filesystem_of(&disks(), &orphan), None);
+        assert_eq!(with_filesystem(ExplainReport::for_volume(orphan.clone()), &[], &orphan).filesystem, None);
     }
 
     #[test]

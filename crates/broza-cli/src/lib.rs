@@ -1,36 +1,40 @@
 //! Broza command-line interface: argument parsing, rendering, TTY prompting.
 //!
 //! [`run`] is the whole pipeline — parse, snapshot the environment, load and
-//! layer the configuration, dispatch, render, map errors to an [`ExitCode`].
-//! `main.rs` owns the single `process::exit`.
+//! layer the configuration, wire the adapters, dispatch, render, map errors to
+//! an [`ExitCode`]. `main.rs` owns the single `process::exit`.
+//!
+//! The pieces live next door: [`mod@dispatch`] knows which commands exist,
+//! [`reporting`] owns everything written to stderr, [`wiring`] owns the choice
+//! of adapters, and [`output`] owns every rendering.
 
 pub mod args;
 pub mod cli;
 pub mod commands;
+pub mod dispatch;
 pub mod donate;
 pub mod env;
 pub mod host;
 pub mod output;
+pub mod reporting;
 pub mod tty_prompter;
 pub mod wiring;
 
-use std::error::Error as _;
 use std::ffi::OsString;
+use std::sync::Arc;
 
 use broza::config::{CliOverrides, Config, EnvSnapshot};
 use broza::model::Warning;
-use broza::ports::Ports;
 use broza::units::{ByteSize, DurationSpec};
 use broza::{BrozaError, ExitCode};
 use clap::Parser;
-use clap::error::ErrorKind;
 
 use crate::args::split_categories;
 use crate::cli::{Cli, Command, GlobalArgs};
-use crate::commands::Outcome;
-use crate::commands::config::ConfigContext;
+use crate::dispatch::{Inputs, dispatch};
 use crate::env::RuntimeEnv;
-use crate::output::{ColorPolicy, OutputFormat, Renderer, Sink};
+use crate::output::{ColorPolicy, OutputFormat, Sink};
+use crate::reporting::{report_clap_error, report_error, report_warnings};
 
 /// Parse `args` and run the requested command, returning the process exit code.
 pub fn run<I, T>(args: I) -> ExitCode
@@ -72,9 +76,7 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     let (file, effective) = resolve_config(cli, &core_env)?;
 
     let ports = wiring::ports(runtime)?;
-    let report =
-        crate::host::provider(runtime.host_override.as_deref(), std::sync::Arc::clone(&ports.process))
-            .report();
+    let report = crate::host::provider(runtime.host_override.as_deref(), Arc::clone(&ports.process)).report();
     let warnings: Vec<Warning> = report.warning.into_iter().collect();
     let format = OutputFormat::resolve(cli.global.json, cli.global.csv);
     let policy = ColorPolicy::resolve(cli.global.no_color, effective.color, runtime, format);
@@ -87,7 +89,6 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     )?;
     sink.write(&outcome.rendered)?;
     report_warnings(&outcome.warnings, &cli.global, format);
-    report_notes(&outcome.notes, &cli.global);
     Ok(outcome.code)
 }
 
@@ -104,68 +105,6 @@ fn resolve_config(cli: &Cli, core_env: &EnvSnapshot) -> Result<(Config, Config),
     };
     let effective = broza::config::layer(&file, cli.global.profile.as_deref(), core_env, &overrides(cli)?)?;
     Ok((file, effective))
-}
-
-/// Everything `dispatch` needs beyond the command itself.
-struct Inputs<'a> {
-    runtime: &'a RuntimeEnv,
-    ports: Ports,
-    file: Config,
-    effective: Config,
-    host: broza::model::Host,
-    warnings: Vec<Warning>,
-    format: OutputFormat,
-    policy: ColorPolicy,
-}
-
-/// Run one command and render it in the selected format.
-fn dispatch(
-    command: &Command,
-    cli: &Cli,
-    core_env: &EnvSnapshot,
-    inputs: Inputs<'_>,
-) -> Result<Outcome, BrozaError> {
-    let generated_at = jiff::Timestamp::now();
-    match command {
-        Command::About => {
-            let rendered = commands::about::About::new(inputs.host, generated_at, inputs.warnings.clone())
-                .render(inputs.format)?;
-            Ok(Outcome::ok(rendered).with_warnings(inputs.warnings))
-        }
-        Command::Config(args) => {
-            let context = ConfigContext {
-                path: broza::config::resolve_path(cli.global.config.as_deref(), core_env)?,
-                file: inputs.file,
-                effective: inputs.effective,
-                host: inputs.host,
-                generated_at,
-                interactive: inputs.runtime.is_interactive(),
-                warnings: inputs.warnings.clone(),
-            };
-            let rendered = commands::config::run(&args.command, &context)?.render(inputs.format)?;
-            Ok(Outcome::ok(rendered).with_warnings(inputs.warnings))
-        }
-        Command::Scan(args) => commands::scan::run(&commands::scan::ScanContext {
-            ports: &inputs.ports,
-            args,
-            host: inputs.host,
-            generated_at,
-            warnings: inputs.warnings,
-            policy: inputs.policy,
-            format: inputs.format,
-        }),
-        Command::Explain(args) => commands::explain::run(&commands::explain::ExplainContext {
-            ports: &inputs.ports,
-            args,
-            cwd: inputs.runtime.cwd.as_deref(),
-            host: inputs.host,
-            generated_at,
-            warnings: inputs.warnings,
-            policy: inputs.policy,
-            format: inputs.format,
-        }),
-        other => Err(commands::not_implemented(other.name())),
-    }
 }
 
 /// Values the flags contribute to the configuration layering.
@@ -213,59 +152,6 @@ fn print_short_help(sink: &Sink) -> Result<ExitCode, BrozaError> {
     Ok(ExitCode::Ok)
 }
 
-/// Warnings are conversation, so they go to stderr and `--quiet` silences them.
-/// In JSON and CSV runs they travel inside the envelope instead.
-fn report_warnings(warnings: &[Warning], global: &GlobalArgs, format: OutputFormat) {
-    use std::io::Write;
-
-    if global.quiet || format.is_machine_readable() {
-        return;
-    }
-    for warning in warnings {
-        let _ignored = writeln!(std::io::stderr(), "warning: {}", warning.message);
-    }
-}
-
-/// Notes are remarks for a person only: never in the envelope, never a warning.
-///
-/// `scan` uses them to say that a flag was parsed but has nothing to drive yet,
-/// which is a fact about this release rather than about the machine.
-fn report_notes(notes: &[String], global: &GlobalArgs) {
-    use std::io::Write;
-
-    if global.quiet {
-        return;
-    }
-    for note in notes {
-        let _ignored = writeln!(std::io::stderr(), "note: {note}");
-    }
-}
-
-/// `--help` and `--version` are successes; every other clap error is exit `2`.
-fn report_clap_error(error: &clap::Error) -> ExitCode {
-    let is_help_or_version = matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion);
-    let _ignored = error.print();
-    if is_help_or_version { ExitCode::Ok } else { ExitCode::UsageError }
-}
-
-/// Report `error` on stderr (principle 5) and map it to its exit code.
-///
-/// Errors are never silenced by `--quiet`; `-v` adds the source chain.
-fn report_error(error: &BrozaError, global: &GlobalArgs) -> ExitCode {
-    use std::io::Write;
-
-    let mut stderr = std::io::stderr();
-    let _ignored = writeln!(stderr, "error: {error}");
-    if global.verbose > 0 {
-        let mut source = error.source();
-        while let Some(cause) = source {
-            let _ignored = writeln!(stderr, "  caused by: {cause}");
-            source = cause.source();
-        }
-    }
-    ExitCode::from(error)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -274,55 +160,6 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).unwrap_or_else(|e| panic!("{e}"))
-    }
-
-    fn quiet() -> GlobalArgs {
-        GlobalArgs::default()
-    }
-
-    #[test]
-    fn help_and_version_are_successes() {
-        let help = Cli::try_parse_from(["broza", "--help"]).expect_err("clap returns an error");
-        assert_eq!(report_clap_error(&help), ExitCode::Ok);
-        let version = Cli::try_parse_from(["broza", "--version"]).expect_err("clap returns an error");
-        assert_eq!(report_clap_error(&version), ExitCode::Ok);
-    }
-
-    #[test]
-    fn unknown_flags_are_usage_errors() {
-        let error = Cli::try_parse_from(["broza", "--nope"]).expect_err("must fail");
-        assert_eq!(report_clap_error(&error), ExitCode::UsageError);
-    }
-
-    #[test]
-    fn core_errors_keep_their_exit_code() {
-        assert_eq!(report_error(&BrozaError::Usage("x".into()), &quiet()), ExitCode::UsageError);
-        assert_eq!(report_error(&BrozaError::ConfirmationRequired, &quiet()), ExitCode::ConfirmationRequired);
-        assert_eq!(report_error(&BrozaError::Other("x".into()), &quiet()), ExitCode::GenericError);
-    }
-
-    #[test]
-    fn verbose_does_not_change_the_exit_code_of_a_sourced_error() {
-        let error = BrozaError::Io {
-            context: "writing".to_owned(),
-            source: std::io::Error::from(std::io::ErrorKind::NotFound),
-        };
-        let verbose = GlobalArgs { verbose: 2, ..GlobalArgs::default() };
-        assert_eq!(report_error(&error, &verbose), ExitCode::GenericError);
-        assert_eq!(report_error(&error, &quiet()), ExitCode::GenericError);
-    }
-
-    #[test]
-    fn quiet_silences_warnings_but_never_errors() {
-        let warnings = vec![Warning { code: "c".into(), message: "m".into(), path: None }];
-        let loud = GlobalArgs::default();
-        let hushed = GlobalArgs { quiet: true, ..GlobalArgs::default() };
-        // Exercises both branches; the assertion is that neither panics nor
-        // changes state, the visible effect being stderr only.
-        report_warnings(&warnings, &loud, OutputFormat::Human);
-        report_warnings(&warnings, &hushed, OutputFormat::Human);
-        report_warnings(&warnings, &loud, OutputFormat::Json);
-        assert_eq!(report_error(&BrozaError::Usage("x".into()), &hushed), ExitCode::UsageError);
     }
 
     #[test]

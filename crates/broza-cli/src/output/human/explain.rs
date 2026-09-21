@@ -6,17 +6,26 @@
 //! command is that a volume, a category and a path are all answered in the
 //! same shape (design principle 3).
 //!
+//! The header differs only in what it can usefully say. A volume leads with
+//! its name, its role qualified by the filesystem of its container
+//! (`APFS role: Data`, `HFS+ role: User`) and its used size; a path adds one
+//! line naming the volume it lives on; a category leads with its id, its risk
+//! label and what Broza would do with it, in words.
+//!
 //! `--short` collapses the whole thing to one line of the form
-//! `<target>  ·  <label>  ·  <summary>`.
+//! `<target>  ·  <label>  ·  <summary>`: the shape `docs/cli-spec.md` §3.2
+//! shows for a category, and the shape a volume and a path get too.
+//!
+//! Pure: a report and a colour policy in, a `String` out.
 
 use std::fmt::Write as _;
 
 use broza::detect::{ExplainKind, ExplainReport, category_summary};
-use broza::model::{Volume, VolumeRole};
+use broza::model::{FsKind, Volume};
 
 use crate::output::human::scan::role_label;
-use crate::output::human::{action_label, risk_label, risk_style};
-use crate::output::{ColorPolicy, Style, format_bytes, paint, wrap};
+use crate::output::human::{action_label, risk_chip, role_style};
+use crate::output::{ColorPolicy, format_bytes, paint, wrap};
 
 /// Separator between the fields of a header or a `--short` line.
 const HEADER_SEPARATOR: &str = "   ·   ";
@@ -44,9 +53,7 @@ pub fn render(report: &ExplainReport, policy: ColorPolicy) -> String {
 pub fn render_short(report: &ExplainReport, policy: ColorPolicy) -> String {
     match (report.kind, report.category, report.volume.as_ref()) {
         (ExplainKind::Category, Some(category), _) => {
-            let risk = report
-                .risk
-                .map_or_else(String::new, |risk| paint(policy, risk_style(risk), risk_label(risk)));
+            let risk = report.risk.map_or_else(String::new, |risk| risk_chip(policy, risk));
             [category.as_str(), risk.as_str(), category_summary(category)].join(SHORT_SEPARATOR)
         }
         (_, _, Some(volume)) => {
@@ -62,9 +69,7 @@ pub fn render_short(report: &ExplainReport, policy: ColorPolicy) -> String {
 fn header(report: &ExplainReport, policy: ColorPolicy) -> String {
     match (report.kind, report.category, report.volume.as_ref()) {
         (ExplainKind::Category, Some(category), _) => {
-            let risk = report
-                .risk
-                .map_or_else(String::new, |risk| paint(policy, risk_style(risk), risk_label(risk)));
+            let risk = report.risk.map_or_else(String::new, |risk| risk_chip(policy, risk));
             let action = report.action.map(action_label).unwrap_or_default();
             [category.as_str().to_owned(), risk, action.to_owned()].join(HEADER_SEPARATOR)
         }
@@ -77,13 +82,29 @@ fn header(report: &ExplainReport, policy: ColorPolicy) -> String {
 fn volume_header(report: &ExplainReport, volume: &Volume, policy: ColorPolicy) -> String {
     let name = paint(policy, role_style(volume.role), &volume.name);
     let line = format!(
-        "{name}{HEADER_SEPARATOR}APFS role: {}{HEADER_SEPARATOR}{}",
+        "{name}{HEADER_SEPARATOR}{}role: {}{HEADER_SEPARATOR}{}",
+        filesystem_prefix(report.filesystem.as_ref()),
         role_label(volume.role),
         format_bytes(volume.used_bytes)
     );
     match report.path.as_deref() {
         Some(path) => format!("{line}\n{} is on this volume ({}).", path.display(), volume.id),
         None => line,
+    }
+}
+
+/// What qualifies the word `role:` in the header: the container's filesystem.
+///
+/// A volume on a mounted disk image is not an APFS volume, and saying so
+/// anyway would be the kind of small confident falsehood this command exists
+/// to avoid. When the caller could not say which filesystem it is, the header
+/// says a plain `role:` rather than guessing.
+fn filesystem_prefix(filesystem: Option<&FsKind>) -> String {
+    match filesystem {
+        Some(FsKind::Apfs) => "APFS ".to_owned(),
+        Some(FsKind::HfsPlus) => "HFS+ ".to_owned(),
+        Some(other) => format!("{other} "),
+        None => String::new(),
     }
 }
 
@@ -101,21 +122,13 @@ fn volume_summary(report: &ExplainReport, volume: &Volume) -> String {
     format!("{where_it_is}{}. {}", format_bytes(volume.used_bytes), volume.purpose)
 }
 
-/// The user's own data is emphasised; everything else is not.
-const fn role_style(role: VolumeRole) -> Style {
-    match role {
-        VolumeRole::Data | VolumeRole::User => Style::Bold,
-        _ => Style::Dim,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use std::path::{Path, PathBuf};
 
-    use broza::model::Category;
+    use broza::model::{Category, VolumeRole};
 
     use super::*;
 
@@ -137,9 +150,25 @@ mod tests {
 
     #[test]
     fn a_volume_header_follows_the_specification() {
-        let text = plain(&ExplainReport::for_volume(data_volume()));
+        let report = ExplainReport::for_volume(data_volume()).on_filesystem(FsKind::Apfs);
+
+        let text = plain(&report);
 
         assert!(text.starts_with("Macintosh HD - Data   ·   APFS role: Data   ·   798.2 GB"), "{text}");
+    }
+
+    #[test]
+    fn the_header_names_the_filesystem_it_was_told_about_and_never_guesses() {
+        let volume = Volume { role: VolumeRole::User, name: "Kiro CLI".to_owned(), ..data_volume() };
+
+        let hfs = plain(&ExplainReport::for_volume(volume.clone()).on_filesystem(FsKind::HfsPlus));
+        let zfs =
+            plain(&ExplainReport::for_volume(volume.clone()).on_filesystem(FsKind::Unknown("zfs".into())));
+        let unknown = plain(&ExplainReport::for_volume(volume));
+
+        assert!(hfs.starts_with("Kiro CLI   ·   HFS+ role: User"), "{hfs}");
+        assert!(zfs.starts_with("Kiro CLI   ·   zfs role: User"), "{zfs}");
+        assert!(unknown.starts_with("Kiro CLI   ·   role: User"), "{unknown}");
     }
 
     #[test]

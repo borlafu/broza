@@ -187,19 +187,26 @@ Homebrew tap publishes 0.1.
 Progress:
 
 - [x] `ProcessRunner` with a hard timeout and its own process group (`adapters/std_process.rs`).
-- [x] `diskutil` plist adapters with macOS 26 fixtures (`adapters/diskutil/`). macOS 27 fixtures
-      are still to be recorded.
+- [x] `diskutil` plist adapters with macOS 26 fixtures (`adapters/diskutil/`).
+- [ ] **macOS 27 fixtures — deferred**: no machine running 27 is available to record them
+      (`scripts/capture-diskutil-fixtures.sh` is the recorder). The parsers are written against the
+      documented plist keys and tolerate unknown ones, so the gap is in *evidence*, not in support.
+      Record them on the first 27 machine that appears and add them under
+      `crates/broza/tests/fixtures/plist/macos27/`; the fixture runner finds a directory by name and
+      needs no code change. This is the one open item of the M2 exit criteria.
 - [x] Mount table, firmlink-aware (`scan/mount.rs`, `adapters/mount_table.rs`).
 - [x] NSURL purgeable adapter (`adapters/nsurl_space.rs`).
-- [x] `scan`: human, `--json`, `--csv`; `--volume`, `--no-external`; purgeable always on its own
-      line; container-level percentages and usage bar.
+- [x] `scan`: human, `--json`, `--csv` (the volume table); `--volume` by id, name or mount point;
+      `--no-external`; purgeable always on its own line and labelled an estimate; container-level
+      percentages and usage bar.
 - [x] `explain` for volumes, paths and categories, with `--short` and `--json` (spec §4.7).
 - [x] CLI wiring of the real adapters (`broza-cli/src/wiring.rs`), TTY prompter, and the host
       block behind the `ProcessRunner` port.
 - [x] Debug-only `BROZA_FAKE_DISKUTIL_FIXTURES` seam so the binary is testable end to end.
 - [ ] `dua-core` walker with hard-link dedupe; aggregate, top-N, tree (`scan/walker.rs`,
       `scan/aggregate.rs`). Until it lands `largest_items` is `[]` and `--depth`, `--top`,
-      `--min-size`, `--tree` and `PATH` arguments earn a note on stderr.
+      `--min-size`, `--tree` and `PATH` arguments raise the `folder_scan_pending` warning, which
+      is removed from the contract in the same change that wires the walker.
 - [ ] Cache store and cache corruption → exit `9` (`scan/cache.rs`).
 - [ ] Benchmark script for the cold and warm `scan` targets.
 - [ ] Homebrew tap publishing 0.1.

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::adapters::diskutil::purpose::RoleExplanation;
-use crate::model::{Action, Category, Risk, Volume};
+use crate::model::{Action, Category, FsKind, Risk, Volume};
 
 use super::category_text::{CategoryText, text_for};
 
@@ -84,6 +84,13 @@ pub struct ExplainReport {
     /// The path the user asked about, for `path` targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
+    /// Filesystem of the container the volume belongs to, when it is known.
+    ///
+    /// The same open enum as `containers[].type` in §4.2. It is what lets the
+    /// human header say `HFS+ role:` on a disk image instead of claiming every
+    /// volume on the machine is APFS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<FsKind>,
     /// The three paragraphs.
     pub explanation: Explanation,
     /// Base risk of the category; absent for volumes and paths.
@@ -103,6 +110,7 @@ impl ExplainReport {
             volume: Some(volume),
             category: None,
             path: None,
+            filesystem: None,
             explanation,
             risk: None,
             action: None,
@@ -116,6 +124,7 @@ impl ExplainReport {
             volume: None,
             category: Some(category),
             path: None,
+            filesystem: None,
             explanation: explain_category(category),
             risk: Some(category.base_risk()),
             action: Some(category.default_action()),
@@ -125,6 +134,12 @@ impl ExplainReport {
     /// Explain `path` through the `volume` it was resolved to.
     pub fn for_path(path: &Path, volume: Volume) -> Self {
         Self { kind: ExplainKind::Path, path: Some(path.to_path_buf()), ..Self::for_volume(volume) }
+    }
+
+    /// The same report, knowing which filesystem the volume's container uses.
+    #[must_use]
+    pub fn on_filesystem(self, filesystem: FsKind) -> Self {
+        Self { filesystem: Some(filesystem), ..self }
     }
 }
 
@@ -241,6 +256,17 @@ mod tests {
         assert!(json.get("volume").is_none(), "{json}");
         assert!(json.get("path").is_none(), "{json}");
         assert!(json["explanation"]["what_it_is"].is_string());
+    }
+
+    #[test]
+    fn the_filesystem_is_absent_until_the_caller_knows_it() {
+        let report = ExplainReport::for_volume(volume(VolumeRole::User));
+        assert_eq!(report.filesystem, None);
+
+        let known = report.on_filesystem(crate::model::FsKind::HfsPlus);
+        assert_eq!(known.filesystem, Some(crate::model::FsKind::HfsPlus));
+        let json = serde_json::to_value(&known).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(json["filesystem"], "hfs_plus");
     }
 
     #[test]

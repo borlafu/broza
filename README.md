@@ -68,7 +68,7 @@ Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
 └─ APFS container  disk3  (994.7 GB)
    ├─ Used        812.4 GB  ████████████████░░░░  81.7%
    ├─ Free         98.1 GB
-   └─ Purgeable    84.1 GB  ← macOS shows this as "available"
+   └─ Purgeable    84.1 GB  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
    ┌ Macintosh HD         System     11.3 GB   read-only, sealed

@@ -5,14 +5,16 @@
 //! detection and cleanup engines land in milestone M3.
 //!
 //! Every command returns an [`Outcome`]: the text to write to the sink, the
-//! exit code, the warnings the envelope already carries (repeated on stderr
-//! for a human), and the notes that exist only for a human.
+//! exit code, and the warnings the envelope already carries, which
+//! [`crate::reporting`] repeats on stderr for a human.
 
 pub mod about;
 pub mod atomic;
 pub mod config;
 pub mod explain;
+pub mod mount;
 pub mod scan;
+pub mod target;
 
 use broza::model::Warning;
 use broza::{BrozaError, ExitCode};
@@ -29,26 +31,18 @@ pub struct Outcome {
     pub code: ExitCode,
     /// Warnings of the envelope, repeated on stderr unless `--quiet`.
     pub warnings: Vec<Warning>,
-    /// Human-only remarks. Never part of the JSON contract.
-    pub notes: Vec<String>,
 }
 
 impl Outcome {
     /// A successful outcome carrying only its rendered text.
     pub const fn ok(rendered: String) -> Self {
-        Self { rendered, code: ExitCode::Ok, warnings: Vec::new(), notes: Vec::new() }
+        Self { rendered, code: ExitCode::Ok, warnings: Vec::new() }
     }
 
     /// The same outcome with `warnings` attached.
     #[must_use]
     pub fn with_warnings(self, warnings: Vec<Warning>) -> Self {
         Self { warnings, ..self }
-    }
-
-    /// The same outcome with `notes` attached.
-    #[must_use]
-    pub fn with_notes(self, notes: Vec<String>) -> Self {
-        Self { notes, ..self }
     }
 
     /// The same outcome with an explicit exit code.
@@ -83,7 +77,6 @@ mod tests {
 
         assert_eq!(outcome.code, ExitCode::Ok);
         assert!(outcome.warnings.is_empty());
-        assert!(outcome.notes.is_empty());
     }
 
     #[test]
@@ -91,12 +84,10 @@ mod tests {
         let warning = Warning { code: "c".into(), message: "m".into(), path: None };
         let outcome = Outcome::ok("text".to_owned())
             .with_warnings(vec![warning.clone()])
-            .with_notes(vec!["note".to_owned()])
             .with_code(ExitCode::PartialFailure);
 
         assert_eq!(outcome.rendered, "text");
         assert_eq!(outcome.warnings, vec![warning]);
-        assert_eq!(outcome.notes, vec!["note".to_owned()]);
         assert_eq!(outcome.code, ExitCode::PartialFailure);
     }
 }

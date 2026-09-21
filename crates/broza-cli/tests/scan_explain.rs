@@ -136,14 +136,26 @@ fn no_external_drops_the_disk_images() {
 }
 
 #[test]
-fn an_unknown_volume_exits_four_and_a_malformed_one_exits_two() {
-    let (unknown, unknown_stderr) = failure_of(&["scan", "--volume", "disk9s9"]);
-    let (malformed, malformed_stderr) = failure_of(&["scan", "--volume", "sda1"]);
+fn a_volume_is_selectable_by_id_by_name_or_by_mount_point() {
+    for target in ["disk3s5", "Data", "/System/Volumes/Data"] {
+        let envelope = json_of(&["scan", "--json", "--volume", target]);
+        let volumes = envelope["data"]["disks"][0]["containers"][0]["volumes"].clone();
+        assert_eq!(volumes.as_array().map(Vec::len), Some(1), "{target}");
+        assert_eq!(volumes[0]["id"], "disk3s5", "{target}");
+    }
+}
 
-    assert_eq!(unknown, Some(4), "{unknown_stderr}");
-    assert!(unknown_stderr.contains("disk9s9"), "{unknown_stderr}");
-    assert_eq!(malformed, Some(2), "{malformed_stderr}");
-    assert!(malformed_stderr.contains("BSD device name"), "{malformed_stderr}");
+#[test]
+fn a_volume_that_names_nothing_exits_four_and_a_blank_one_exits_two() {
+    for target in ["disk9s9", "sda1", "No Such Volume"] {
+        let (code, stderr) = failure_of(&["scan", "--volume", target]);
+        assert_eq!(code, Some(4), "{target}: {stderr}");
+        assert!(stderr.contains(target), "{stderr}");
+    }
+
+    let (blank, blank_stderr) = failure_of(&["scan", "--volume", ""]);
+    assert_eq!(blank, Some(2), "{blank_stderr}");
+    assert!(blank_stderr.contains("device id"), "{blank_stderr}");
 }
 
 #[test]
@@ -164,26 +176,40 @@ fn csv_is_rejected_on_explain() {
 }
 
 #[test]
-fn the_folder_flags_are_accepted_with_a_note_and_never_an_error() {
+fn the_folder_flags_are_accepted_with_a_warning_and_never_an_error() {
     let home = temp_home();
     let output =
         broza(home.path()).args(["scan", "--tree", "--top", "5"]).output().unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(output.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("note:"), "{stderr}");
+    assert!(stderr.contains("warning:"), "{stderr}");
     assert!(stderr.contains("next release"), "{stderr}");
     assert!(stderr.contains("--tree") && stderr.contains("--top"), "{stderr}");
 }
 
 #[test]
-fn quiet_silences_the_note_but_not_the_report() {
+fn the_folder_scan_warning_reaches_a_json_consumer_too() {
+    let envelope = json_of(&["scan", "--json", "--tree"]);
+
+    let codes: Vec<&str> = envelope["warnings"]
+        .as_array()
+        .map(|warnings| warnings.iter().filter_map(|warning| warning["code"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(codes.contains(&"folder_scan_pending"), "{codes:?}");
+    assert_eq!(envelope["data"]["largest_items"], serde_json::json!([]));
+    // A warning never changes the exit code (`docs/cli-spec.md` §4.1).
+    assert_eq!(envelope["errors"], serde_json::json!([]));
+}
+
+#[test]
+fn quiet_silences_the_warning_but_not_the_report() {
     let home = temp_home();
     let output =
         broza(home.path()).args(["scan", "--tree", "--quiet"]).output().unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(output.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&output.stderr).is_empty(), "--quiet must silence notes");
+    assert!(String::from_utf8_lossy(&output.stderr).is_empty(), "--quiet must silence warnings");
     assert!(!output.stdout.is_empty());
 }
 

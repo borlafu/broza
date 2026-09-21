@@ -54,7 +54,10 @@ impl TtyPrompter {
         if !self.interactive {
             return None;
         }
-        let tty = std::fs::File::options().read(true).write(true).open(TTY_PATH).ok()?;
+        // Read-only: Broza only ever listens on the terminal. The prompt goes
+        // to stderr, which the caller may redirect, and opening `/dev/tty` for
+        // writing would give this process a write handle it has no use for.
+        let tty = std::fs::File::open(TTY_PATH).ok()?;
         let mut stderr = std::io::stderr();
         stderr.write_all(prompt.as_bytes()).ok()?;
         stderr.flush().ok()?;

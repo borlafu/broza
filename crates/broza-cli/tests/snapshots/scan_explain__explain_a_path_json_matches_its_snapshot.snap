@@ -11,6 +11,7 @@ expression: "json_of(&[\"explain\", \"/Users\", \"--json\"])"
       "what_it_is": "The mutable data volume of macOS. It holds /Users, the applications you install, your user libraries and caches. It is joined to the system volume through \"firmlinks\", which is why Finder shows a single disk.",
       "what_it_is_for": "This is where practically everything that belongs to you lives. Around 99% of what Broza can help you clean is here."
     },
+    "filesystem": "apfs",
     "kind": "path",
     "path": "/Users",
     "volume": {

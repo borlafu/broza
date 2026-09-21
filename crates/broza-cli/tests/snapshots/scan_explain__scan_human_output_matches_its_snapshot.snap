@@ -4,27 +4,27 @@ expression: "stdout_of(&[\"scan\"])"
 ---
 Physical disk  disk0  —  APPLE SSD AP0512Z  (500.3 GB)
 ├─ APFS container  disk1  (524.3 MB)
-   ├─ Used        19.8 MB  █░░░░░░░░░░░░░░░░░░░  3.8%
-   ├─ Free       504.5 MB
-   └─ Purgeable       0 B  ← macOS shows this as "available"
-
-   Volumes in this container:
-   ┌ iSCPreboot        Preboot    5.9 MB
-   ├ xART              Unknown    6.3 MB
-   ├ Hardware          Unknown    2.6 MB
-   └ Recovery          Recovery  20.5 KB
+│  ├─ Used         19.8 MB  █░░░░░░░░░░░░░░░░░░░  3.8%
+│  ├─ Free        504.5 MB
+│  └─ Purgeable        0 B  ← estimate; macOS shows this as "available"
+│
+│  Volumes in this container:
+│  ┌ iSCPreboot        Preboot    5.9 MB
+│  ├ xART              Unknown    6.3 MB
+│  ├ Hardware          Unknown    2.6 MB
+│  └ Recovery          Recovery  20.5 KB
 ├─ APFS container  disk2  (5.4 GB)
-   ├─ Used       2.3 GB  █████████░░░░░░░░░░░  43.2%
-   ├─ Free       3.0 GB
-   └─ Purgeable     0 B  ← macOS shows this as "available"
-
-   Volumes in this container:
-   ┌ Recovery          Recovery  2.3 GB
-   └ Update            Unknown   2.5 MB
+│  ├─ Used        2.3 GB  █████████░░░░░░░░░░░  43.2%
+│  ├─ Free        3.0 GB
+│  └─ Purgeable      0 B  ← estimate; macOS shows this as "available"
+│
+│  Volumes in this container:
+│  ┌ Recovery          Recovery  2.3 GB
+│  └ Update            Unknown   2.5 MB
 └─ APFS container  disk3  (494.4 GB)
-   ├─ Used       454.5 GB  ██████████████████░░  91.9%
-   ├─ Free        39.8 GB
-   └─ Purgeable    2.4 GB  ← macOS shows this as "available"
+   ├─ Used        454.5 GB  ██████████████████░░  91.9%
+   ├─ Free         39.8 GB
+   └─ Purgeable     2.4 GB  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
    ┌ Macintosh HD      System     17.1 GB   read-only, sealed
@@ -36,45 +36,45 @@ Physical disk  disk0  —  APPLE SSD AP0512Z  (500.3 GB)
 
 Physical disk  disk4  —  Disk Image  (2.0 GB)  (external)
 └─ HFS+ volume  disk4s1  (1.9 GB)
-   ├─ Used       1.9 GB  ████████████████████  99.9%
-   ├─ Free       2.8 MB
-   └─ Purgeable     0 B  ← macOS shows this as "available"
+   ├─ Used        1.9 GB  ████████████████████  99.9%
+   ├─ Free        2.8 MB
+   └─ Purgeable      0 B  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
    └ Kiro CLI          Unknown  1.9 GB
 
 Physical disk  disk5  —  Disk Image  (2.8 GB)  (external)
 └─ HFS+ volume  disk5s2  (2.5 GB)
-   ├─ Used         2.3 GB  ███████████████████░  92.8%
-   ├─ Free       179.3 MB
-   └─ Purgeable       0 B  ← macOS shows this as "available"
+   ├─ Used          2.3 GB  ███████████████████░  92.8%
+   ├─ Free        179.3 MB
+   └─ Purgeable        0 B  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
    └ Docker            Unknown  2.3 GB
 
 Physical disk  disk6  —  Disk Image  (1.4 GB)  (external)
 └─ HFS+ volume  disk6s1  (1.3 GB)
-   ├─ Used       1.3 GB  ████████████████████  99.8%
-   ├─ Free       2.8 MB
-   └─ Purgeable     0 B  ← macOS shows this as "available"
+   ├─ Used        1.3 GB  ████████████████████  99.8%
+   ├─ Free        2.8 MB
+   └─ Purgeable      0 B  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
    └ Kiro CLI          Unknown  1.3 GB
 
 Physical disk  disk7  —  Disk Image  (1.3 GB)  (external)
 └─ HFS+ volume  disk7s1  (1.1 GB)
-   ├─ Used       1.1 GB  ████████████████████  99.8%
-   ├─ Free       2.8 MB
-   └─ Purgeable     0 B  ← macOS shows this as "available"
+   ├─ Used        1.1 GB  ████████████████████  99.8%
+   ├─ Free        2.8 MB
+   └─ Purgeable      0 B  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
    └ Kiro CLI          Unknown  1.1 GB
 
 Physical disk  disk8  —  Disk Image  (1.3 GB)  (external)
 └─ HFS+ volume  disk8s1  (1.1 GB)
-   ├─ Used       1.1 GB  ████████████████████  99.8%
-   ├─ Free       2.8 MB
-   └─ Purgeable     0 B  ← macOS shows this as "available"
+   ├─ Used        1.1 GB  ████████████████████  99.8%
+   ├─ Free        2.8 MB
+   └─ Purgeable      0 B  ← estimate; macOS shows this as "available"
 
    Volumes in this container:
    └ Kiro CLI          Unknown  1.1 GB

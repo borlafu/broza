@@ -8,9 +8,9 @@
 pub mod explain;
 pub mod scan;
 
-use broza::model::{Action, Risk};
+use broza::model::{Action, Risk, VolumeRole};
 
-use crate::output::Style;
+use crate::output::{ColorPolicy, Style, paint};
 
 /// Text label of a risk level.
 ///
@@ -30,6 +30,27 @@ pub const fn risk_style(risk: Risk) -> Style {
         Risk::Green => Style::Green,
         Risk::Amber => Style::Yellow,
         _ => Style::Red,
+    }
+}
+
+/// The risk of a finding as one coloured word: [`risk_label`] plus its colour.
+///
+/// The single place a risk is turned into text, so `scan`, `explain` and the
+/// confirmation prompt can never drift into calling the same level by two
+/// different names.
+pub fn risk_chip(policy: ColorPolicy, risk: Risk) -> String {
+    paint(policy, risk_style(risk), risk_label(risk))
+}
+
+/// How a volume's name and role are emphasised, everywhere they are printed.
+///
+/// What is yours stands out and what Broza may never write to recedes: `data`
+/// and `user` volumes are bold, every protected role is dim. Colour only
+/// repeats what the role label already says in words (RNF-06).
+pub const fn role_style(role: VolumeRole) -> Style {
+    match role {
+        VolumeRole::Data | VolumeRole::User => Style::Bold,
+        _ => Style::Dim,
     }
 }
 
@@ -57,6 +78,33 @@ mod tests {
         assert_eq!(risk_style(Risk::Green), Style::Green);
         assert_eq!(risk_style(Risk::Amber), Style::Yellow);
         assert_eq!(risk_style(Risk::Red), Style::Red);
+    }
+
+    #[test]
+    fn a_risk_chip_is_the_label_plus_colour_and_never_less() {
+        for risk in [Risk::Green, Risk::Amber, Risk::Red] {
+            assert_eq!(risk_chip(ColorPolicy::Never, risk), risk_label(risk));
+            let coloured = risk_chip(ColorPolicy::Always, risk);
+            assert!(coloured.contains(risk_label(risk)), "{coloured:?}");
+            assert!(coloured.contains('\u{1b}'), "{coloured:?}");
+        }
+    }
+
+    #[test]
+    fn the_users_own_volumes_are_bold_and_every_protected_role_is_dim() {
+        for role in [VolumeRole::Data, VolumeRole::User] {
+            assert_eq!(role_style(role), Style::Bold, "{role:?}");
+        }
+        for role in [
+            VolumeRole::System,
+            VolumeRole::Preboot,
+            VolumeRole::Recovery,
+            VolumeRole::Vm,
+            VolumeRole::Backup,
+            VolumeRole::Unknown,
+        ] {
+            assert_eq!(role_style(role), Style::Dim, "{role:?}");
+        }
     }
 
     #[test]

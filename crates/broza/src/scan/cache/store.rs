@@ -219,6 +219,23 @@ mod tests {
     }
 
     #[test]
+    fn saving_keeps_the_fresh_records_and_forgets_the_expired_ones() {
+        let fs = fs();
+        let clock = FixedClock::at(at("2026-01-02T00:00:00Z"));
+        let store = CacheStore::load(&path(), &fs, &clock, TTL)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .with_record(record(1, at("2026-01-01T12:00:00Z")))
+            .with_record(record(2, at("2025-11-01T00:00:00Z")));
+
+        store.save(&path(), &fs).unwrap_or_else(|e| panic!("{e}"));
+        let loaded = CacheStore::load(&path(), &fs, &clock, TTL).unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(loaded.len(), 1, "a store that never forgot would grow for ever");
+        assert_eq!(loaded.lookup(&key(1)).map(|record| record.size_bytes), Some(1001));
+        assert_eq!(loaded.lookup(&key(2)), None);
+    }
+
+    #[test]
     fn a_record_inside_the_ttl_is_served_and_an_older_one_is_not() {
         let clock = FixedClock::at(at("2026-01-02T00:00:00Z"));
         let store = CacheStore::load(&path(), &fs(), &clock, TTL)

@@ -571,7 +571,7 @@ Every `--json` output shares this structure:
 }
 ```
 
-`purgeable_bytes` is an estimate derived from `NSURLVolumeAvailableCapacityForImportantUsageKey` minus `free_bytes`, clamped at 0; the human output labels it as an estimate. Hard links and APFS clones are counted once in `size_bytes`.
+`purgeable_bytes` is an estimate derived from Foundation's `NSURLVolumeAvailableCapacityForImportantUsageKey` minus `NSURLVolumeAvailableCapacityKey` for the same volume, clamped at 0 (both values come from one Foundation call, so they are mutually consistent; `free_bytes` comes from `diskutil` and may differ by a few MB); the human output labels it as an estimate. Hard links and APFS clones are counted once in `size_bytes`.
 
 `volumes[].mount_point` is **optional**: volumes that macOS does not mount, typically `Preboot`
 and `Recovery`, are enumerated with their role and size but without a mount point, and the field

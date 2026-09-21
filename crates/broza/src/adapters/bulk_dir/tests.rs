@@ -137,6 +137,56 @@ fn many_threads_reading_at_once_settle_on_one_answer() {
 }
 
 #[test]
+fn a_refusal_sticks_and_a_claim_is_handed_back() {
+    let _state = keep_state();
+    reset_bulk_state_for_tests();
+
+    super::release_claim();
+    assert_eq!(BULK_STATE.load(Ordering::SeqCst), STATE_UNTESTED, "nothing was claimed");
+
+    BULK_STATE.store(super::STATE_TESTING, Ordering::SeqCst);
+    super::release_claim();
+    assert_eq!(BULK_STATE.load(Ordering::SeqCst), STATE_UNTESTED, "the claim went back");
+
+    assert!(super::refuse::<()>().is_none());
+    assert_eq!(BULK_STATE.load(Ordering::SeqCst), STATE_REFUSED);
+    super::release_claim();
+    assert_eq!(BULK_STATE.load(Ordering::SeqCst), STATE_REFUSED, "a refusal is not a claim");
+}
+
+#[test]
+fn a_filesystem_that_cannot_do_this_at_all_is_refused_once() {
+    let _state = keep_state();
+    reset_bulk_state_for_tests();
+    BULK_STATE.store(super::STATE_TESTING, Ordering::SeqCst);
+
+    set_errno(libc::ENOTSUP);
+    assert!(super::unsupported_or_none::<()>().is_none());
+    assert_eq!(
+        BULK_STATE.load(Ordering::SeqCst),
+        STATE_REFUSED,
+        "a filesystem without the call will not grow one"
+    );
+
+    reset_bulk_state_for_tests();
+    BULK_STATE.store(super::STATE_TESTING, Ordering::SeqCst);
+    set_errno(libc::EIO);
+    assert!(super::unsupported_or_none::<()>().is_none());
+    assert_eq!(
+        BULK_STATE.load(Ordering::SeqCst),
+        STATE_UNTESTED,
+        "one unhappy directory says nothing about the next"
+    );
+}
+
+/// Set the thread's `errno`, which is what the reader reads after a failure.
+fn set_errno(value: i32) {
+    // SAFETY: `__error()` returns this thread's own errno slot, valid for the
+    // life of the thread, and nothing else is reading it here.
+    unsafe { *libc::__error() = value };
+}
+
+#[test]
 fn a_path_that_is_not_a_directory_is_not_read() {
     let _state = keep_state();
     reset_bulk_state_for_tests();

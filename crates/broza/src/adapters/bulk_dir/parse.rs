@@ -11,7 +11,11 @@
 //! - a regular file and a symlink carry the file attributes, so both are read
 //!   straight out of the buffer;
 //! - a directory carries none of them and is left to `lstat`;
-//! - `ATTR_CMN_ERROR` comes back only when there is an error to report;
+//! - `ATTR_CMN_ERROR` comes back only when there is an error to report, and an
+//!   entry that carries one is handed to `lstat` instead. It is not warned
+//!   about on its own: a recovered error changes nothing the user can act on,
+//!   and if the `lstat` fails too, *that* failure travels to the report as the
+//!   entry's own warning;
 //! - `ATTR_FILE_DATALENGTH` is `st_size` while `ATTR_FILE_TOTALSIZE` adds the
 //!   resource fork, and `ATTR_FILE_ALLOCSIZE` is `st_blocks × 512` while
 //!   `ATTR_FILE_DATAALLOCSIZE` leaves the resource fork out. Broza reports what

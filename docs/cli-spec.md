@@ -545,7 +545,7 @@ Every `--json` output shares this structure:
 | `status` (clean / restore item) | `planned` · `quarantined` · `purged` · `restored` · `skipped` · `failed` |
 | `state` (quarantine session) | `in_progress` · `complete` · `restoring` · `expired` |
 | `category` | `user-cache` · `build-cache` · `ios-simulators` · `trash` · `snapshots` · `old-backups` · `unused-apps` · `cloud-synced` · `duplicates` · `large-old-files` |
-| `error` (item-level code) | `cross_volume` · `permission_denied` · `collision` · `not_found` · `protected_volume` · `session_busy` · `io_error` |
+| `error` (item-level code) | `cross_volume` · `permission_denied` · `collision` · `not_found` · `protected_volume` · `session_busy` · `io_error` · `changed_since_check` (the item's `(device, inode)` changed between the safety check and the write; nothing was touched) · `max_size_exceeded` (the re-measured size would exceed `--max-size`; item left in place) |
 
 ### 4.2 `scan`
 
@@ -985,3 +985,4 @@ Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<vol
   value that names nothing is `4`. The folder-walking inputs (`PATH`, `--depth`, `--top`,
   `--min-size`, `--tree`) are accepted and raise the warning `folder_scan_pending`, which
   disappears once the walker is wired.
+- §4.1 (M3, unreleased): item error codes `changed_since_check` and `max_size_exceeded` added.

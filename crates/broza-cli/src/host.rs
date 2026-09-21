@@ -47,13 +47,21 @@ pub trait HostInfo {
     fn report(&self) -> HostReport;
 }
 
+/// Map Rust's architecture name to the value used by the JSON contract (`arm64`).
+fn spec_arch(rust_arch: &str) -> &str {
+    match rust_arch {
+        "aarch64" => "arm64",
+        other => other,
+    }
+}
+
 /// Reads the architecture at compile time and the macOS version from `sw_vers`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemHost;
 
 impl HostInfo for SystemHost {
     fn report(&self) -> HostReport {
-        let arch = std::env::consts::ARCH.to_owned();
+        let arch = spec_arch(std::env::consts::ARCH).to_owned();
         match product_version() {
             Ok(macos_version) => HostReport::certain(Host { macos_version, arch }),
             Err(reason) => HostReport {
@@ -156,6 +164,12 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
 
     use super::*;
+
+    #[test]
+    fn rust_arch_maps_to_contract_arch() {
+        assert_eq!(spec_arch("aarch64"), "arm64");
+        assert_eq!(spec_arch("x86_64"), "x86_64");
+    }
 
     #[test]
     fn override_is_parsed_into_version_and_arch() {

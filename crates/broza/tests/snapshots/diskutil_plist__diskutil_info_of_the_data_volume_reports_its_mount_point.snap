@@ -1,0 +1,24 @@
+---
+source: crates/broza/tests/diskutil_plist.rs
+expression: parsed
+---
+DeviceInfo {
+    media_name: None,
+    device_identifier: "disk3s5",
+    internal: true,
+    solid_state: true,
+    total_size: 494384795648,
+    free_space: 0,
+    mount_point: Some(
+        "/System/Volumes/Data",
+    ),
+    sealed: Some(
+        "No",
+    ),
+    filesystem_type: Some(
+        "apfs",
+    ),
+    apfs_container_reference: Some(
+        "disk3",
+    ),
+}

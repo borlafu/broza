@@ -133,7 +133,7 @@
 				</dict>
 				<dict>
 					<key>CapacityInUse</key>
-					<integer>2641920</integer>
+					<integer>2646016</integer>
 					<key>DeviceIdentifier</key>
 					<string>disk1s3</string>
 					<key>DiskUUID</key>
@@ -362,7 +362,7 @@
 				</dict>
 				<dict>
 					<key>CapacityInUse</key>
-					<integer>404480180224</integer>
+					<integer>407183540224</integer>
 					<key>DeviceIdentifier</key>
 					<string>disk3s5</string>
 					<key>DiskUUID</key>
@@ -456,13 +456,13 @@
 					<key>DeviceIdentifier</key>
 					<string>disk5s1</string>
 					<key>DiskUUID</key>
-					<string>0000001A-1111-4222-8333-00000000001A</string>
+					<string>00000022-1111-4222-8333-000000000022</string>
 					<key>Size</key>
 					<integer>209715200</integer>
 					<key>VolumeName</key>
 					<string>EFI</string>
 					<key>VolumeUUID</key>
-					<string>0000001B-1111-4222-8333-00000000001B</string>
+					<string>00000023-1111-4222-8333-000000000023</string>
 				</dict>
 				<dict>
 					<key>Content</key>
@@ -470,7 +470,7 @@
 					<key>DeviceIdentifier</key>
 					<string>disk5s2</string>
 					<key>DiskUUID</key>
-					<string>0000001C-1111-4222-8333-00000000001C</string>
+					<string>0000001A-1111-4222-8333-00000000001A</string>
 					<key>MountPoint</key>
 					<string>/private/var/folders/aa/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018</string>
 					<key>Size</key>
@@ -478,7 +478,7 @@
 					<key>VolumeName</key>
 					<string>Docker</string>
 					<key>VolumeUUID</key>
-					<string>0000001D-1111-4222-8333-00000000001D</string>
+					<string>0000001B-1111-4222-8333-00000000001B</string>
 				</dict>
 			</array>
 			<key>Size</key>
@@ -499,7 +499,7 @@
 					<key>DeviceIdentifier</key>
 					<string>disk6s1</string>
 					<key>DiskUUID</key>
-					<string>0000001E-1111-4222-8333-00000000001E</string>
+					<string>0000001C-1111-4222-8333-00000000001C</string>
 					<key>MountPoint</key>
 					<string>/Volumes/Kiro CLI 1</string>
 					<key>Size</key>
@@ -507,7 +507,7 @@
 					<key>VolumeName</key>
 					<string>Kiro CLI</string>
 					<key>VolumeUUID</key>
-					<string>0000001F-1111-4222-8333-00000000001F</string>
+					<string>0000001D-1111-4222-8333-00000000001D</string>
 				</dict>
 			</array>
 			<key>Size</key>
@@ -528,7 +528,7 @@
 					<key>DeviceIdentifier</key>
 					<string>disk7s1</string>
 					<key>DiskUUID</key>
-					<string>00000020-1111-4222-8333-000000000020</string>
+					<string>0000001E-1111-4222-8333-00000000001E</string>
 					<key>MountPoint</key>
 					<string>/Volumes/Kiro CLI 2</string>
 					<key>Size</key>
@@ -536,7 +536,7 @@
 					<key>VolumeName</key>
 					<string>Kiro CLI</string>
 					<key>VolumeUUID</key>
-					<string>00000021-1111-4222-8333-000000000021</string>
+					<string>0000001F-1111-4222-8333-00000000001F</string>
 				</dict>
 			</array>
 			<key>Size</key>
@@ -557,7 +557,7 @@
 					<key>DeviceIdentifier</key>
 					<string>disk8s1</string>
 					<key>DiskUUID</key>
-					<string>00000022-1111-4222-8333-000000000022</string>
+					<string>00000020-1111-4222-8333-000000000020</string>
 					<key>MountPoint</key>
 					<string>/Volumes/Kiro CLI 3</string>
 					<key>Size</key>
@@ -565,7 +565,7 @@
 					<key>VolumeName</key>
 					<string>Kiro CLI</string>
 					<key>VolumeUUID</key>
-					<string>00000023-1111-4222-8333-000000000023</string>
+					<string>00000021-1111-4222-8333-000000000021</string>
 				</dict>
 			</array>
 			<key>Size</key>

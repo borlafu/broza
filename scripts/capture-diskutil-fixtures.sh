@@ -18,7 +18,8 @@
 #   apfs_list.plist                   diskutil apfs list -plist
 #   apfs_list_snapshots_data.plist    diskutil apfs listSnapshots -plist /System/Volumes/Data
 #   apfs_list_snapshots_system.plist  diskutil apfs listSnapshots -plist /
-#   info_<dev>.plist                  diskutil info -plist <whole disk>, one per physical disk
+#   info_<dev>.plist                  diskutil info -plist <dev>, per physical disk and per
+#                                     Apple_HFS partition
 #   info_root.plist                   diskutil info -plist /
 #   info_data.plist                   diskutil info -plist /System/Volumes/Data
 #   info_preboot.plist                diskutil info -plist /System/Volumes/Preboot
@@ -110,9 +111,9 @@ capture_all() {
   "${DISKUTIL}" list -plist >"${raw_dir}/list.plist"
   "${DISKUTIL}" apfs list -plist >"${raw_dir}/apfs_list.plist"
 
-  local disk
-  for disk in $(whole_disks "${raw_dir}/list.plist"); do
-    "${DISKUTIL}" info -plist "${disk}" >"${raw_dir}/info_${disk}.plist"
+  local device
+  for device in $(whole_disks "${raw_dir}/list.plist") $(hfs_partitions "${raw_dir}/list.plist"); do
+    "${DISKUTIL}" info -plist "${device}" >"${raw_dir}/info_${device}.plist"
   done
 
   local target
@@ -142,6 +143,22 @@ capture_one() {
 # Print the BSD name of every whole disk listed in the plist "${1}", one per line.
 whole_disks() {
   "${PLUTIL}" -extract WholeDisks json -o - "$1" | tr -d '[]"' | tr ',' '\n'
+}
+
+# Print the BSD name of every Apple_HFS partition in the plist "${1}".
+#
+# They need their own `diskutil info`: a partition map reports a partition's
+# size but never how much of it is free, and for HFS+ there is no container
+# listing to ask instead.
+hfs_partitions() {
+  "${PLUTIL}" -convert json -o - "$1" | /usr/bin/perl -MJSON::PP -0777 -ne '
+    my $list = decode_json($_);
+    for my $device (@{ $list->{AllDisksAndPartitions} // [] }) {
+      for my $partition (@{ $device->{Partitions} // [] }) {
+        print $partition->{DeviceIdentifier}, "\n"
+          if ($partition->{Content} // q{}) eq "Apple_HFS";
+      }
+    }'
 }
 
 # Rewrite every captured file in place, in one pass so the UUID map is shared.

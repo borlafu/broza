@@ -1,0 +1,248 @@
+---
+source: crates/broza/tests/diskutil_plist.rs
+expression: parsed
+---
+ApfsList {
+    containers: [
+        ApfsContainer {
+            apfs_container_uuid: Some(
+                "00000001-1111-4222-8333-000000000001",
+            ),
+            container_reference: "disk1",
+            capacity_ceiling: 524288000,
+            capacity_free: 504475648,
+            physical_stores: [
+                ApfsPhysicalStore {
+                    device_identifier: "disk0s1",
+                    size: 524288000,
+                },
+            ],
+            volumes: [
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000003-1111-4222-8333-000000000003",
+                    ),
+                    device_identifier: "disk1s1",
+                    name: Some(
+                        "iSCPreboot",
+                    ),
+                    roles: [
+                        "Preboot",
+                    ],
+                    capacity_in_use: 5877760,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000004-1111-4222-8333-000000000004",
+                    ),
+                    device_identifier: "disk1s2",
+                    name: Some(
+                        "xART",
+                    ),
+                    roles: [
+                        "xART",
+                    ],
+                    capacity_in_use: 6311936,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000005-1111-4222-8333-000000000005",
+                    ),
+                    device_identifier: "disk1s3",
+                    name: Some(
+                        "Hardware",
+                    ),
+                    roles: [
+                        "Hardware",
+                    ],
+                    capacity_in_use: 2646016,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000006-1111-4222-8333-000000000006",
+                    ),
+                    device_identifier: "disk1s4",
+                    name: Some(
+                        "Recovery",
+                    ),
+                    roles: [
+                        "Recovery",
+                    ],
+                    capacity_in_use: 20480,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+            ],
+        },
+        ApfsContainer {
+            apfs_container_uuid: Some(
+                "00000007-1111-4222-8333-000000000007",
+            ),
+            container_reference: "disk2",
+            capacity_ceiling: 5368664064,
+            capacity_free: 3049013248,
+            physical_stores: [
+                ApfsPhysicalStore {
+                    device_identifier: "disk0s3",
+                    size: 5368664064,
+                },
+            ],
+            volumes: [
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000009-1111-4222-8333-000000000009",
+                    ),
+                    device_identifier: "disk2s1",
+                    name: Some(
+                        "Recovery",
+                    ),
+                    roles: [
+                        "Recovery",
+                    ],
+                    capacity_in_use: 2297442304,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "0000000A-1111-4222-8333-00000000000A",
+                    ),
+                    device_identifier: "disk2s2",
+                    name: Some(
+                        "Update",
+                    ),
+                    roles: [
+                        "Update",
+                    ],
+                    capacity_in_use: 2461696,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+            ],
+        },
+        ApfsContainer {
+            apfs_container_uuid: Some(
+                "0000000B-1111-4222-8333-00000000000B",
+            ),
+            container_reference: "disk3",
+            capacity_ceiling: 494384795648,
+            capacity_free: 42088288256,
+            physical_stores: [
+                ApfsPhysicalStore {
+                    device_identifier: "disk0s2",
+                    size: 494384795648,
+                },
+            ],
+            volumes: [
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "0000000D-1111-4222-8333-00000000000D",
+                    ),
+                    device_identifier: "disk3s1",
+                    name: Some(
+                        "Macintosh HD",
+                    ),
+                    roles: [
+                        "System",
+                    ],
+                    capacity_in_use: 17116610560,
+                    encryption: true,
+                    file_vault: true,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "0000000E-1111-4222-8333-00000000000E",
+                    ),
+                    device_identifier: "disk3s2",
+                    name: Some(
+                        "Preboot",
+                    ),
+                    roles: [
+                        "Preboot",
+                    ],
+                    capacity_in_use: 17999499264,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "0000000F-1111-4222-8333-00000000000F",
+                    ),
+                    device_identifier: "disk3s3",
+                    name: Some(
+                        "Recovery",
+                    ),
+                    roles: [
+                        "Recovery",
+                    ],
+                    capacity_in_use: 2593611776,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000010-1111-4222-8333-000000000010",
+                    ),
+                    device_identifier: "disk3s4",
+                    name: Some(
+                        "Update",
+                    ),
+                    roles: [
+                        "Update",
+                    ],
+                    capacity_in_use: 800051200,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000011-1111-4222-8333-000000000011",
+                    ),
+                    device_identifier: "disk3s5",
+                    name: Some(
+                        "Data",
+                    ),
+                    roles: [
+                        "Data",
+                    ],
+                    capacity_in_use: 407183564800,
+                    encryption: true,
+                    file_vault: true,
+                    locked: false,
+                },
+                ApfsVolume {
+                    apfs_volume_uuid: Some(
+                        "00000012-1111-4222-8333-000000000012",
+                    ),
+                    device_identifier: "disk3s6",
+                    name: Some(
+                        "VM",
+                    ),
+                    roles: [
+                        "VM",
+                    ],
+                    capacity_in_use: 6442795008,
+                    encryption: false,
+                    file_vault: false,
+                    locked: false,
+                },
+            ],
+        },
+    ],
+}

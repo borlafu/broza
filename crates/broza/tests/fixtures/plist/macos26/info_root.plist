@@ -5,7 +5,7 @@
 	<key>AESHardware</key>
 	<true/>
 	<key>APFSContainerFree</key>
-	<integer>44791529472</integer>
+	<integer>42088189952</integer>
 	<key>APFSContainerReference</key>
 	<string>disk3</string>
 	<key>APFSContainerSize</key>
@@ -116,19 +116,19 @@
 		<key>CONTROLLER_BUSY_TIME_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_READ_0</key>
-		<integer>781635016</integer>
+		<integer>781662044</integer>
 		<key>DATA_UNITS_READ_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_WRITTEN_0</key>
-		<integer>142954282</integer>
+		<integer>142964247</integer>
 		<key>DATA_UNITS_WRITTEN_1</key>
 		<integer>0</integer>
 		<key>HOST_READ_COMMANDS_0</key>
-		<integer>63334646695</integer>
+		<integer>63335293050</integer>
 		<key>HOST_READ_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>HOST_WRITE_COMMANDS_0</key>
-		<integer>3981258051</integer>
+		<integer>3981409879</integer>
 		<key>HOST_WRITE_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>MEDIA_ERRORS_0</key>

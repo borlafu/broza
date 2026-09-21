@@ -5,7 +5,7 @@
 	<key>AESHardware</key>
 	<true/>
 	<key>APFSContainerFree</key>
-	<integer>44791521280</integer>
+	<integer>42088148992</integer>
 	<key>APFSContainerReference</key>
 	<string>disk3</string>
 	<key>APFSContainerSize</key>
@@ -32,7 +32,7 @@
 	<key>CanBeMadeBootableRequiresDestroy</key>
 	<false/>
 	<key>CapacityInUse</key>
-	<integer>404480331776</integer>
+	<integer>407183704064</integer>
 	<key>Content</key>
 	<string>00000016-1111-4222-8333-000000000016</string>
 	<key>DeviceBlockSize</key>
@@ -110,19 +110,19 @@
 		<key>CONTROLLER_BUSY_TIME_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_READ_0</key>
-		<integer>781635020</integer>
+		<integer>781662046</integer>
 		<key>DATA_UNITS_READ_1</key>
 		<integer>0</integer>
 		<key>DATA_UNITS_WRITTEN_0</key>
-		<integer>142954282</integer>
+		<integer>142964247</integer>
 		<key>DATA_UNITS_WRITTEN_1</key>
 		<integer>0</integer>
 		<key>HOST_READ_COMMANDS_0</key>
-		<integer>63334646783</integer>
+		<integer>63335293080</integer>
 		<key>HOST_READ_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>HOST_WRITE_COMMANDS_0</key>
-		<integer>3981258052</integer>
+		<integer>3981409895</integer>
 		<key>HOST_WRITE_COMMANDS_1</key>
 		<integer>0</integer>
 		<key>MEDIA_ERRORS_0</key>

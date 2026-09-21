@@ -1,0 +1,284 @@
+---
+source: crates/broza/tests/diskutil_enumerate.rs
+expression: recorded_disks()
+---
+[
+  {
+    "id": "disk0",
+    "model": "APPLE SSD AP0512Z",
+    "size_bytes": 500277792768,
+    "internal": true,
+    "containers": [
+      {
+        "id": "disk1",
+        "type": "apfs",
+        "size_bytes": 524288000,
+        "used_bytes": 19812352,
+        "free_bytes": 504475648,
+        "purgeable_bytes": 0,
+        "volumes": [
+          {
+            "id": "disk1s1",
+            "name": "iSCPreboot",
+            "role": "preboot",
+            "mount_point": "/System/Volumes/iSCPreboot",
+            "used_bytes": 5877760,
+            "writable_by_broza": false,
+            "purpose": "Boot loader data that macOS needs before the system volume is available."
+          },
+          {
+            "id": "disk1s2",
+            "name": "xART",
+            "role": "unknown",
+            "mount_point": "/System/Volumes/xarts",
+            "used_bytes": 6311936,
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+          },
+          {
+            "id": "disk1s3",
+            "name": "Hardware",
+            "role": "unknown",
+            "mount_point": "/System/Volumes/Hardware",
+            "used_bytes": 2646016,
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+          },
+          {
+            "id": "disk1s4",
+            "name": "Recovery",
+            "role": "recovery",
+            "used_bytes": 20480,
+            "writable_by_broza": false,
+            "purpose": "The recovery environment used to repair or reinstall macOS."
+          }
+        ]
+      },
+      {
+        "id": "disk2",
+        "type": "apfs",
+        "size_bytes": 5368664064,
+        "used_bytes": 2319650816,
+        "free_bytes": 3049013248,
+        "purgeable_bytes": 0,
+        "volumes": [
+          {
+            "id": "disk2s1",
+            "name": "Recovery",
+            "role": "recovery",
+            "mount_point": "/System/Volumes/Update/SFR/mnt1",
+            "used_bytes": 2297442304,
+            "writable_by_broza": false,
+            "purpose": "The recovery environment used to repair or reinstall macOS."
+          },
+          {
+            "id": "disk2s2",
+            "name": "Update",
+            "role": "unknown",
+            "used_bytes": 2461696,
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+          }
+        ]
+      },
+      {
+        "id": "disk3",
+        "type": "apfs",
+        "size_bytes": 494384795648,
+        "used_bytes": 452296507392,
+        "free_bytes": 42088288256,
+        "purgeable_bytes": 84140000000,
+        "volumes": [
+          {
+            "id": "disk3s1",
+            "name": "Macintosh HD",
+            "role": "system",
+            "mount_point": "/",
+            "used_bytes": 17116610560,
+            "writable_by_broza": false,
+            "purpose": "Read-only, sealed and signed operating system volume (SSV)."
+          },
+          {
+            "id": "disk3s2",
+            "name": "Preboot",
+            "role": "preboot",
+            "mount_point": "/System/Volumes/Preboot",
+            "used_bytes": 17999499264,
+            "writable_by_broza": false,
+            "purpose": "Boot loader data that macOS needs before the system volume is available."
+          },
+          {
+            "id": "disk3s3",
+            "name": "Recovery",
+            "role": "recovery",
+            "used_bytes": 2593611776,
+            "writable_by_broza": false,
+            "purpose": "The recovery environment used to repair or reinstall macOS."
+          },
+          {
+            "id": "disk3s4",
+            "name": "Update",
+            "role": "unknown",
+            "mount_point": "/System/Volumes/Update",
+            "used_bytes": 800051200,
+            "writable_by_broza": false,
+            "purpose": "A volume with a role Broza does not recognise, so it is treated as read-only."
+          },
+          {
+            "id": "disk3s5",
+            "name": "Data",
+            "role": "data",
+            "mount_point": "/System/Volumes/Data",
+            "used_bytes": 407183564800,
+            "writable_by_broza": true,
+            "purpose": "The writable volume that holds your home folder, your applications and your settings."
+          },
+          {
+            "id": "disk3s6",
+            "name": "VM",
+            "role": "vm",
+            "mount_point": "/System/Volumes/VM",
+            "used_bytes": 6442795008,
+            "writable_by_broza": false,
+            "purpose": "Virtual memory: the swap and sleep-image files macOS writes and manages on its own."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "disk4",
+    "model": "Disk Image",
+    "size_bytes": 2012860928,
+    "internal": false,
+    "containers": [
+      {
+        "id": "disk4s1",
+        "type": "hfs_plus",
+        "size_bytes": 1878605824,
+        "used_bytes": 1875832832,
+        "free_bytes": 2772992,
+        "purgeable_bytes": 0,
+        "volumes": [
+          {
+            "id": "disk4s1",
+            "name": "Kiro CLI",
+            "role": "user",
+            "mount_point": "/Volumes/Kiro CLI",
+            "used_bytes": 1875832832,
+            "writable_by_broza": true,
+            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "disk5",
+    "model": "Disk Image",
+    "size_bytes": 2828009472,
+    "internal": false,
+    "containers": [
+      {
+        "id": "disk5s2",
+        "type": "hfs_plus",
+        "size_bytes": 2484035584,
+        "used_bytes": 2304745472,
+        "free_bytes": 179290112,
+        "purgeable_bytes": 0,
+        "volumes": [
+          {
+            "id": "disk5s2",
+            "name": "Docker",
+            "role": "user",
+            "mount_point": "/private/var/folders/aa/bb00000000000000000000000000gn/T/com.docker.install/DockerDesktop-238018",
+            "used_bytes": 2304745472,
+            "writable_by_broza": true,
+            "purpose": "Docker is a volume of your own, outside the macOS system group."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "disk6",
+    "model": "Disk Image",
+    "size_bytes": 1394423808,
+    "internal": false,
+    "containers": [
+      {
+        "id": "disk6s1",
+        "type": "hfs_plus",
+        "size_bytes": 1260167168,
+        "used_bytes": 1257394176,
+        "free_bytes": 2772992,
+        "purgeable_bytes": 0,
+        "volumes": [
+          {
+            "id": "disk6s1",
+            "name": "Kiro CLI",
+            "role": "user",
+            "mount_point": "/Volumes/Kiro CLI 1",
+            "used_bytes": 1257394176,
+            "writable_by_broza": true,
+            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "disk7",
+    "model": "Disk Image",
+    "size_bytes": 1256192512,
+    "internal": false,
+    "containers": [
+      {
+        "id": "disk7s1",
+        "type": "hfs_plus",
+        "size_bytes": 1121935360,
+        "used_bytes": 1119182848,
+        "free_bytes": 2752512,
+        "purgeable_bytes": 0,
+        "volumes": [
+          {
+            "id": "disk7s1",
+            "name": "Kiro CLI",
+            "role": "user",
+            "mount_point": "/Volumes/Kiro CLI 2",
+            "used_bytes": 1119182848,
+            "writable_by_broza": true,
+            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "disk8",
+    "model": "Disk Image",
+    "size_bytes": 1257459712,
+    "internal": false,
+    "containers": [
+      {
+        "id": "disk8s1",
+        "type": "hfs_plus",
+        "size_bytes": 1123201024,
+        "used_bytes": 1120415744,
+        "free_bytes": 2785280,
+        "purgeable_bytes": 0,
+        "volumes": [
+          {
+            "id": "disk8s1",
+            "name": "Kiro CLI",
+            "role": "user",
+            "mount_point": "/Volumes/Kiro CLI 3",
+            "used_bytes": 1120415744,
+            "writable_by_broza": true,
+            "purpose": "Kiro CLI is a volume of your own, outside the macOS system group."
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -20,6 +20,7 @@ pub mod progress;
 pub mod request;
 pub mod selection;
 pub mod walker;
+mod warnings;
 
 pub use aggregate::{TreeNode, TreeView, largest_items, tree};
 pub use cache::{CacheKey, CacheStore, DirRecord};
@@ -29,13 +30,16 @@ pub use request::{
     DETECTOR_FILES_MIN_BYTES, DETECTOR_FILES_TOP, FileReport, ScanRequest, VolumeScan, default_excludes,
 };
 pub use walker::{DirIdentity, DirNode, FileEntry, SkipHook, WalkOptions, WalkResult, walk};
+pub use warnings::{FILE_REPORT_TRUNCATED_CODE, OVERCOUNT_CODE, PERMISSION_SUMMARY_CODE};
+
+use warnings::{cache_key_warning, collapse_permission_warnings, file_report_warning, overcount_warning};
 
 use std::path::{Path, PathBuf};
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::BrozaError;
-use crate::model::{Diagnostic, Volume};
+use crate::model::Volume;
 use crate::ports::{FileOps, Ports};
 
 /// Where progress updates go while a scan runs.
@@ -230,6 +234,7 @@ fn assemble(entry: &MountEntry, root_path: &Path, walked: WalkResult, request: &
     let mut warnings = collapse_permission_warnings(walked.errors.clone(), request.verbose_warnings);
     warnings.extend(cache_key_warning(request, &entry.volume));
     warnings.extend(overcount_warning(&root, entry));
+    warnings.extend(file_report_warning(&walked, request, entry));
     let largest = aggregate::largest_items(&walked, request.top, request.min_size, &volume_id);
     let tree = aggregate::tree(&root, &walked.nodes, request.depth, request.min_size);
     VolumeScan { largest, tree, root, warnings, volume_id, nodes: walked.nodes, files: walked.files }
@@ -239,85 +244,6 @@ fn assemble(entry: &MountEntry, root_path: &Path, walked: WalkResult, request: &
 fn cache_path_for(cache_root: &Path, volume: &Volume) -> PathBuf {
     let key = volume.uuid.as_deref().unwrap_or_else(|| volume.id.as_str());
     cache::store_path(cache_root, key)
-}
-
-/// The warning a volume with no UUID earns, when a cache is in use at all.
-///
-/// A BSD name belongs to a slot, not to a disk: the next volume mounted there
-/// would read this one's cache until it expires. Broza says so rather than
-/// pretending the key is sound.
-fn cache_key_warning(request: &ScanRequest, volume: &Volume) -> Option<Diagnostic> {
-    if request.cache_root.is_none() || volume.uuid.is_some() {
-        return None;
-    }
-    let message = format!(
-        "macOS reported no UUID for {}, so its scan cache is filed under the BSD name {}",
-        volume.name, volume.id
-    );
-    Some(Diagnostic { code: cache::BSD_ID_KEY_CODE.to_owned(), message, path: volume.mount_point.clone() })
-}
-
-/// How many refused paths a collapsed warning still names.
-const PERMISSION_EXAMPLES: usize = 5;
-/// Stable code of the one warning that stands in for many refused paths.
-pub const PERMISSION_SUMMARY_CODE: &str = "permission_denied_summary";
-
-/// Fold a flood of `permission_denied` warnings into one that counts them.
-///
-/// A Mac without Full Disk Access refuses hundreds of paths in one scan; one
-/// line per path buries every other warning. The summary keeps the first few
-/// paths as examples; `verbose` keeps them all.
-fn collapse_permission_warnings(warnings: Vec<Diagnostic>, verbose: bool) -> Vec<Diagnostic> {
-    let refused = warnings.iter().filter(|w| w.code == walker::PERMISSION_DENIED_CODE).count();
-    if verbose || refused <= PERMISSION_EXAMPLES {
-        return warnings;
-    }
-    let examples: Vec<String> = warnings
-        .iter()
-        .filter(|w| w.code == walker::PERMISSION_DENIED_CODE)
-        .take(PERMISSION_EXAMPLES)
-        .filter_map(|w| w.path.as_ref().map(|p| p.display().to_string()))
-        .collect();
-    let summary = Diagnostic {
-        code: PERMISSION_SUMMARY_CODE.to_owned(),
-        message: format!(
-            "{refused} locations could not be read (for example {}); their sizes are missing from \
-             the totals. Grant Full Disk Access to include them, or pass -v to list every path.",
-            examples.join(", ")
-        ),
-        path: None,
-    };
-    std::iter::once(summary)
-        .chain(warnings.into_iter().filter(|w| w.code != walker::PERMISSION_DENIED_CODE))
-        .collect()
-}
-
-/// Stable code of the warning raised when a walk measures more than the volume holds.
-pub const OVERCOUNT_CODE: &str = "size_exceeds_volume";
-
-/// The warning a whole-volume walk earns when its total exceeds what macOS says
-/// is in use.
-///
-/// Allocated blocks are summed per file, and an APFS clone reports the blocks it
-/// shares with its original as its own, so a folder of cloned media can measure
-/// bigger than the disk. Broza says so rather than letting the list imply more
-/// space is freeable than exists (`AGENTS.md` §2.7; clone accounting is
-/// post-1.0, PRD RF-02).
-fn overcount_warning(root: &DirNode, entry: &MountEntry) -> Option<Diagnostic> {
-    let used = entry.volume.used_bytes;
-    if root.path != entry.mount_point || used == 0 || root.allocated_bytes <= used {
-        return None;
-    }
-    Some(Diagnostic {
-        code: OVERCOUNT_CODE.to_owned(),
-        message: format!(
-            "{} measures {} bytes but macOS reports {} in use on the volume. Each APFS clone is \
-             counted separately, so the sizes listed are upper bounds until clone accounting \
-             lands; the volume figure also includes snapshots and metadata a walk never sees.",
-            entry.volume.name, root.allocated_bytes, used
-        ),
-        path: Some(entry.mount_point.clone()),
-    })
 }
 
 /// The store for this volume, or an empty one when it is disabled or bypassed.

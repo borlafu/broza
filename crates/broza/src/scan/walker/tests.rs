@@ -335,6 +335,7 @@ fn only_as_many_files_as_asked_for_are_kept() {
 
     let result = walk_sample(&sample(), &options);
 
+    assert!(result.files_truncated, "more files passed the threshold than were kept");
     let kept: Vec<u64> = result.files.iter().map(|file| file.size_bytes).collect();
     assert_eq!(kept.len(), 2);
     assert!(kept.contains(&5000) && kept.contains(&3000), "{kept:?}");

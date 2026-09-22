@@ -8,11 +8,15 @@
 //! `max(atime, kMDItemLastUsedDate)`, Spotlight asked through `mdls` on the
 //! process port for the candidates only. A file is proposed when that date and
 //! its modification time are both older than `--unused-after`: a file appended
-//! to daily has an old access time and is not old. A file the filesystem and
-//! Spotlight say nothing about is left alone, and so is a file with more than
-//! one name — quarantining one hard link frees nothing. When Spotlight has no
-//! date for some of the proposed files, the reasoning counts them and states
-//! low confidence, as the specification requires.
+//! to daily has an old access time and is not old. Spotlight is asked only
+//! about files whose modification and access times already qualify, and not at all once
+//! `mdls` has failed or timed out — a stuck Spotlight costs one timeout, not
+//! one per file. A file the filesystem and Spotlight say nothing about is left
+//! alone, and so is a file with more than one name — quarantining one hard
+//! link frees nothing. When Spotlight has no date for some of the proposed
+//! files, the reasoning counts them and states low confidence, as the
+//! specification requires. Every date comes from the walk, taken before any
+//! detector read a file.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -21,7 +25,7 @@ use jiff::Timestamp;
 
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, FindingPath};
-use crate::ports::{EntryMetadata, ProcessRunner};
+use crate::ports::ProcessRunner;
 use crate::scan::FileEntry;
 
 use super::support::{by_size_then_path, finish, path_with, start};
@@ -57,19 +61,12 @@ impl Detector for LargeOldFiles {
         let skipped: Vec<PathBuf> = SKIPPED_UNDER_HOME.iter().map(|dir| context.under_home(dir)).collect();
         let mut detected = Detected::default();
         let mut spotlight = Spotlight::new(context.process);
-        let mut judged: Vec<Judged> = Vec::new();
-        for file in context.home_files.iter().filter(|file| is_candidate(file, &skipped)) {
-            match judge(file, context, &mut spotlight) {
-                Ok(Some(unused)) => judged.push(unused),
-                Ok(None) => {}
-                Err(error) => detected.warnings.push(Detected::unreadable(
-                    Category::LargeOldFiles,
-                    &file.path,
-                    "its dates",
-                    &error,
-                )),
-            }
-        }
+        let judged: Vec<Judged> = context
+            .home_files
+            .iter()
+            .filter(|file| is_candidate(file, &skipped))
+            .filter_map(|file| judge(file, context, &mut spotlight))
+            .collect();
         detected.warnings.extend(spotlight.warning());
         let low_confidence = judged.iter().filter(|unused| !unused.spotlight_knows).count();
         let mut paths: Vec<FindingPath> = judged.into_iter().map(|unused| unused.path).collect();
@@ -84,9 +81,11 @@ impl Detector for LargeOldFiles {
     }
 }
 
-/// Big enough, and not on another detector's ground.
+/// Big enough, with one name, and not on another detector's ground.
 fn is_candidate(file: &FileEntry, skipped: &[PathBuf]) -> bool {
-    file.size_bytes >= LARGE_FILE_MIN_BYTES && !skipped.iter().any(|dir| file.path.starts_with(dir))
+    file.size_bytes >= LARGE_FILE_MIN_BYTES
+        && file.link_count <= 1
+        && !skipped.iter().any(|dir| file.path.starts_with(dir))
 }
 
 /// One proposed file, and whether Spotlight had a say in it.
@@ -95,34 +94,26 @@ struct Judged {
     spotlight_knows: bool,
 }
 
-/// The finding path for `file` when it is unused; `None` when it is in use,
-/// not a plain single-named file, or of unknown age.
-fn judge(
-    file: &FileEntry,
-    context: &DetectContext<'_>,
-    spotlight: &mut Spotlight<'_>,
-) -> Result<Option<Judged>, BrozaError> {
-    let meta = context.fs.metadata(&file.path)?;
-    if !is_plain_single_file(&meta) {
-        return Ok(None);
+/// The finding path for `file` when it is unused; `None` when it is in use or
+/// of unknown age. The walk's dates are judged first: Spotlight can only make
+/// `last_used` later, so it is asked only about a file that could be proposed.
+fn judge(file: &FileEntry, context: &DetectContext<'_>, spotlight: &mut Spotlight<'_>) -> Option<Judged> {
+    let modified = file.modified?;
+    if !context.is_unused_since(modified) {
+        return None;
+    }
+    if file.accessed.is_some_and(|accessed| !context.is_unused_since(accessed)) {
+        return None;
     }
     let spotlight_date = spotlight.last_used(&file.path);
-    let Some(last_used) = later_of(meta.accessed, spotlight_date) else {
-        return Ok(None);
-    };
-    let last_touched = later_of(Some(last_used), meta.modified).unwrap_or(last_used);
-    if !context.is_unused_since(last_touched) {
-        return Ok(None);
+    let last_used = later_of(file.accessed, spotlight_date)?;
+    if !context.is_unused_since(last_used) {
+        return None;
     }
-    Ok(Some(Judged {
+    Some(Judged {
         path: path_with(&file.path, file.allocated_bytes, Some(last_used)),
         spotlight_knows: spotlight_date.is_some(),
-    }))
-}
-
-/// A regular file with one name whose bytes are on this disk.
-fn is_plain_single_file(meta: &EntryMetadata) -> bool {
-    !meta.is_dir && !meta.is_symlink && !meta.is_dataless && meta.link_count <= 1
+    })
 }
 
 /// The later of two optional instants; whichever exists when only one does.
@@ -146,7 +137,8 @@ fn reasoning(low_confidence: usize) -> String {
     )
 }
 
-/// Spotlight, asked once per candidate; remembers whether it could be asked.
+/// Spotlight, asked once per candidate until it fails once; after that no
+/// more, so a stuck or missing `mdls` costs one timeout and one warning.
 struct Spotlight<'a> {
     process: &'a dyn ProcessRunner,
     /// Why `mdls` could not answer, the first time it failed.
@@ -159,7 +151,13 @@ impl<'a> Spotlight<'a> {
     }
 
     /// `kMDItemLastUsedDate` of `path`, when Spotlight has one.
+    ///
+    /// The path goes last and must be absolute: `mdls` has no `--`, and a
+    /// relative name starting with `-` would read as an option.
     fn last_used(&mut self, path: &Path) -> Option<Timestamp> {
+        if self.failure.is_some() || !path.is_absolute() {
+            return None;
+        }
         let path_text = path.to_str()?;
         let args: Vec<&str> = MDLS_ARGS.iter().copied().chain([path_text]).collect();
         let output = match self.process.run(MDLS, &args, MDLS_TIMEOUT) {
@@ -266,8 +264,14 @@ mod tests {
     }
 
     fn detect(fs: &FakeFileOps, runner: FakeRunner) -> Detected {
+        detect_counting(fs, runner).0
+    }
+
+    /// The detection, and how many times `mdls` was run.
+    fn detect_counting(fs: &FakeFileOps, runner: FakeRunner) -> (Detected, usize) {
         let world = context_over(fs, home()).with_process(runner);
-        LargeOldFiles.detect(&world.context()).unwrap()
+        let detected = LargeOldFiles.detect(&world.context()).unwrap();
+        (detected, world.process().calls().len())
     }
 
     fn proposed(detected: &Detected) -> Vec<String> {
@@ -276,9 +280,12 @@ mod tests {
 
     #[test]
     fn only_big_old_untouched_files_outside_library_and_trash_are_proposed() {
-        let answers = [(OLD, "(null)"), (OLD_TOO, "(null)"), (RECENT, "(null)"), (APPENDED, "(null)")];
+        // Neither the recently read nor the recently appended file is scripted:
+        // Spotlight is asked about files that are old by every other measure.
+        let answers = [(OLD, "(null)"), (OLD_TOO, "(null)")];
 
-        let detected = detect(&fs(), runner(&answers));
+        let (detected, asked) = detect_counting(&fs(), runner(&answers));
+        assert_eq!(asked, 2, "one question per file that could be proposed");
 
         assert_eq!(proposed(&detected), vec![OLD.to_owned(), OLD_TOO.to_owned()], "{detected:?}");
         let finding = &detected.findings[0];
@@ -291,12 +298,7 @@ mod tests {
 
     #[test]
     fn spotlight_keeps_a_file_it_saw_opened_lately_and_dates_one_it_saw_opened_long_ago() {
-        let answers = [
-            (OLD, "2026-06-01 10:00:00 +0000"),
-            (OLD_TOO, "2020-02-02 12:00:00 +0000"),
-            (RECENT, "(null)"),
-            (APPENDED, "(null)"),
-        ];
+        let answers = [(OLD, "2026-06-01 10:00:00 +0000"), (OLD_TOO, "2020-02-02 12:00:00 +0000")];
 
         let detected = detect(&fs(), runner(&answers));
 
@@ -307,15 +309,16 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_mdls_is_one_warning_and_the_files_are_judged_by_access_time() {
+    fn a_failing_mdls_is_asked_once_is_one_warning_and_the_files_are_judged_by_access_time() {
         let runner = FakeRunner::new();
-        for path in [OLD, OLD_TOO, RECENT, APPENDED] {
+        for path in [OLD, OLD_TOO] {
             let args: Vec<&str> = MDLS_ARGS.iter().copied().chain([path]).collect();
             runner.script_failure(MDLS, &args, "mdls: command not found");
         }
 
-        let detected = detect(&fs(), runner);
+        let (detected, asked) = detect_counting(&fs(), runner);
 
+        assert_eq!(asked, 1, "after one failure Spotlight is not asked again");
         assert_eq!(proposed(&detected), vec![OLD.to_owned(), OLD_TOO.to_owned()], "{detected:?}");
         assert_eq!(detected.warnings.len(), 1, "{:?}", detected.warnings);
         assert_eq!(detected.warnings[0].code, SPOTLIGHT_UNAVAILABLE_CODE);
@@ -327,13 +330,7 @@ mod tests {
     fn a_file_with_a_second_name_is_never_proposed() {
         let fs = fs();
         fs.add_hard_link(OLD, LINKED);
-        let answers = [
-            (OLD, "(null)"),
-            (OLD_TOO, "(null)"),
-            (RECENT, "(null)"),
-            (APPENDED, "(null)"),
-            (LINKED, "(null)"),
-        ];
+        let answers = [(OLD_TOO, "(null)")];
 
         let detected = detect(&fs, runner(&answers));
 

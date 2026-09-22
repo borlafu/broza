@@ -228,6 +228,7 @@ fn sorted(partial: Partial) -> WalkResult {
     let Partial { mut nodes, files, links, mut errors, mut direct_maxima, hidden, .. } = partial;
     let hidden_paths: HashSet<PathBuf> = hidden.iter().map(|node| node.path.clone()).collect();
     nodes.extend(hidden);
+    let files_truncated = files.is_truncated();
     let settled = dedupe::settle_hard_links(nodes, files.into_vec(), links);
     let mut files = settled.files;
     // The surviving name of every multiply-linked file is a direct file of the
@@ -242,7 +243,7 @@ fn sorted(partial: Partial) -> WalkResult {
     nodes.sort_by(|left, right| left.path.cmp(&right.path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));
-    WalkResult { nodes, files, errors }
+    WalkResult { nodes, files, files_truncated, errors }
 }
 
 #[cfg(test)]

@@ -134,7 +134,11 @@ impl DirNode {
     }
 }
 
-/// A file big enough to be worth reporting on its own.
+/// A file big enough to be worth reporting on its own, as the walk saw it.
+///
+/// Carries what `lstat` said at walk time so that detectors judge from one
+/// consistent record instead of asking again: reading a file for comparison
+/// updates its access time, and a second `stat` would see that, not the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
     /// Absolute path of the file.
@@ -143,6 +147,33 @@ pub struct FileEntry {
     pub size_bytes: u64,
     /// Allocated size in bytes.
     pub allocated_bytes: u64,
+    /// Device id (`st_dev`).
+    pub device: u64,
+    /// Inode number (`st_ino`).
+    pub inode: u64,
+    /// Number of hard links; more than one means other names share the bytes.
+    pub link_count: u64,
+    /// Last modification time.
+    pub modified: Option<Timestamp>,
+    /// Last access time, before any detector read the file.
+    pub accessed: Option<Timestamp>,
+}
+
+impl FileEntry {
+    /// A file of `size_bytes` with one name and no known dates, for tests.
+    #[cfg(test)]
+    pub(crate) fn sized(path: &str, size_bytes: u64) -> Self {
+        Self {
+            path: PathBuf::from(path),
+            size_bytes,
+            allocated_bytes: size_bytes,
+            device: 0,
+            inode: 0,
+            link_count: 1,
+            modified: None,
+            accessed: None,
+        }
+    }
 }
 
 /// How a walk behaves.
@@ -214,6 +245,9 @@ pub struct WalkResult {
     pub nodes: Vec<DirNode>,
     /// The biggest files above the reporting threshold, sorted by path.
     pub files: Vec<FileEntry>,
+    /// `true` when more files passed the threshold than `report_files_top`
+    /// allowed to keep, so `files` is the biggest of them, not all of them.
+    pub files_truncated: bool,
     /// Warnings about what could not be read, sorted by path.
     pub errors: Vec<Diagnostic>,
 }

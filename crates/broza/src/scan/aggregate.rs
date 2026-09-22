@@ -193,7 +193,7 @@ mod tests {
     }
 
     fn file(path: &str, size_bytes: u64) -> FileEntry {
-        FileEntry { path: PathBuf::from(path), size_bytes, allocated_bytes: size_bytes }
+        FileEntry::sized(path, size_bytes)
     }
 
     fn volume() -> VolumeId {
@@ -201,7 +201,7 @@ mod tests {
     }
 
     fn result(nodes: Vec<DirNode>, files: Vec<FileEntry>) -> WalkResult {
-        WalkResult { nodes, files, errors: Vec::new() }
+        WalkResult { nodes, files, files_truncated: false, errors: Vec::new() }
     }
 
     fn reported(walk: &WalkResult, top: usize, min_size: u64) -> Vec<(String, u64, ItemKind)> {

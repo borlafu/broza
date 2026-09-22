@@ -131,14 +131,15 @@ pub trait FileOps: Send + Sync {
     fn write_atomic(&self, path: &Path, contents: &[u8]) -> Result<(), BrozaError>;
     /// Read a whole file.
     fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError>;
-    /// The first `len` bytes of a file; fewer when the file is shorter.
+    /// `len` bytes of a file from `offset`; fewer when the file ends first.
     ///
-    /// The default reads the whole file and keeps the front, which is what a
-    /// fake can afford; the real adapter reads only that much.
-    fn read_prefix(&self, path: &Path, len: usize) -> Result<Vec<u8>, BrozaError> {
-        let mut bytes = self.read(path)?;
-        bytes.truncate(len);
-        Ok(bytes)
+    /// The default reads the whole file and keeps the slice, which is what a
+    /// fake can afford; the real adapter seeks and reads only that much.
+    fn read_range(&self, path: &Path, offset: u64, len: usize) -> Result<Vec<u8>, BrozaError> {
+        let bytes = self.read(path)?;
+        let start = usize::try_from(offset).unwrap_or(usize::MAX).min(bytes.len());
+        let end = start.saturating_add(len).min(bytes.len());
+        Ok(bytes[start..end].to_vec())
     }
     /// The [`ContentHash`] of a whole file.
     ///

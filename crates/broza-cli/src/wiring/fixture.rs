@@ -73,8 +73,8 @@ const RECORDED_FILES: [(&str, u64); 10] = [
     ("/System/Volumes/Data/Users/dana/Library/Logs/App/app.log", 1_200_000_000),
     ("/System/Volumes/Data/Users/dana/.Trash/old-disk-image.dmg", 3_300_000_000),
     (OLD_MOVIE, 4_200_000_000),
-    (INSTALLER, 1_500_000_000),
-    (INSTALLER_COPY, 1_500_000_000),
+    (INSTALLER, 800_000_000),
+    (INSTALLER_COPY, 800_000_000),
     (
         "/System/Volumes/Data/Users/dana/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
         38_600_000_000,

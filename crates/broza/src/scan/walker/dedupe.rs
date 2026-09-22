@@ -206,7 +206,7 @@ mod tests {
     }
 
     fn file(path: &str, size_bytes: u64) -> FileEntry {
-        FileEntry { path: PathBuf::from(path), size_bytes, allocated_bytes: size_bytes }
+        FileEntry::sized(path, size_bytes)
     }
 
     fn sizes(nodes: &[DirNode]) -> Vec<(String, u64, u64)> {

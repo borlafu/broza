@@ -253,11 +253,19 @@ impl Leaves {
                 allocated_bytes: meta.allocated_bytes,
             });
         }
-        if context.options.report_files_min_size.is_some_and(|min| meta.allocated_bytes >= min) {
+        // Either size clears the threshold: the readers downstream filter on
+        // the one they mean, and a sparse or compressed file is not lost here.
+        let reportable = meta.size_bytes.max(meta.allocated_bytes);
+        if context.options.report_files_min_size.is_some_and(|min| reportable >= min) {
             self.files = self.files.with(FileEntry {
                 path: path.to_path_buf(),
                 size_bytes: meta.size_bytes,
                 allocated_bytes: meta.allocated_bytes,
+                device: meta.device,
+                inode: meta.inode,
+                link_count: meta.link_count,
+                modified: meta.modified,
+                accessed: meta.accessed,
             });
         }
         Self { entries, totals: self.totals.merge(Totals::leaf(meta)), ..self }

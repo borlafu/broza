@@ -331,7 +331,7 @@ M4 progress:
       `simctl_devices.json` beside the plist recordings).
 - [x] 7. `large-old-files` detector (`detect/detectors/large_old_files.rs`; the home walk reports
       files of at least 1 MB through `ScanRequest.file_report`, and the detector keeps the 1 GB ones).
-- [x] 8. `duplicates` detector (`detect/detectors/duplicates.rs`; `FileOps::read_prefix` and
+- [x] 8. `duplicates` detector (`detect/detectors/duplicates.rs`; `FileOps::read_range` and
       `FileOps::hash_file`, BLAKE3 streamed in the adapter).
 - [ ] `ApprovedItem` carries a mount point with a synthetic identity for snapshot items; make the
       distinction typed (`enum Target { Path(..), Snapshot {..} }`) so a future consumer of

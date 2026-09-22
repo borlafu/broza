@@ -48,6 +48,11 @@ impl World<'_> {
         Self { process: runner, ..self }
     }
 
+    /// The scripted process runner, to assert on what was asked of it.
+    pub fn process(&self) -> &FakeRunner {
+        &self.process
+    }
+
     /// The same world with `snapshots` reported for `volume`.
     #[must_use]
     pub fn with_snapshots(

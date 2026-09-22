@@ -16,12 +16,14 @@ pub(super) struct TopFiles {
     cap: usize,
     /// The kept files, smallest on top so it is the one evicted.
     heap: BinaryHeap<Smallest>,
+    /// `true` once a file above the threshold was evicted for lack of room.
+    truncated: bool,
 }
 
 impl TopFiles {
     /// An empty set keeping at most `cap` files.
     pub fn new(cap: usize) -> Self {
-        Self { cap, heap: BinaryHeap::new() }
+        Self { cap, heap: BinaryHeap::new(), truncated: false }
     }
 
     /// The same set with `entry` considered.
@@ -32,6 +34,7 @@ impl TopFiles {
         self.heap.push(Smallest(entry));
         if self.heap.len() > self.cap {
             let _ = self.heap.pop();
+            self.truncated = true;
         }
         self
     }
@@ -41,10 +44,16 @@ impl TopFiles {
         let (mut bigger, smaller) =
             if self.heap.len() >= other.heap.len() { (self, other) } else { (other, self) };
         bigger.cap = bigger.cap.max(smaller.cap);
+        bigger.truncated |= smaller.truncated;
         for entry in smaller.heap {
             bigger = bigger.with(entry.0);
         }
         bigger
+    }
+
+    /// `true` when the set had to evict files that passed the threshold.
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
     }
 
     /// The kept files, in no particular order.
@@ -74,13 +83,11 @@ impl PartialOrd for Smallest {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::TopFiles;
     use crate::scan::walker::FileEntry;
 
     fn file(path: &str, size_bytes: u64) -> FileEntry {
-        FileEntry { path: PathBuf::from(path), size_bytes, allocated_bytes: size_bytes }
+        FileEntry::sized(path, size_bytes)
     }
 
     fn names(files: TopFiles) -> Vec<String> {
@@ -96,6 +103,19 @@ mod tests {
             [file("/a", 1), file("/b", 5), file("/c", 3)].into_iter().fold(TopFiles::new(2), TopFiles::with);
 
         assert_eq!(names(kept), vec!["/b".to_owned(), "/c".to_owned()]);
+    }
+
+    #[test]
+    fn evicting_a_file_for_lack_of_room_marks_the_set_truncated() {
+        let full = TopFiles::new(2).with(file("/a", 1)).with(file("/b", 2)).with(file("/c", 3));
+        let merged = TopFiles::new(2).merge(full.merge(TopFiles::new(2)));
+
+        assert!(full_is_truncated(&merged), "truncation survives a merge");
+        assert!(!TopFiles::new(2).with(file("/a", 1)).is_truncated());
+    }
+
+    fn full_is_truncated(set: &TopFiles) -> bool {
+        set.is_truncated()
     }
 
     #[test]

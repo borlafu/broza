@@ -19,7 +19,7 @@
 //! against the documented errno rather than against hardware.
 
 use std::fs::{self, Permissions};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -44,6 +44,9 @@ const SF_DATALESS: u32 = 0x4000_0000;
 /// [`FileOps`] backed by the real filesystem.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdFileOps;
+
+/// How much of a file each read of the hasher asks for.
+const HASH_BUFFER_BYTES: usize = 1024 * 1024;
 
 impl FileOps for StdFileOps {
     fn metadata(&self, path: &Path) -> Result<EntryMetadata, BrozaError> {
@@ -133,9 +136,10 @@ impl FileOps for StdFileOps {
         fs::read(path).map_err(|source| from_io(format!("read {}", path.display()), path, source))
     }
 
-    fn read_prefix(&self, path: &Path, len: usize) -> Result<Vec<u8>, BrozaError> {
-        let context = || format!("read the start of {}", path.display());
-        let file = fs::File::open(path).map_err(|source| from_io(context(), path, source))?;
+    fn read_range(&self, path: &Path, offset: u64, len: usize) -> Result<Vec<u8>, BrozaError> {
+        let context = || format!("read part of {}", path.display());
+        let mut file = fs::File::open(path).map_err(|source| from_io(context(), path, source))?;
+        file.seek(SeekFrom::Start(offset)).map_err(|source| from_io(context(), path, source))?;
         let mut bytes = Vec::with_capacity(len);
         file.take(len as u64).read_to_end(&mut bytes).map_err(|source| from_io(context(), path, source))?;
         Ok(bytes)
@@ -143,9 +147,12 @@ impl FileOps for StdFileOps {
 
     fn hash_file(&self, path: &Path) -> Result<ContentHash, BrozaError> {
         let context = || format!("hash {}", path.display());
-        let mut file = fs::File::open(path).map_err(|source| from_io(context(), path, source))?;
+        let file = fs::File::open(path).map_err(|source| from_io(context(), path, source))?;
+        // `io::copy` reads through the reader's own buffer when it has one;
+        // the default 8 KiB would be a syscall per 8 KiB of a big file.
+        let mut reader = BufReader::with_capacity(HASH_BUFFER_BYTES, file);
         let mut hasher = blake3::Hasher::new();
-        std::io::copy(&mut file, &mut hasher).map_err(|source| from_io(context(), path, source))?;
+        std::io::copy(&mut reader, &mut hasher).map_err(|source| from_io(context(), path, source))?;
         Ok(ContentHash(*hasher.finalize().as_bytes()))
     }
 

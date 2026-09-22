@@ -4,7 +4,10 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
-## [Unreleased]
+## [0.3.0] — 2026-09-22
+
+The amber detectors, irreversible deletion behind a typed `PURGE`, and a scan cache that lets
+`suggest` run warm.
 
 ### Added
 

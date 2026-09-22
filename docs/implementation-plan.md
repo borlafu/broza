@@ -350,7 +350,8 @@ M4 progress:
 - [ ] A dataless (cloud placeholder) file marks every ancestor `has_truncation`, so none is served
       from the cache; split "counted placeholder" from "unreadable hole" so those subtrees can be
       (review of 1ab03c6, MEDIUM; cloud roots are excluded by default, so the cost is bounded).
-- [ ] Review; release 0.3.
+- [x] Reviewed (four Opus passes on the M4 commits, findings fixed) and released: version 0.3.0,
+      `CHANGELOG.md`, spec 1.2 dated 2026-09-22; tagged `v0.3.0` locally, publish when a remote exists.
 
 ### M5 — Inform-only, apps, polish (release 1.0)
 

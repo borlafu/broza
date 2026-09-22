@@ -4,7 +4,7 @@
 **Status:** Approved for implementation
 **Scope:** Phase 1 (open source CLI, MIT)
 **Platform:** macOS 26 and 27 (the two latest major versions), Apple Silicon only
-**Date:** 2026-09-21
+**Date:** 2026-09-22
 
 > This document supersedes draft 1.0 (`broza-cli-spec.md`, Spanish). All changes relative to 1.0 are listed in §9 "Changelog 1.0 → 1.1" and §10 "Changelog 1.1 → 1.2". Requirement identifiers (`RF-xx`, `RNF-xx`) refer to the Broza PRD. This specification is normative: "MUST", "MUST NOT", "SHOULD" and "MAY" are used in their RFC 2119 sense.
 
@@ -475,7 +475,7 @@ Prints version, license, JSON schema version, platform support and the support l
 
 ```
 $ broza about
-Broza 0.2.0  ·  MIT License  ·  JSON schema 1.1
+Broza 0.3.0  ·  MIT License  ·  JSON schema 1.1
 Safe disk cleanup for macOS 26/27 on Apple Silicon.
 Source:   https://github.com/borlafu/broza
 Support:  https://ko-fi.com/broza  (donation, nothing in return)
@@ -534,7 +534,7 @@ Every `--json` output shares this structure:
 ```json
 {
   "schema_version": "1.1",
-  "broza_version": "0.2.0",
+  "broza_version": "0.3.0",
   "generated_at": "2026-09-21T10:36:08Z",
   "command": "suggest",
   "host": {
@@ -1082,7 +1082,7 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 
 ## 10. Changelog 1.1 → 1.2
 
-Everything below ships between 0.2.0 and 0.3.0; the milestone that produced each change is in parentheses. Version 1.2 is unreleased until 0.3.0, so changes made before that release are listed here without a further bump.
+Everything below shipped with 0.3.0; the milestone that produced each change is in parentheses. Version 1.2 was unreleased until 0.3.0, so the changes made before that release are listed here without a further bump.
 
 - §2 (M1 safety kernel): explicit exit-code rows for safety-kernel refusals (`2`), vanished items (`skipped` + `not_found`), OS permission errors on single items (`failed` + `permission_denied`), and dry runs whose selection is entirely `inform_only` (`0` with a warning).
 - §3.4 (M1): confirmation row for natively irreversible actions (`trash`, `snapshots`) without `--purge`.

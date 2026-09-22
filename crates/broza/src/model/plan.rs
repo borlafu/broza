@@ -273,6 +273,7 @@ mod tests {
             status,
             action: Action::Quarantine,
             error: None,
+            snapshot: None,
         }
     }
 

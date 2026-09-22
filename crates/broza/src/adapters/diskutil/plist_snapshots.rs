@@ -46,6 +46,8 @@ impl SnapshotEntry {
             name: self.snapshot_name.unwrap_or_default(),
             uuid: self.snapshot_uuid,
             purgeable: self.purgeable,
+            volume: None,
+            mount_point: None,
         }
     }
 }

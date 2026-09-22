@@ -3,16 +3,23 @@
 //! `tmutil listlocalsnapshots` lists the same snapshots by name, without the
 //! `Purgeable` flag that decides whether a snapshot is actionable at all. It is
 //! therefore not a fallback here: when `diskutil` fails, Broza reports the
-//! failure instead of returning a list it cannot reason about. `tmutil` enters
-//! the picture in M4, for deletion
+//! failure instead of returning a list it cannot reason about. Deletion goes
+//! through `tmutil deletelocalsnapshots <date>`, the only supported tool for
+//! it, behind an `Approved<SnapshotDelete>` token
 //! (`docs/adr/0002-diskutil-plist-over-diskarbitration.md`).
 
 use std::sync::Arc;
 
 use crate::BrozaError;
 use crate::adapters::diskutil::{DISKUTIL, DISKUTIL_TIMEOUT, first_line, parse_snapshots};
-use crate::model::{Snapshot, VolumeId};
+use crate::model::{Snapshot, TIME_MACHINE_PREFIX, VolumeId};
 use crate::ports::{ProcessRunner, SnapshotProvider};
+use crate::safety::guard::{Approved, ApprovedItem, SnapshotDelete};
+
+/// Time Machine's own tool, the only one that deletes local snapshots.
+pub const TMUTIL: &str = "/usr/bin/tmutil";
+/// `tmutil deletelocalsnapshots` can take a while on a busy volume.
+const TMUTIL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// [`SnapshotProvider`] backed by `diskutil`.
 #[derive(Clone)]
@@ -47,6 +54,40 @@ impl SnapshotProvider for DiskutilSnapshots {
         }
         parse_snapshots(&output.stdout)
     }
+
+    fn delete(&self, token: &Approved<SnapshotDelete>, item: &ApprovedItem) -> Result<(), BrozaError> {
+        let covered = token.items().iter().any(|approved| approved == item);
+        let Some(name) = item.snapshot().filter(|_| covered) else {
+            return Err(BrozaError::Other(format!(
+                "snapshot deletion: `{}` is not one of the snapshots the guard approved",
+                item.path().display()
+            )));
+        };
+        let date = date_stamp(name).ok_or_else(|| {
+            BrozaError::Other(format!("snapshot `{name}` is not a Time Machine local snapshot"))
+        })?;
+        let args = ["deletelocalsnapshots", date];
+        let output = self.runner.run(TMUTIL, &args, TMUTIL_TIMEOUT)?;
+        if output.success {
+            return Ok(());
+        }
+        let reason = first_line(&output.stderr_text());
+        if is_privilege_refusal(&reason) {
+            return Err(BrozaError::PermissionDenied { path: std::path::PathBuf::from(TMUTIL) });
+        }
+        Err(BrozaError::Other(format!("tmutil deletelocalsnapshots {date} failed: {reason}")))
+    }
+}
+
+/// The `YYYY-MM-DD-HHMMSS` stamp `tmutil` takes, from a Time Machine snapshot name.
+fn date_stamp(name: &str) -> Option<&str> {
+    name.strip_prefix(TIME_MACHINE_PREFIX).and_then(|rest| rest.strip_suffix(".local"))
+}
+
+/// `tmutil`'s wording when it wants root.
+fn is_privilege_refusal(reason: &str) -> bool {
+    let lower = reason.to_ascii_lowercase();
+    lower.contains("not permitted") || lower.contains("permission denied") || lower.contains("root")
 }
 
 #[cfg(test)]

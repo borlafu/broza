@@ -231,7 +231,13 @@ mod tests {
     #[test]
     fn snapshots_outside_the_snapshots_category_are_rejected() {
         let built = FindingBuilder::new(id("user-cache.logs"), Category::UserCache, "Logs")
-            .snapshots(vec![Snapshot { name: "s".into(), uuid: None, purgeable: true }])
+            .snapshots(vec![Snapshot {
+                name: "s".into(),
+                uuid: None,
+                purgeable: true,
+                volume: None,
+                mount_point: None,
+            }])
             .build();
         assert!(built.is_err());
     }
@@ -252,7 +258,13 @@ mod tests {
             .reclaimable_bytes(0)
             .item_count(4)
             .paths(vec![FindingPath { path: "/x".into(), size_bytes: 1, last_used: None }])
-            .snapshots(vec![Snapshot { name: "s".into(), uuid: Some("u".into()), purgeable: true }])
+            .snapshots(vec![Snapshot {
+                name: "s".into(),
+                uuid: Some("u".into()),
+                purgeable: true,
+                volume: None,
+                mount_point: None,
+            }])
             .build()
             .unwrap_or_else(|e| panic!("{e}"));
         let plain: Finding = base.build().unwrap_or_else(|e| panic!("{e}"));

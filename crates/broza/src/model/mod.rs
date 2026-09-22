@@ -46,13 +46,13 @@ pub mod suggest;
 pub(crate) mod timestamp;
 
 pub use category::Category;
-pub use disk::{Container, Disk, FsKind, Snapshot, Volume, VolumeRole};
+pub use disk::{Container, Disk, FsKind, Snapshot, TIME_MACHINE_PREFIX, Volume, VolumeRole};
 pub use envelope::{Diagnostic, Envelope, ErrorEntry, Host, Warning};
 pub use finding::{Action, Finding, FindingPath, Instructions, Risk};
 pub use finding_builder::FindingBuilder;
 pub use ids::{EntryId, FindingId, SessionId, VolumeId};
 pub use plan::{CleanPlan, CleanPlanRepr};
-pub use plan_item::{CleanItem, ExpiredSession};
+pub use plan_item::{CleanItem, ExpiredSession, SnapshotRef};
 pub use quarantine::{
     EntryStatus, OperationKind, QuarantineEntry, QuarantineList, QuarantineSession, ReclaimReport,
     ReclaimSession, RestoreReport, RestoreSession, SessionState,

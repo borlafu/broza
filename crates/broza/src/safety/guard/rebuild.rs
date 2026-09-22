@@ -100,6 +100,7 @@ mod tests {
             status: ItemStatus::Planned,
             action: Action::Quarantine,
             error: None,
+            snapshot: None,
         }
     }
 

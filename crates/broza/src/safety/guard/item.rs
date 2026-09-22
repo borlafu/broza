@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use super::{ApprovedItem, WriteRequest};
-use crate::model::{Action, CleanItem, Finding};
+use crate::model::{Action, Category, CleanItem, Finding};
 use crate::ports::FileOps;
 use crate::safety::firmlink::{firmlink_spellings, is_volume_root};
 use crate::safety::path::{CanonicalPath, canonicalize_no_follow};
@@ -44,6 +44,9 @@ pub(super) fn check_item(
     fs: &dyn FileOps,
 ) -> Result<Outcome, GuardRejection> {
     check_action_matches(item, finding, req)?;
+    if item.action == Action::TmutilDelete {
+        return check_snapshot_item(index, item, finding, mounts);
+    }
     check_path_belongs_to_finding(item, finding, mounts)?;
     let checked = match canonicalize_no_follow(&item.path, fs) {
         Ok(checked) => checked,
@@ -62,6 +65,44 @@ pub(super) fn check_item(
     }
     check_size_not_understated(item, &checked)?;
     Ok(Outcome { index, kind: OutcomeKind::Approved(ApprovedItem::from_checked(&checked)) })
+}
+
+/// A snapshot deletion touches no path: the item names a snapshot the finding
+/// listed as purgeable Time Machine work, on a volume the mount table knows,
+/// mounted where the item says, with a role that allows `tmutil_delete`.
+fn check_snapshot_item(
+    index: usize,
+    item: &CleanItem,
+    finding: &Finding,
+    mounts: &MountTable,
+) -> Result<Outcome, GuardRejection> {
+    let inconsistent = |reason: String| GuardRejection::Inconsistent(reason);
+    let Some(reference) = &item.snapshot else {
+        return Err(inconsistent(format!("`{}` deletes a snapshot but names none", item.path.display())));
+    };
+    if finding.category() != Category::Snapshots {
+        return Err(inconsistent(format!("finding `{}` is not a snapshots finding", finding.id())));
+    }
+    let listed = finding.snapshots().iter().find(|snapshot| snapshot.name == reference.name);
+    match listed {
+        Some(snapshot) if snapshot.is_actionable() && snapshot.volume.as_ref() == Some(&reference.volume) => {
+        }
+        _ => {
+            return Err(inconsistent(format!(
+                "snapshot `{}` is not one the finding lists as purgeable on `{}`",
+                reference.name, reference.volume
+            )));
+        }
+    }
+    let mount = mounts
+        .entries()
+        .iter()
+        .find(|entry| entry.volume.id == reference.volume && entry.mount_point == item.path)
+        .ok_or_else(|| GuardRejection::UnknownVolume(item.path.clone()))?;
+    allows_action(mount.volume.role, Action::TmutilDelete)
+        .map_err(|rejection| rejection.with_path(&item.path))?;
+    let approved = ApprovedItem::for_snapshot(&item.path, mount.device, &reference.name);
+    Ok(Outcome { index, kind: OutcomeKind::Approved(approved) })
 }
 
 /// The action must be exactly what the finding plus `--purge` imply.

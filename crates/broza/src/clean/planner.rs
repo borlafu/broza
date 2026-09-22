@@ -7,7 +7,9 @@
 use std::path::Path;
 
 use crate::BrozaError;
-use crate::model::{Action, Category, CleanItem, CleanPlan, Finding, FindingId, ItemStatus, Risk, SessionId};
+use crate::model::{
+    Action, Category, CleanItem, CleanPlan, Finding, FindingId, ItemStatus, Risk, SessionId, SnapshotRef,
+};
 use crate::safety::exclusions::Exclusions;
 use crate::safety::guard::expected_action;
 
@@ -136,6 +138,9 @@ fn validate_quarantine_root(root: &Path) -> Result<(), PlanError> {
 /// The items one finding contributes, minus the excluded paths.
 fn items_of(finding: &Finding, selection: &Selection, quarantine_root: Option<&Path>) -> Vec<CleanItem> {
     let action = expected_action(finding.action(), selection.purge);
+    if finding.category() == Category::Snapshots {
+        return snapshot_items(finding, action);
+    }
     finding
         .paths()
         .iter()
@@ -148,6 +153,32 @@ fn items_of(finding: &Finding, selection: &Selection, quarantine_root: Option<&P
             status: ItemStatus::Planned,
             action,
             error: None,
+            snapshot: None,
+        })
+        .collect()
+}
+
+/// One item per actionable snapshot of a `snapshots` finding.
+///
+/// A snapshot the finding could not tie to a mounted volume is left out: the
+/// plan item's `path` is that volume's mount point, and the guard verifies the
+/// pair against the mount table (`docs/cli-spec.md` §4.4).
+fn snapshot_items(finding: &Finding, action: Action) -> Vec<CleanItem> {
+    finding
+        .snapshots()
+        .iter()
+        .filter(|snapshot| snapshot.is_actionable())
+        .filter_map(|snapshot| {
+            let (volume, mount_point) = (snapshot.volume.clone()?, snapshot.mount_point.clone()?);
+            Some(CleanItem {
+                path: mount_point,
+                finding_id: finding.id().clone(),
+                size_bytes: 0,
+                status: ItemStatus::Planned,
+                action,
+                error: None,
+                snapshot: Some(SnapshotRef { volume, name: snapshot.name.clone() }),
+            })
         })
         .collect()
 }

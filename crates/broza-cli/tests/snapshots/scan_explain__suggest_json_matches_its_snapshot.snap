@@ -126,5 +126,11 @@ expression: envelope
     "macos_version": "26.1"
   },
   "schema_version": "1.1",
-  "warnings": []
+  "warnings": [
+    {
+      "code": "location_unreadable",
+      "message": "the snapshots detector could not read /System/Volumes/Data: FakeRunner: no answer scripted for `/usr/sbin/diskutil apfs listSnapshots -plist disk3s5`; expected: `/usr/bin/tmutil destinationinfo -X`, `/usr/sbin/diskutil apfs list -plist`, `/usr/sbin/diskutil info -plist disk0`, `/usr/sbin/diskutil info -plist disk1`, `/usr/sbin/diskutil info -plist disk2`, `/usr/sbin/diskutil info -plist disk3`, `/usr/sbin/diskutil info -plist disk3s1s1`, `/usr/sbin/diskutil info -plist disk3s2`, `/usr/sbin/diskutil info -plist disk3s5`, `/usr/sbin/diskutil info -plist disk4`, `/usr/sbin/diskutil info -plist disk4s1`, `/usr/sbin/diskutil info -plist disk5`, `/usr/sbin/diskutil info -plist disk5s2`, `/usr/sbin/diskutil info -plist disk6`, `/usr/sbin/diskutil info -plist disk6s1`, `/usr/sbin/diskutil info -plist disk7`, `/usr/sbin/diskutil info -plist disk7s1`, `/usr/sbin/diskutil info -plist disk8`, `/usr/sbin/diskutil info -plist disk8s1`, `/usr/sbin/diskutil list -plist`; its local snapshots were not checked",
+      "path": "/System/Volumes/Data"
+    }
+  ]
 }

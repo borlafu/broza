@@ -117,6 +117,7 @@ mod tests {
                 status: ItemStatus::Planned,
                 action: Action::Quarantine,
                 error: None,
+                snapshot: None,
             })
             .collect();
         CleanPlan::dry_run(session_id(), items).unwrap_or_else(|error| panic!("{error}"))

@@ -86,12 +86,8 @@ fn actionable_total(findings: &[&Finding]) -> u64 {
 
 /// One category line, with its actionable findings summarised, plus their details.
 fn render_category(text: &mut String, category: Category, findings: &[&Finding], explain: bool, home: &Path) {
-    let summary = findings
-        .iter()
-        .filter(|f| f.is_actionable())
-        .map(|f| format!("{} ({})", f.title(), format_bytes(f.reclaimable_bytes())))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let summary =
+        findings.iter().filter(|f| f.is_actionable()).map(|f| summary_of(f)).collect::<Vec<_>>().join(", ");
     let _ignored = write!(
         text,
         "\n   {:<CATEGORY_WIDTH$}{:>SIZE_WIDTH$}   {summary}",
@@ -113,6 +109,15 @@ fn render_category(text: &mut String, category: Category, findings: &[&Finding],
         if explain {
             render_reasoning(text, finding, home);
         }
+    }
+}
+
+/// `Title (size)`, or `N Title (reason)` for a finding whose size macOS does
+/// not report (the snapshots: `4 Time Machine local snapshots (size not reported by macOS)`).
+fn summary_of(finding: &Finding) -> String {
+    match (finding.reclaimable_bytes(), finding.item_count(), finding.reasoning()) {
+        (0, Some(count), Some(reason)) => format!("{count} {} ({reason})", finding.title()),
+        (bytes, _, _) => format!("{} ({})", finding.title(), format_bytes(bytes)),
     }
 }
 

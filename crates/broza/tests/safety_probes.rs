@@ -267,6 +267,7 @@ fn forced_plan(finding: &Finding, path: &str, size_bytes: u64, action: Action) -
             status: ItemStatus::Planned,
             action,
             error: None,
+            snapshot: None,
         }],
     )
     .unwrap_or_else(|error| panic!("{error}"));

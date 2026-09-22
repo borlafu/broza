@@ -158,12 +158,14 @@ fn render_expiry(text: &mut String, plan: &CleanPlan) {
 /// One item line: status, size, path and, when it was not moved, the reason.
 fn render_item(text: &mut String, item: &CleanItem, home: &Path) {
     let status = status_word(&item.status);
-    let _ignored = write!(
-        text,
-        "\n   {status:<STATUS_WIDTH$}{:>SIZE_WIDTH$}  {}",
-        format_bytes(item.size_bytes),
-        abbreviate(&item.path, Some(home))
-    );
+    // A snapshot item's path is its volume's mount point; the name is what
+    // the user recognises.
+    let what = item
+        .snapshot
+        .as_ref()
+        .map_or_else(|| abbreviate(&item.path, Some(home)), |snapshot| format!("snapshot {}", snapshot.name));
+    let _ignored =
+        write!(text, "\n   {status:<STATUS_WIDTH$}{:>SIZE_WIDTH$}  {what}", format_bytes(item.size_bytes));
     if let Some(error) = &item.error {
         let _ignored = write!(text, "  ({error}{})", hint_for(error.to_string().as_str()));
     }
@@ -211,6 +213,7 @@ mod tests {
             status: ItemStatus::Planned,
             action,
             error: None,
+            snapshot: None,
         }
     }
 

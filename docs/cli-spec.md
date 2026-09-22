@@ -278,7 +278,7 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 
 **Category notes (normative):**
 
-- `snapshots`: macOS does not expose per-snapshot sizes through any public interface. The finding MUST report `reclaimable_bytes: 0` with `reasoning` "size not reported by macOS", MUST list each snapshot name with its `purgeable` flag, and MUST NOT propose `com.apple.os.update-*` snapshots (they are not purgeable and are required for the pending update). Only `com.apple.TimeMachine.*` snapshots flagged purgeable are actionable.
+- `snapshots`: macOS does not expose per-snapshot sizes through any public interface. The finding (`snapshots.timemachine-local`) MUST report `reclaimable_bytes: 0` with `reasoning` "size not reported by macOS", MUST list each snapshot name with its `purgeable` flag and the `volume` and `mount_point` it belongs to, and MUST NOT propose `com.apple.os.update-*` snapshots (they are not purgeable and are required for the pending update). Only `com.apple.TimeMachine.*` snapshots flagged purgeable on a data or user volume are listed. A volume whose snapshots cannot be listed is a `location_unreadable` warning.
 - `build-cache`: the Docker virtual disk (`Docker.raw`, or the `.raw` file under `~/Library/Containers/com.docker.docker/`) is reported as an inform-only sub-finding with its **allocated** size on disk. Broza never calls the Docker daemon; the `instructions` block points to `docker system prune` and Docker Desktop's disk settings.
 - `build-cache` risk per finding: `xcode-deriveddata` green, `xcode-archives` amber (a shipped build, nothing recreates it), `orphan-node-modules` amber, `pycache` green, `gradle-caches` green, `cargo-target` amber (rebuilding a large workspace costs time), `docker-raw` amber and inform-only.
 - `build-cache` / orphan `node_modules`: a leaf `node_modules` directory is orphan when it is not tool-managed and either its parent has no `package.json` (the project is gone) or its parent is a project none of whose entries other than `node_modules` changed for `unused-after` (the newest mtime among them; the parent directory's own mtime only records when an entry was added or removed, which is the install time of anything installed once and used daily). Tool-managed means under `~/Library` (package-manager stores such as pnpm's, application payloads), under a hidden directory (`~/.vscode/extensions`, `~/.npm/_npx`, `~/.cache`) or inside an `.app` bundle: installed software that `npm install` in a project does not bring back. In monorepos only leaf `node_modules` are proposed.
@@ -361,7 +361,7 @@ Supports `--json`. Does not support `--csv` (exit `2`).
 
 **Quarantine store on first use:** the store directory need not exist. The safety kernel checks the nearest existing ancestor of `quarantine-path` in its place (the components still to be created must be plain names) and the executor creates the directory under `--apply`; a dry run creates nothing.
 
-**Irreversible items:** `purge` items (the trash, or any quarantine finding upgraded by `--purge`) are re-checked against the identity the safety kernel recorded (`device`, `inode`) immediately before being removed, and their bytes — measured at that moment, allocated — go to `reclaimed_bytes`. A plan with no `quarantine` item creates no session and carries no `quarantine_path`. `tmutil_delete` items are refused with exit `1` until snapshot deletion lands.
+**Irreversible items:** `purge` items (the trash, or any quarantine finding upgraded by `--purge`) are re-checked against the identity the safety kernel recorded (`device`, `inode`) immediately before being removed, and their bytes — measured at that moment, allocated — go to `reclaimed_bytes`. `tmutil_delete` items are deleted by name through `tmutil deletelocalsnapshots <date>` with a token narrowed to exactly those snapshots; the safety kernel checks each against the finding's own list (purgeable, `com.apple.TimeMachine.*`, on a data or user volume mounted where the item says) and touches no path. A plan with no `quarantine` item creates no session and carries no `quarantine_path`.
 
 **Cross-volume rule:** the default quarantine root lives on the Data volume. An item that resides on a different device than the quarantine root (an external disk, a second APFS container) cannot be moved by rename; copying it would take time and free nothing. Such items are marked `skipped` with `error: "cross_volume"` and a hint on stderr: set `quarantine-path` to a directory on that volume (`broza config set quarantine-path /Volumes/External/.broza-quarantine`), or use `--purge` for that category. The rest of the plan proceeds; the exit code is `5` if anything else succeeded.
 
@@ -582,6 +582,7 @@ Every `--json` output shares this structure:
 | `expiry_declined` | `warnings[]` | The user declined the expiry prompt; the sessions stay and `broza quarantine expire` removes them. |
 | `expiry_unreadable` | `warnings[]` | The store could not be read for the expiry step; the plan still ran. |
 | `<item error code>` | `errors[]` | One entry per item that was `skipped` or `failed`, with the item's `error` as the code (`cross_volume`, `not_found`, …) and its path; these make the run partial (exit `5`). |
+| `snapshot_needs_admin` | `warnings[]` | `tmutil` refused a snapshot deletion for lack of privileges; the item is `failed` with `permission_denied` and the message carries the exact `sudo tmutil deletelocalsnapshots <date>` command. Broza never escalates (§6). |
 
 **Envelope codes of detection** (`suggest`; stable):
 
@@ -729,7 +730,7 @@ the volume.
 | `actionable` | If `false`, Broza **cannot** remove it. The GUI MUST disable the control. |
 | `action` | `quarantine` · `purge` · `tmutil_delete` · `inform_only`. |
 | `instructions` | Present **exactly** when `action` is `inform_only`, and required there: a finding Broza refuses to act on MUST tell the user what to do instead. Contains the provider's official steps. |
-| `snapshots` | Present only for `category: snapshots`. Each entry has `name`, `purgeable` and an optional `uuid` (present when macOS reports one). |
+| `snapshots` | Present only for `category: snapshots`. Each entry has `name`, `purgeable`, an optional `uuid` (present when macOS reports one), and — for a snapshot a plan may act on — `volume` and `mount_point`. |
 | `paths[].last_used` | Optional. Absent when neither `atime` nor Spotlight provides a value. For a directory reported by `user-cache` or `build-cache` it is the directory's mtime (when an entry was last added or removed), an approximation that `--explain` states. |
 
 ### 4.4 `clean`
@@ -780,6 +781,8 @@ the volume.
 | `--apply --purge`, or `tmutil_delete` items | `0` for those items | increases | `purged` / `skipped` / `failed` |
 
 `CleanItem.error` is an optional string present only when `status` is `skipped` or `failed`; values come from the `error` enum in §4.1 (e.g. `cross_volume`, `permission_denied`). The human output prints the same code with a hint.
+
+`CleanItem.snapshot` is present exactly for `tmutil_delete` items: `{ "volume": "disk3s5", "name": "com.apple.TimeMachine.2026-09-20-101530.local" }`. Such an item's `path` is the mount point of that volume and its `size_bytes` is `0`; on success its `status` is `purged` and nothing is added to `reclaimed_bytes`, because macOS reports no snapshot size.
 
 `quarantine_path` is **optional**: it is absent in a dry run and in any run that quarantines
 nothing (a `--purge` run, or a plan whose items are all `tmutil_delete`).
@@ -1088,3 +1091,4 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §3.5 and §3.8 (M3, unreleased): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.
 - §3.5 (M3, unreleased): `restore` resolves every id before writing (unknown item ids exit `4` too), `--all`/`--session`/`ID…` are mutually exclusive, `--all` reports unreadable sessions in `errors[]`; §5: a zero figure drops only its own part of the parenthesis.
 - §3.4 (M4, unreleased): `purge` items are executed (re-check, remove, allocated bytes to `reclaimed_bytes`); a plan without `quarantine` items creates no session; `clean --apply --purge` works. `trash` detector documented in §3.3.
+- §3.3, §3.4, §4.1, §4.3 and §4.4 (M4, unreleased): `snapshots` detector; snapshot entries carry `volume` and `mount_point`; `tmutil_delete` items are executed through `tmutil deletelocalsnapshots` and carry `items[].snapshot`; `snapshot_needs_admin` warning.

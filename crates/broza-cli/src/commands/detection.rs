@@ -60,6 +60,7 @@ pub fn detect(request: &DetectionRequest<'_>) -> Result<Detection, BrozaError> {
         request.now,
         request.unused_after,
         &nodes,
+        request.ports.snapshots.as_ref(),
     );
     let report = Registry::builtin().restricted_to(request.categories).run(&context);
     let warnings = [enumeration.warnings, mount.warnings, walk_warnings, report.warnings].concat();

@@ -7,11 +7,12 @@ use std::path::Path;
 use crate::clean::executor::execute;
 use crate::clean::planner::{Selection, plan_dry_run};
 use crate::model::{Action, Category, Finding, FindingPath, ItemErrorCode, ItemStatus};
+use crate::model::{Snapshot, VolumeId};
 use crate::ports::{Answer, FileOps};
 use crate::quarantine::MoveRequest;
 use crate::quarantine::fixtures::{HOME, NOW, ROOT, TTL, at, session_id, store_fs};
 use crate::safety::guard::{Approved, Verdict, Write, WriteRequest, approve};
-use crate::testing::{FakeFileOps, FakePrompter, FixedClock, mac_mount_table};
+use crate::testing::{FakeFileOps, FakePrompter, FakeSnapshots, FixedClock, mac_mount_table};
 
 const TRASH: &str = "/Users/dana/.Trash/old-movie.mp4";
 const TRASH_DIR: &str = "/Users/dana/.Trash/Project";
@@ -76,8 +77,14 @@ fn a_trash_plan_purges_its_items_frees_their_bytes_and_creates_no_session() {
     let findings = vec![finding("trash.home", Category::Trash, &[TRASH, TRASH_DIR], &fs)];
     let token = approved(&fs, &findings, false);
 
-    let executed = execute(&token, &MoveRequest { ttl: TTL, max_size: None }, &fs, &FixedClock::at(at(NOW)))
-        .unwrap_or_else(|e| panic!("{e}"));
+    let executed = execute(
+        &token,
+        &MoveRequest { ttl: TTL, max_size: None },
+        &fs,
+        &FixedClock::at(at(NOW)),
+        &FakeSnapshots::new(),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(status_of(&executed.plan, TRASH), (ItemStatus::Purged, None));
     assert_eq!(status_of(&executed.plan, TRASH_DIR), (ItemStatus::Purged, None));
@@ -98,8 +105,14 @@ fn a_mixed_plan_quarantines_the_cache_and_purges_the_trash() {
     ];
     let token = approved(&fs, &findings, false);
 
-    let executed = execute(&token, &MoveRequest { ttl: TTL, max_size: None }, &fs, &FixedClock::at(at(NOW)))
-        .unwrap_or_else(|e| panic!("{e}"));
+    let executed = execute(
+        &token,
+        &MoveRequest { ttl: TTL, max_size: None },
+        &fs,
+        &FixedClock::at(at(NOW)),
+        &FakeSnapshots::new(),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(status_of(&executed.plan, CACHE).0, ItemStatus::Quarantined);
     assert_eq!(status_of(&executed.plan, TRASH).0, ItemStatus::Purged);
@@ -120,8 +133,14 @@ fn purge_upgrades_a_quarantine_finding_when_the_flag_is_given() {
     let findings = vec![finding("user-cache.app", Category::UserCache, &[CACHE], &fs)];
     let token = approved(&fs, &findings, true);
 
-    let executed = execute(&token, &MoveRequest { ttl: TTL, max_size: None }, &fs, &FixedClock::at(at(NOW)))
-        .unwrap_or_else(|e| panic!("{e}"));
+    let executed = execute(
+        &token,
+        &MoveRequest { ttl: TTL, max_size: None },
+        &fs,
+        &FixedClock::at(at(NOW)),
+        &FakeSnapshots::new(),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(status_of(&executed.plan, CACHE), (ItemStatus::Purged, None));
     assert!(executed.session.is_none());
@@ -136,11 +155,94 @@ fn an_item_replaced_since_the_check_is_not_purged() {
     fs.remove_tree(Path::new(TRASH)).unwrap_or_else(|e| panic!("{e}"));
     fs.add_file(TRASH, b"an impostor");
 
-    let executed = execute(&token, &MoveRequest { ttl: TTL, max_size: None }, &fs, &FixedClock::at(at(NOW)))
-        .unwrap_or_else(|e| panic!("{e}"));
+    let executed = execute(
+        &token,
+        &MoveRequest { ttl: TTL, max_size: None },
+        &fs,
+        &FixedClock::at(at(NOW)),
+        &FakeSnapshots::new(),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(status_of(&executed.plan, TRASH).0, ItemStatus::Failed);
     assert_eq!(status_of(&executed.plan, TRASH).1.map(|c| c.to_string()), Some("changed_since_check".into()));
     assert!(fs.exists(Path::new(TRASH)), "the impostor stays");
     assert_eq!(executed.plan.reclaimed_bytes(), 0);
+}
+
+fn data_snapshot(name: &str, purgeable: bool) -> Snapshot {
+    Snapshot {
+        name: name.to_owned(),
+        uuid: None,
+        purgeable,
+        volume: Some("disk3s5".parse::<VolumeId>().unwrap_or_else(|e| panic!("{e}"))),
+        mount_point: Some(Path::new("/System/Volumes/Data").to_path_buf()),
+    }
+}
+
+fn snapshots_finding(snapshots: Vec<Snapshot>) -> Finding {
+    let count = u64::try_from(snapshots.len()).unwrap_or(u64::MAX);
+    Finding::builder(
+        "snapshots.timemachine-local".parse().unwrap_or_else(|e| panic!("{e}")),
+        Category::Snapshots,
+        "Time Machine local snapshots",
+    )
+    .snapshots(snapshots)
+    .item_count(count)
+    .reasoning("size not reported by macOS")
+    .build()
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
+#[test]
+fn purgeable_time_machine_snapshots_are_deleted_by_name_and_only_those() {
+    let fs = fs();
+    let listed = vec![
+        data_snapshot("com.apple.TimeMachine.2026-09-20-101530.local", true),
+        data_snapshot("com.apple.TimeMachine.2026-09-19-101530.local", false),
+        data_snapshot("com.apple.os.update-abc", false),
+    ];
+    let provider = FakeSnapshots::new()
+        .with_snapshots("disk3s5".parse().unwrap_or_else(|e| panic!("{e}")), listed.clone());
+    let findings = vec![snapshots_finding(listed)];
+    let token = approved(&fs, &findings, false);
+
+    let executed =
+        execute(&token, &MoveRequest { ttl: TTL, max_size: None }, &fs, &FixedClock::at(at(NOW)), &provider)
+            .unwrap_or_else(|e| panic!("{e}"));
+
+    assert_eq!(provider.deleted(), vec!["com.apple.TimeMachine.2026-09-20-101530.local".to_owned()]);
+    assert_eq!(executed.plan.items().len(), 1, "only the purgeable Time Machine snapshot was planned");
+    assert_eq!(executed.plan.items()[0].status, ItemStatus::Purged);
+    assert_eq!(executed.plan.items()[0].action, Action::TmutilDelete);
+    assert_eq!(
+        executed.plan.items()[0].snapshot.as_ref().map(|s| s.name.as_str()),
+        Some("com.apple.TimeMachine.2026-09-20-101530.local")
+    );
+    assert!(executed.session.is_none());
+    assert_eq!(executed.plan.reclaimed_bytes(), 0, "macOS reports no snapshot size");
+}
+
+#[test]
+fn a_snapshot_deletion_tmutil_refuses_fails_the_item_and_names_the_command() {
+    let fs = fs();
+    let listed = vec![data_snapshot("com.apple.TimeMachine.2026-09-20-101530.local", true)];
+    let provider = FakeSnapshots::new()
+        .with_snapshots("disk3s5".parse().unwrap_or_else(|e| panic!("{e}")), listed.clone());
+    provider.refuse_deletions();
+    let token = approved(&fs, &[snapshots_finding(listed)], false);
+
+    let executed =
+        execute(&token, &MoveRequest { ttl: TTL, max_size: None }, &fs, &FixedClock::at(at(NOW)), &provider)
+            .unwrap_or_else(|e| panic!("{e}"));
+
+    assert_eq!(executed.plan.items()[0].status, ItemStatus::Failed);
+    assert_eq!(executed.plan.items()[0].error, Some(ItemErrorCode::PermissionDenied));
+    assert_eq!(executed.warnings.len(), 1);
+    assert!(
+        executed.warnings[0].message.contains("sudo tmutil deletelocalsnapshots 2026-09-20-101530"),
+        "{:?}",
+        executed.warnings
+    );
+    assert!(provider.deleted().is_empty());
 }

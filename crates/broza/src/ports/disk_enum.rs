@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::BrozaError;
 use crate::model::{Disk, Snapshot, VolumeId, Warning};
+use crate::safety::guard::{Approved, ApprovedItem, SnapshotDelete};
 
 /// What one enumeration found, and what it could not make sense of.
 ///
@@ -33,9 +34,17 @@ pub trait SpaceProvider: Send + Sync {
     fn purgeable_bytes(&self, mount_point: &Path) -> Result<u64, BrozaError>;
 }
 
-/// Lists APFS local snapshots. Deletion is added in the safety kernel milestone and
-/// requires an `Approved` token.
+/// Lists and deletes APFS local snapshots.
 pub trait SnapshotProvider: Send + Sync {
     /// Snapshots of `volume`.
     fn list(&self, volume: &VolumeId) -> Result<Vec<Snapshot>, BrozaError>;
+
+    /// Delete the snapshot `item` names, which must be one of `token`'s items.
+    ///
+    /// # Errors
+    ///
+    /// [`BrozaError::Other`] when the token does not cover `item`;
+    /// [`BrozaError::PermissionDenied`] when the tool refuses for lack of
+    /// privileges (Broza never escalates); whatever else the tool reports.
+    fn delete(&self, token: &Approved<SnapshotDelete>, item: &ApprovedItem) -> Result<(), BrozaError>;
 }

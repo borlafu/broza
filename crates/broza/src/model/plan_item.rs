@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::model::finding::Action;
-use crate::model::ids::{FindingId, SessionId};
+use crate::model::ids::{FindingId, SessionId, VolumeId};
 use crate::model::status::{ItemErrorCode, ItemStatus};
 
 /// A quarantine session expired before the plan ran.
@@ -35,6 +35,20 @@ pub struct CleanItem {
     /// Why the item was skipped or failed. Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ItemErrorCode>,
+    /// The snapshot this item deletes, for `tmutil_delete` items only; `path`
+    /// is then the mount point of the snapshot's volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<SnapshotRef>,
+}
+
+/// A local APFS snapshot named by a plan item (`docs/cli-spec.md` §4.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SnapshotRef {
+    /// The volume the snapshot belongs to.
+    pub volume: VolumeId,
+    /// The snapshot's name, `com.apple.TimeMachine.YYYY-MM-DD-HHMMSS.local`.
+    pub name: String,
 }
 
 #[cfg(test)]
@@ -52,6 +66,7 @@ mod tests {
             status: ItemStatus::Planned,
             action: Action::Quarantine,
             error: None,
+            snapshot: None,
         };
         let json = serde_json::to_value(&item).unwrap_or_else(|e| panic!("{e}"));
         assert!(json.get("error").is_none());

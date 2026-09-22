@@ -321,8 +321,9 @@ M4 progress:
 - [x] 1. `trash` detector (`detect/detectors/trash.rs`).
 - [x] 2. Irreversible executor for `purge` (`clean/executor.rs`; the mover moves only `quarantine`
       items); `clean --apply --purge` enabled. `tmutil_delete` waits for step 3.
-- [ ] 3. Snapshot items in the plan and the guard.
-- [ ] 4. `snapshots` detector.
+- [x] 3. Snapshot items in the plan and the guard (`CleanItem.snapshot`, `check_snapshot_item`,
+      `snapshot_deletions`, `SnapshotProvider::delete`, `tmutil deletelocalsnapshots`).
+- [x] 4. `snapshots` detector (`detect/detectors/snapshots.rs`).
 - [ ] 5. `old-backups` detector.
 - [ ] 6. `ios-simulators` detector.
 - [ ] 7. `large-old-files` detector.

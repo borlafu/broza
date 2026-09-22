@@ -15,7 +15,7 @@ use jiff::Timestamp;
 
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, Finding};
-use crate::ports::FileOps;
+use crate::ports::{FileOps, SnapshotProvider};
 use crate::scan::{DirNode, MountTable};
 
 /// Warning code for a location one detector wanted and could not read.
@@ -99,6 +99,8 @@ pub struct DetectContext<'a> {
     pub unused_after: Duration,
     /// Every directory under the home, as the scanner measured it.
     pub home_nodes: &'a [DirNode],
+    /// APFS local snapshots, for the `snapshots` detector.
+    pub snapshots: &'a dyn SnapshotProvider,
     /// The same nodes, indexed by path and by parent.
     index: NodeIndex<'a>,
 }
@@ -136,8 +138,9 @@ impl<'a> DetectContext<'a> {
         now: Timestamp,
         unused_after: Duration,
         home_nodes: &'a [DirNode],
+        snapshots: &'a dyn SnapshotProvider,
     ) -> Self {
-        Self { home, fs, mounts, now, unused_after, home_nodes, index: NodeIndex::of(home_nodes) }
+        Self { home, fs, mounts, now, unused_after, home_nodes, snapshots, index: NodeIndex::of(home_nodes) }
     }
 
     /// The measured node for `path`, when the walk reached it.

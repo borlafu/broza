@@ -27,7 +27,7 @@ mod token;
 mod verdict;
 
 pub use checks::approve;
-pub use narrow::{approve_quarantine_write, narrow_to_snapshot_delete};
+pub use narrow::{approve_quarantine_write, narrow_to_snapshot_delete, snapshot_deletions};
 pub use restore::{RestoreRequest, approve_restore_targets};
 pub use token::{
     Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, RestoreWrite, SnapshotDelete, Write, WriteKind,

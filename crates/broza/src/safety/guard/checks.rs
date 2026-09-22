@@ -220,6 +220,7 @@ mod tests {
             status: ItemStatus::Planned,
             action,
             error: None,
+            snapshot: None,
         }
     }
 

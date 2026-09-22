@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use crate::BrozaError;
 use crate::model::{Disk, Snapshot, VolumeId, Warning};
 use crate::ports::{DiskEnumerator, EnumerationReport, SnapshotProvider, SpaceProvider};
+use crate::safety::guard::{Approved, ApprovedItem, SnapshotDelete};
 use crate::testing::sync::lock;
 
 /// Purgeable bytes reported for a mount point nobody configured.
@@ -91,6 +92,10 @@ impl SpaceProvider for FakeSpace {
 pub struct FakeSnapshots {
     /// Snapshots per volume.
     snapshots: Mutex<HashMap<VolumeId, Vec<Snapshot>>>,
+    /// Names deleted so far, in order.
+    deleted: Mutex<Vec<String>>,
+    /// When set, every deletion is refused as if `tmutil` wanted root.
+    refuse_deletions: Mutex<bool>,
 }
 
 impl FakeSnapshots {
@@ -112,9 +117,39 @@ impl FakeSnapshots {
     }
 }
 
+impl FakeSnapshots {
+    /// The snapshot names deleted so far, in order.
+    pub fn deleted(&self) -> Vec<String> {
+        lock(&self.deleted).clone()
+    }
+
+    /// Make every deletion fail with a privilege refusal.
+    pub fn refuse_deletions(&self) {
+        *lock(&self.refuse_deletions) = true;
+    }
+}
+
 impl SnapshotProvider for FakeSnapshots {
     fn list(&self, volume: &VolumeId) -> Result<Vec<Snapshot>, BrozaError> {
         Ok(lock(&self.snapshots).get(volume).cloned().unwrap_or_default())
+    }
+
+    fn delete(&self, token: &Approved<SnapshotDelete>, item: &ApprovedItem) -> Result<(), BrozaError> {
+        let covered = token.items().iter().any(|approved| approved == item);
+        let Some(name) = item.snapshot().filter(|_| covered) else {
+            return Err(BrozaError::Other(format!(
+                "snapshot deletion: `{}` is not one of the snapshots the guard approved",
+                item.path().display()
+            )));
+        };
+        if *lock(&self.refuse_deletions) {
+            return Err(BrozaError::PermissionDenied { path: std::path::PathBuf::from("/usr/bin/tmutil") });
+        }
+        for snapshots in lock(&self.snapshots).values_mut() {
+            snapshots.retain(|snapshot| snapshot.name != name);
+        }
+        lock(&self.deleted).push(name.to_owned());
+        Ok(())
     }
 }
 
@@ -176,7 +211,13 @@ mod tests {
 
     #[test]
     fn snapshots_are_listed_per_volume() {
-        let snapshot = Snapshot { name: "com.apple.TimeMachine.x".to_owned(), uuid: None, purgeable: true };
+        let snapshot = Snapshot {
+            name: "com.apple.TimeMachine.x".to_owned(),
+            uuid: None,
+            purgeable: true,
+            volume: None,
+            mount_point: None,
+        };
         let provider = FakeSnapshots::new().with_snapshots(volume_id("disk3s5"), vec![snapshot.clone()]);
 
         assert_eq!(provider.list(&volume_id("disk3s5")).unwrap_or_else(|e| panic!("{e}")), vec![snapshot]);

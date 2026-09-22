@@ -10,7 +10,7 @@ use jiff::Timestamp;
 
 use crate::detect::detector::DetectContext;
 use crate::scan::{DirNode, MountTable, WalkOptions, default_excludes, walk};
-use crate::testing::{FakeFileOps, mac_mount_table};
+use crate::testing::{FakeFileOps, FakeSnapshots, mac_mount_table};
 
 /// The home every detector test uses, in the Data-volume spelling the walk sees.
 pub fn home() -> PathBuf {
@@ -23,6 +23,7 @@ pub struct World<'a> {
     home: PathBuf,
     mounts: MountTable,
     nodes: Vec<DirNode>,
+    snapshots: FakeSnapshots,
 }
 
 impl World<'_> {
@@ -35,7 +36,18 @@ impl World<'_> {
             "2026-09-21T10:00:00Z".parse::<Timestamp>().unwrap_or_default(),
             Duration::from_secs(365 * 24 * 60 * 60),
             &self.nodes,
+            &self.snapshots,
         )
+    }
+
+    /// The same world with `snapshots` reported for `volume`.
+    #[must_use]
+    pub fn with_snapshots(
+        self,
+        volume: crate::model::VolumeId,
+        snapshots: Vec<crate::model::Snapshot>,
+    ) -> Self {
+        Self { snapshots: self.snapshots.with_snapshots(volume, snapshots), ..self }
     }
 }
 
@@ -47,5 +59,5 @@ pub fn context_over(fs: &FakeFileOps, home: PathBuf) -> World<'_> {
     exclude.push(home.join(".local/share/broza"));
     let options = WalkOptions { exclude, report_files_min_size: None, ..WalkOptions::default() };
     let nodes = walk(Path::new(&home), &options, fs).nodes;
-    World { fs, home, mounts: mac_mount_table(), nodes }
+    World { fs, home, mounts: mac_mount_table(), nodes, snapshots: FakeSnapshots::new() }
 }

@@ -9,6 +9,8 @@ expression: parsed
             "00000013-1111-4222-8333-000000000013",
         ),
         purgeable: false,
+        volume: None,
+        mount_point: None,
     },
     Snapshot {
         name: "com.apple.os.update-1F38762619A978595276365BF72B699891E51053E68036DF2DE5F2296CCA67CF3A374C7264B2C68F0338811801EFA20C",
@@ -16,6 +18,8 @@ expression: parsed
             "00000014-1111-4222-8333-000000000014",
         ),
         purgeable: false,
+        volume: None,
+        mount_point: None,
     },
     Snapshot {
         name: "com.apple.os.update-MSUPrepareUpdate",
@@ -23,5 +27,7 @@ expression: parsed
             "00000015-1111-4222-8333-000000000015",
         ),
         purgeable: false,
+        volume: None,
+        mount_point: None,
     },
 ]

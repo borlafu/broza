@@ -145,6 +145,32 @@ pub struct Snapshot {
     /// `true` when macOS marks the snapshot as purgeable. Only purgeable Time Machine
     /// snapshots are actionable; `com.apple.os.update-*` snapshots never are.
     pub purgeable: bool,
+    /// The volume the snapshot belongs to, when the detector knows it. A `clean`
+    /// plan can only act on a snapshot that names its volume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<VolumeId>,
+    /// Where that volume is mounted; the `path` of the plan item for this snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_point: Option<PathBuf>,
+}
+
+/// The name prefix of Time Machine's local snapshots, the only kind Broza deletes.
+pub const TIME_MACHINE_PREFIX: &str = "com.apple.TimeMachine.";
+
+impl Snapshot {
+    /// `true` for a purgeable Time Machine snapshot on a known volume: the only
+    /// kind a plan may carry (`docs/cli-spec.md` §3.3).
+    pub fn is_actionable(&self) -> bool {
+        self.purgeable
+            && self.name.starts_with(TIME_MACHINE_PREFIX)
+            && self.volume.is_some()
+            && self.mount_point.is_some()
+    }
+
+    /// The `YYYY-MM-DD-HHMMSS` stamp `tmutil deletelocalsnapshots` takes, from the name.
+    pub fn date_stamp(&self) -> Option<&str> {
+        self.name.strip_prefix(TIME_MACHINE_PREFIX).and_then(|rest| rest.strip_suffix(".local"))
+    }
 }
 
 #[cfg(test)]
@@ -222,7 +248,13 @@ mod tests {
 
     #[test]
     fn a_snapshot_without_a_uuid_omits_the_field() {
-        let snapshot = Snapshot { name: "com.apple.TimeMachine.x".into(), uuid: None, purgeable: true };
+        let snapshot = Snapshot {
+            name: "com.apple.TimeMachine.x".into(),
+            uuid: None,
+            purgeable: true,
+            volume: None,
+            mount_point: None,
+        };
         let json = serde_json::to_value(&snapshot).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(json, serde_json::json!({"name": "com.apple.TimeMachine.x", "purgeable": true}));
     }

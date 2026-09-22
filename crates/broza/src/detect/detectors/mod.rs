@@ -2,6 +2,7 @@
 
 pub mod build_cache;
 mod node_modules;
+pub mod snapshots;
 pub mod trash;
 pub mod user_cache;
 
@@ -9,7 +10,12 @@ use super::detector::Detector;
 
 /// Every built-in detector, in category order.
 pub fn builtin() -> Vec<Box<dyn Detector>> {
-    vec![Box::new(user_cache::UserCache), Box::new(build_cache::BuildCache), Box::new(trash::Trash)]
+    vec![
+        Box::new(user_cache::UserCache),
+        Box::new(build_cache::BuildCache),
+        Box::new(trash::Trash),
+        Box::new(snapshots::Snapshots),
+    ]
 }
 
 /// Shared helpers for detectors.

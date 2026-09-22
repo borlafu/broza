@@ -5,22 +5,27 @@
 //! session by [`quarantine_items`]; `purge` items — the trash, or anything the
 //! user upgraded with `--purge` — are re-checked against the token's
 //! `(device, inode)` immediately before being removed for good, and their
-//! measured bytes go to `reclaimed_bytes`; `tmutil_delete` items are snapshot
-//! deletions and are not executed yet (M4 step 3). A plan without `quarantine`
-//! items creates no session at all, so the report carries no `quarantine_path`.
+//! measured bytes go to `reclaimed_bytes`; `tmutil_delete` items are handed to
+//! the [`SnapshotProvider`] with a token narrowed to exactly those snapshots, and
+//! count as `purged` with no bytes (macOS reports no snapshot size). A plan
+//! without `quarantine` items creates no session at all, so the report carries
+//! no `quarantine_path`.
 //!
 //! Nothing here can write without the [`Approved<Write>`] the guard issued:
 //! the items it removes are the token's items, checked again right before.
 
 use crate::BrozaError;
 use crate::model::{Action, CleanPlan, ItemErrorCode, ItemStatus, QuarantineSession, Warning};
-use crate::ports::{Clock, FileOps};
+use crate::ports::{Clock, FileOps, SnapshotProvider};
 use crate::quarantine::codes::changed_since_check;
 use crate::quarantine::guarded::io_code;
 use crate::quarantine::measure_dir_bytes;
 use crate::quarantine::mover::{movable_items, plan_indices};
 use crate::quarantine::{MoveRequest, quarantine_items};
-use crate::safety::guard::{Approved, ApprovedItem, Write};
+use crate::safety::guard::{Approved, ApprovedItem, Write, snapshot_deletions};
+
+/// Warning code: `tmutil` refused a snapshot deletion for lack of privileges.
+pub const SNAPSHOT_NEEDS_ADMIN_CODE: &str = "snapshot_needs_admin";
 
 /// What executing a plan left behind.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,35 +43,70 @@ pub struct Executed {
 /// # Errors
 ///
 /// Whatever the mover reports as fatal (claiming the session, writing the
-/// manifest), [`BrozaError::Other`] when the token and the plan disagree, and
-/// [`BrozaError::Other`] for a `tmutil_delete` item until snapshot deletion
-/// lands. A single item's failure is recorded in the plan and never aborts.
+/// manifest) and [`BrozaError::Other`] when the token and the plan disagree.
+/// A single item's failure is recorded in the plan and never aborts.
 pub fn execute(
     token: &Approved<Write>,
     request: &MoveRequest,
     fs: &dyn FileOps,
     clock: &dyn Clock,
+    snapshots: &dyn SnapshotProvider,
 ) -> Result<Executed, BrozaError> {
-    reject_snapshot_deletions(token.plan())?;
-    let (session, plan, warnings) = if movable_items(token.plan(), token.items())?.is_empty() {
+    let (session, plan, mut warnings) = if movable_items(token.plan(), token.items())?.is_empty() {
         (None, token.plan().clone().into_applied(None)?, Vec::new())
     } else {
         let moved = quarantine_items(token, request, fs, clock)?;
         (Some(moved.session), moved.plan, moved.warnings)
     };
     let plan = purge_items(token, plan, fs)?;
+    let plan = delete_snapshots(token, plan, snapshots, &mut warnings)?;
     Ok(Executed { session, plan, warnings })
 }
 
-/// Snapshot deletion is M4 step 3; until then a plan that asks for it is refused
-/// before anything else is touched.
-fn reject_snapshot_deletions(plan: &CleanPlan) -> Result<(), BrozaError> {
-    match plan.items().iter().find(|item| item.action == Action::TmutilDelete) {
-        Some(item) => Err(BrozaError::Other(format!(
-            "snapshot deletion (`{}`) is not implemented yet",
-            item.path.display()
-        ))),
-        None => Ok(()),
+/// Delete every `tmutil_delete` item through the provider, with a token that
+/// covers exactly those snapshots.
+fn delete_snapshots(
+    token: &Approved<Write>,
+    plan: CleanPlan,
+    snapshots: &dyn SnapshotProvider,
+    warnings: &mut Vec<Warning>,
+) -> Result<CleanPlan, BrozaError> {
+    let indices = plan_indices(token.plan(), token.items())?;
+    let narrowed = snapshot_deletions(token);
+    let mut plan = plan;
+    for (index, item) in indices.into_iter().zip(token.items()) {
+        let is_snapshot =
+            plan.items().get(index).is_some_and(|planned| planned.action == Action::TmutilDelete);
+        if !is_snapshot {
+            continue;
+        }
+        let (status, error) = match snapshots.delete(&narrowed, item) {
+            Ok(()) => (ItemStatus::Purged, None),
+            Err(BrozaError::PermissionDenied { .. }) => {
+                warnings.push(needs_admin(item));
+                (ItemStatus::Failed, Some(ItemErrorCode::PermissionDenied))
+            }
+            Err(error) => (ItemStatus::Failed, Some(io_code(&error))),
+        };
+        plan = plan.with_item_status(index, status, error)?;
+    }
+    Ok(plan)
+}
+
+/// The exact command the user may run themselves; Broza never invokes `sudo`
+/// (`docs/cli-spec.md` §6).
+fn needs_admin(item: &ApprovedItem) -> Warning {
+    let stamp = item.snapshot().and_then(|name| {
+        name.strip_prefix(crate::model::TIME_MACHINE_PREFIX).and_then(|rest| rest.strip_suffix(".local"))
+    });
+    Warning {
+        code: SNAPSHOT_NEEDS_ADMIN_CODE.to_owned(),
+        message: format!(
+            "deleting snapshot `{}` needs administrator privileges; run: sudo tmutil deletelocalsnapshots {}",
+            item.snapshot().unwrap_or_default(),
+            stamp.unwrap_or_default()
+        ),
+        path: Some(item.path().to_path_buf()),
     }
 }
 

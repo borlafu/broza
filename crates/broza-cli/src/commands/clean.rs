@@ -201,7 +201,13 @@ fn execute(
     let Expiry { sessions, freed_bytes, mut errors, mut warnings } =
         expire_due(context.ports, execution.root, ttl, execution.mounts, context.args.yes)?;
     let request = MoveRequest { ttl, max_size: execution.max_size.map(ByteSize::bytes) };
-    let done = execute_plan(&approved, &request, context.ports.fs.as_ref(), context.ports.clock.as_ref())?;
+    let done = execute_plan(
+        &approved,
+        &request,
+        context.ports.fs.as_ref(),
+        context.ports.clock.as_ref(),
+        context.ports.snapshots.as_ref(),
+    )?;
     warnings.extend(done.warnings);
     errors.extend(item_errors(&done.plan));
     let (quarantined, reclaimed) =

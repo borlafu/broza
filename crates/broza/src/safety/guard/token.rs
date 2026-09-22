@@ -61,6 +61,8 @@ pub struct ApprovedItem {
     size_bytes: u64,
     /// `true` when the leaf is a directory.
     is_dir: bool,
+    /// The snapshot name, for a `tmutil_delete` item; its `path` is the mount point.
+    snapshot: Option<String>,
 }
 
 impl ApprovedItem {
@@ -72,7 +74,27 @@ impl ApprovedItem {
             inode: checked.metadata.inode,
             size_bytes: checked.metadata.size_bytes,
             is_dir: checked.metadata.is_dir,
+            snapshot: None,
         }
+    }
+
+    /// Records a snapshot deletion the guard approved: the volume's mount point
+    /// and device, and the snapshot's name. There is no inode to re-check; the
+    /// provider deletes by name on that volume and nothing else.
+    pub(super) fn for_snapshot(mount_point: &Path, device: u64, name: &str) -> Self {
+        Self {
+            path: mount_point.to_path_buf(),
+            device,
+            inode: 0,
+            size_bytes: 0,
+            is_dir: true,
+            snapshot: Some(name.to_owned()),
+        }
+    }
+
+    /// The snapshot this item deletes, for `tmutil_delete` items.
+    pub fn snapshot(&self) -> Option<&str> {
+        self.snapshot.as_deref()
     }
 
     /// The checked path.

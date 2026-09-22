@@ -251,6 +251,7 @@ fn an_inform_only_item_forced_into_a_plan_rejects_it_at_check_seven() {
             status: ItemStatus::Planned,
             action: Action::InformOnly,
             error: None,
+            snapshot: None,
         }],
     )
     .unwrap_or_else(|error| panic!("{error}"));
@@ -380,6 +381,7 @@ fn forced_plan(finding: &Finding, path: &str, size_bytes: u64, action: Action) -
             status: ItemStatus::Planned,
             action,
             error: None,
+            snapshot: None,
         }],
     )
     .unwrap_or_else(|error| panic!("{error}"));

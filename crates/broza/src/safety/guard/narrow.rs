@@ -55,6 +55,18 @@ fn check_inside_store(
     Ok(ApprovedItem::from_checked(&checked))
 }
 
+/// The snapshot deletions of an approved plan, as their own token.
+///
+/// Borrows the approval: a plan may mix files to quarantine and snapshots to
+/// delete, and the executor spends this token on the latter while the mover
+/// keeps the original for the former. Only items the guard approved as
+/// snapshots are carried over; the plan itself is unchanged.
+pub fn snapshot_deletions(approved: &Approved<Write>) -> Approved<SnapshotDelete> {
+    let items: Vec<ApprovedItem> =
+        approved.items().iter().filter(|item| item.snapshot().is_some()).cloned().collect();
+    issue::<SnapshotDelete>(ApprovedPlan::new(approved.plan().clone(), items))
+}
+
 /// Narrows a plan approved for writing to a snapshot deletion.
 ///
 /// Takes the token by value: the same approval cannot also be spent on a
@@ -99,6 +111,7 @@ mod tests {
             status: ItemStatus::Planned,
             action,
             error: None,
+            snapshot: None,
         }
     }
 

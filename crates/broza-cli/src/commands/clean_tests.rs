@@ -301,6 +301,7 @@ fn an_item_that_was_not_moved_is_an_error_entry_and_exit_five() {
             status: ItemStatus::Planned,
             action: broza::model::Action::Quarantine,
             error: None,
+            snapshot: None,
         }],
     )
     .unwrap()

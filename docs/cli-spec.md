@@ -361,7 +361,7 @@ Supports `--json`. Does not support `--csv` (exit `2`).
 
 **Quarantine store on first use:** the store directory need not exist. The safety kernel checks the nearest existing ancestor of `quarantine-path` in its place (the components still to be created must be plain names) and the executor creates the directory under `--apply`; a dry run creates nothing.
 
-**Irreversible items:** `purge` items (the trash, or any quarantine finding upgraded by `--purge`) are re-checked against the identity the safety kernel recorded (`device`, `inode`) immediately before being removed, and their bytes — measured at that moment, allocated — go to `reclaimed_bytes`. `tmutil_delete` items are deleted by name through `tmutil deletelocalsnapshots <date>` with a token narrowed to exactly those snapshots; the safety kernel checks each against the finding's own list (purgeable, `com.apple.TimeMachine.*`, on a data or user volume mounted where the item says) and touches no path. A plan with no `quarantine` item creates no session and carries no `quarantine_path`.
+**Irreversible items:** `purge` items (the trash, or any quarantine finding upgraded by `--purge`) are re-checked against the identity the safety kernel recorded (`device`, `inode`) immediately before being removed, and their bytes — measured at that moment, allocated, hard-linked files excluded — go to `reclaimed_bytes`. `--max-size` is one running total for the whole run, quarantined bytes first, then purges; a purge that would pass it is left in place as `skipped` with `max_size_exceeded`. `tmutil_delete` items are deleted by name through `tmutil deletelocalsnapshots <date>` with a token narrowed to exactly those snapshots; the safety kernel checks each against the finding's own list (purgeable, `com.apple.TimeMachine.*`, on a data or user volume mounted where the item says) and touches no path. A plan with no `quarantine` item creates no session and carries no `quarantine_path`.
 
 **Cross-volume rule:** the default quarantine root lives on the Data volume. An item that resides on a different device than the quarantine root (an external disk, a second APFS container) cannot be moved by rename; copying it would take time and free nothing. Such items are marked `skipped` with `error: "cross_volume"` and a hint on stderr: set `quarantine-path` to a directory on that volume (`broza config set quarantine-path /Volumes/External/.broza-quarantine`), or use `--purge` for that category. The rest of the plan proceeds; the exit code is `5` if anything else succeeded.
 
@@ -772,7 +772,7 @@ the volume.
 |---|---|
 | `planned_bytes` | Sum of `size_bytes` of every item in the plan, regardless of outcome. |
 | `quarantined_bytes` | Bytes moved into quarantine in this run. **Pending**: still occupying disk until expiry or purge. |
-| `reclaimed_bytes` | Bytes actually freed in this run: `purge` items, `tmutil_delete` items, and sessions expired in the pre-execution step. |
+| `reclaimed_bytes` | Bytes actually freed in this run: `purge` items, `tmutil_delete` items, and sessions expired in the pre-execution step. For a `purge` item the figure is measured immediately before removal, allocated, counting only files with a single hard link (a file that keeps another name frees nothing). |
 
 | Mode | `quarantined_bytes` | `reclaimed_bytes` | Item `status` |
 |---|---|---|---|

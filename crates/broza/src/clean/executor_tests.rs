@@ -47,6 +47,15 @@ fn finding(id: &str, category: Category, paths: &[&str], fs: &FakeFileOps) -> Fi
 }
 
 fn approved(fs: &FakeFileOps, findings: &[Finding], purge: bool) -> Approved<Write> {
+    approved_with(fs, findings, purge, None)
+}
+
+fn approved_with(
+    fs: &FakeFileOps,
+    findings: &[Finding],
+    purge: bool,
+    max_size: Option<u64>,
+) -> Approved<Write> {
     let selection = Selection { purge, ..Selection::everything() };
     let outcome = plan_dry_run(findings, &selection, session_id(), Some(Path::new(ROOT)))
         .unwrap_or_else(|e| panic!("{e}"));
@@ -54,6 +63,7 @@ fn approved(fs: &FakeFileOps, findings: &[Finding], purge: bool) -> Approved<Wri
         apply: true,
         tty: true,
         purge,
+        max_size,
         quarantine_root: Some(Path::new(ROOT).to_path_buf()),
         ..WriteRequest::new(HOME)
     };
@@ -245,4 +255,114 @@ fn a_snapshot_deletion_tmutil_refuses_fails_the_item_and_names_the_command() {
         executed.warnings
     );
     assert!(provider.deleted().is_empty());
+}
+
+const CACHE2: &str = "/Users/dana/Library/Caches/other.cache";
+
+fn run(token: &Approved<Write>, fs: &FakeFileOps, max_size: Option<u64>) -> crate::clean::Executed {
+    execute(token, &MoveRequest { ttl: TTL, max_size }, fs, &FixedClock::at(at(NOW)), &FakeSnapshots::new())
+        .unwrap_or_else(|e| panic!("{e}"))
+}
+
+#[test]
+fn a_failed_quarantine_item_before_a_purge_does_not_shift_the_purge_onto_another_item() {
+    let fs = fs();
+    fs.add_file(CACHE2, b"y");
+    fs.set_size(CACHE2, 3000);
+    let findings = vec![
+        finding("user-cache.app", Category::UserCache, &[CACHE, CACHE2], &fs),
+        finding("trash.home", Category::Trash, &[TRASH], &fs),
+    ];
+    let token = approved(&fs, &findings, false);
+    // The first cache is replaced after the check: the mover fails it and the
+    // plan's first slot ends `failed`; the purge must still land on the trash.
+    fs.remove_tree(Path::new(CACHE)).unwrap_or_else(|e| panic!("{e}"));
+    fs.add_file(CACHE, b"an impostor");
+
+    let executed = run(&token, &fs, None);
+
+    assert_eq!(status_of(&executed.plan, CACHE).0, ItemStatus::Failed);
+    assert_eq!(status_of(&executed.plan, CACHE2).0, ItemStatus::Quarantined);
+    assert_eq!(status_of(&executed.plan, TRASH), (ItemStatus::Purged, None));
+    assert!(fs.exists(Path::new(CACHE)), "the impostor stays");
+    assert!(!fs.exists(Path::new(TRASH)));
+}
+
+#[test]
+fn a_trash_item_on_a_protected_volume_is_refused_by_the_guard_before_anything_runs() {
+    let vm_device = mac_mount_table()
+        .volume_for(Path::new("/System/Volumes/VM"))
+        .map_or_else(|| panic!("the fake table knows the VM volume"), |entry| entry.device);
+    let fs = FakeFileOps::new()
+        .with_root("/", 1)
+        .with_root("/Users", 2)
+        .with_root("/System/Volumes/VM", vm_device);
+    let vm_trash = "/System/Volumes/VM/.Trashes/501/swap.bin";
+    fs.add_file(vm_trash, b"x");
+    fs.add_dir(ROOT);
+    let findings = vec![finding("trash.external-volumes", Category::Trash, &[vm_trash], &fs)];
+    let outcome = plan_dry_run(&findings, &Selection::everything(), session_id(), Some(Path::new(ROOT)))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let request = WriteRequest {
+        apply: true,
+        tty: true,
+        quarantine_root: Some(Path::new(ROOT).to_path_buf()),
+        ..WriteRequest::new(HOME)
+    };
+
+    let verdict = approve(&outcome, &findings, &request, &mac_mount_table(), &fs);
+
+    assert!(matches!(verdict, Err(crate::safety::GuardRejection::ProtectedVolume { .. })), "{verdict:?}");
+    assert!(fs.exists(Path::new(vm_trash)));
+}
+
+#[test]
+fn a_removal_the_filesystem_refuses_fails_the_item_and_the_run_goes_on() {
+    let fs = fs();
+    let findings = vec![finding("trash.home", Category::Trash, &[TRASH, TRASH_DIR], &fs)];
+    let token = approved(&fs, &findings, false);
+    fs.add_denied(TRASH_DIR);
+
+    let executed = run(&token, &fs, None);
+
+    assert_eq!(status_of(&executed.plan, TRASH), (ItemStatus::Purged, None));
+    assert_eq!(status_of(&executed.plan, TRASH_DIR).0, ItemStatus::Failed);
+    assert_eq!(status_of(&executed.plan, TRASH_DIR).1, Some(ItemErrorCode::PermissionDenied));
+    assert_eq!(executed.plan.reclaimed_bytes(), 4096, "only the file that went");
+}
+
+#[test]
+fn the_size_cap_applies_to_purges_and_counts_what_was_quarantined_first() {
+    let fs = fs();
+    let findings = vec![
+        finding("user-cache.app", Category::UserCache, &[CACHE], &fs),
+        finding("trash.home", Category::Trash, &[TRASH, TRASH_DIR], &fs),
+    ];
+    // Planned 3000 + 4096 + 4096 stays under the 12 000-byte cap for the pre-check;
+    // moved 3000 + purged 4096 = 7096, and the tree's 4096 more would pass it.
+    let token = approved_with(&fs, &findings, false, Some(11_000));
+
+    let executed = run(&token, &fs, Some(11_000));
+
+    assert_eq!(status_of(&executed.plan, CACHE).0, ItemStatus::Quarantined);
+    assert_eq!(status_of(&executed.plan, TRASH), (ItemStatus::Purged, None));
+    assert_eq!(status_of(&executed.plan, TRASH_DIR).0, ItemStatus::Skipped);
+    assert_eq!(
+        status_of(&executed.plan, TRASH_DIR).1.map(|c| c.to_string()),
+        Some("max_size_exceeded".into())
+    );
+    assert!(fs.exists(Path::new(TRASH_DIR)), "left in place");
+}
+
+#[test]
+fn a_hard_linked_file_frees_nothing_when_purged() {
+    let fs = fs();
+    fs.add_hard_link(TRASH, "/Users/dana/Documents/still-here.mp4");
+    let findings = vec![finding("trash.home", Category::Trash, &[TRASH], &fs)];
+    let token = approved(&fs, &findings, false);
+
+    let executed = run(&token, &fs, None);
+
+    assert_eq!(status_of(&executed.plan, TRASH), (ItemStatus::Purged, None));
+    assert_eq!(executed.plan.reclaimed_bytes(), 0, "the other name keeps the blocks");
 }

@@ -125,7 +125,7 @@ pub fn quarantine_items(
 /// # Errors
 ///
 /// When the token and the plan do not describe the same work.
-pub fn movable_items<'a>(
+pub(crate) fn movable_items<'a>(
     plan: &CleanPlan,
     approved: &'a [ApprovedItem],
 ) -> Result<Vec<(usize, &'a ApprovedItem)>, BrozaError> {
@@ -354,7 +354,7 @@ fn new_session(
 /// in plan order, so the two lists are matched by walking them together. A path
 /// that cannot be matched is a bug in the caller, not an item failure: pairing
 /// one path's evidence with another path is exactly what the token prevents.
-pub fn plan_indices(plan: &CleanPlan, approved: &[ApprovedItem]) -> Result<Vec<usize>, BrozaError> {
+pub(crate) fn plan_indices(plan: &CleanPlan, approved: &[ApprovedItem]) -> Result<Vec<usize>, BrozaError> {
     let items = plan.items();
     let mut cursor = 0_usize;
     let mut indices = Vec::with_capacity(approved.len());

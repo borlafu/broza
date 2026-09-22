@@ -62,6 +62,29 @@ pub fn exceeds_cap(already_moved: u64, size_bytes: u64, max_size: Option<u64>) -
     max_size.is_some_and(|cap| already_moved.saturating_add(size_bytes) > cap)
 }
 
+/// Allocated bytes a removal of `root` actually frees: every file with a single
+/// name, once. A file with more than one hard link keeps its blocks alive
+/// through the other names, so it frees nothing here (`AGENTS.md` §2.7).
+///
+/// # Errors
+///
+/// The first error [`FileOps::metadata`] or [`FileOps::read_dir`] reports.
+pub fn measure_freed_bytes(fs: &dyn FileOps, root: &Path) -> Result<u64, BrozaError> {
+    let mut pending: Vec<PathBuf> = vec![root.to_path_buf()];
+    let mut total = 0_u64;
+    while let Some(path) = pending.pop() {
+        let entry = fs.metadata(&path)?;
+        if entry.is_dir {
+            pending.extend(fs.read_dir(&path)?);
+            continue;
+        }
+        if entry.link_count <= 1 {
+            total = total.saturating_add(entry.allocated_bytes);
+        }
+    }
+    Ok(total)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;

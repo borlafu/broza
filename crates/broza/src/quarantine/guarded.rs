@@ -11,9 +11,28 @@ use std::path::Path;
 
 use crate::BrozaError;
 use crate::model::ItemErrorCode;
-use crate::ports::FileOps;
+use crate::ports::{EntryMetadata, FileOps};
 use crate::quarantine::codes::changed_since_check;
 use crate::safety::guard::ApprovedItem;
+
+/// Re-`lstat` an approved item and compare its identity with the token's.
+///
+/// The one predicate that stands between a token and a write: every mutating
+/// path (move, purge, restore) calls this right before acting, so a path that
+/// was replaced since the guard looked at it is refused as
+/// `changed_since_check`, and a path that cannot be read carries the
+/// filesystem's own reason.
+///
+/// # Errors
+///
+/// The item error code to record against the item.
+pub fn recheck_identity(item: &ApprovedItem, fs: &dyn FileOps) -> Result<EntryMetadata, ItemErrorCode> {
+    let current = fs.metadata(item.path()).map_err(|error| io_code(&error))?;
+    if current.device != item.device() || current.inode != item.inode() {
+        return Err(changed_since_check());
+    }
+    Ok(current)
+}
 
 /// What a re-check concluded about one path.
 #[derive(Debug, Clone, PartialEq, Eq)]

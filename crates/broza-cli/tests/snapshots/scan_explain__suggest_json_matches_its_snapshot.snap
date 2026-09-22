@@ -7,7 +7,7 @@ expression: envelope
   "command": "suggest",
   "data": {
     "by_risk": {
-      "amber": 27200000000,
+      "amber": 30500003840,
       "green": 297700003840,
       "red": 0
     },
@@ -114,10 +114,29 @@ expression: envelope
         "reclaimable_bytes": 212400001024,
         "risk": "green",
         "title": "Xcode DerivedData"
+      },
+      {
+        "action": "purge",
+        "actionable": true,
+        "category": "trash",
+        "description": "Items you moved to the Trash and have not emptied.",
+        "id": "trash.home",
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/System/Volumes/Data/Users/dana/.Trash/old-disk-image.dmg",
+            "size_bytes": 3300003840
+          }
+        ],
+        "reasoning": "Already thrown away by you; emptying the Trash deletes them for good, with no quarantine.",
+        "reclaimable_bytes": 3300003840,
+        "risk": "amber",
+        "title": "Trash"
       }
     ],
     "inform_only_bytes": 38600003584,
-    "total_reclaimable_bytes": 324900003840
+    "total_reclaimable_bytes": 328200007680
   },
   "errors": [],
   "generated_at": "[timestamp]",
@@ -129,7 +148,7 @@ expression: envelope
   "warnings": [
     {
       "code": "location_unreadable",
-      "message": "the snapshots detector could not read /System/Volumes/Data: FakeRunner: no answer scripted for `/usr/sbin/diskutil apfs listSnapshots -plist disk3s5`; expected: `/usr/bin/tmutil destinationinfo -X`, `/usr/sbin/diskutil apfs list -plist`, `/usr/sbin/diskutil info -plist disk0`, `/usr/sbin/diskutil info -plist disk1`, `/usr/sbin/diskutil info -plist disk2`, `/usr/sbin/diskutil info -plist disk3`, `/usr/sbin/diskutil info -plist disk3s1s1`, `/usr/sbin/diskutil info -plist disk3s2`, `/usr/sbin/diskutil info -plist disk3s5`, `/usr/sbin/diskutil info -plist disk4`, `/usr/sbin/diskutil info -plist disk4s1`, `/usr/sbin/diskutil info -plist disk5`, `/usr/sbin/diskutil info -plist disk5s2`, `/usr/sbin/diskutil info -plist disk6`, `/usr/sbin/diskutil info -plist disk6s1`, `/usr/sbin/diskutil info -plist disk7`, `/usr/sbin/diskutil info -plist disk7s1`, `/usr/sbin/diskutil info -plist disk8`, `/usr/sbin/diskutil info -plist disk8s1`, `/usr/sbin/diskutil list -plist`; its local snapshots were not checked",
+      "message": "the snapshots detector could not read /System/Volumes/Data: FakeRunner: no answer scripted for `/usr/sbin/diskutil apfs listSnapshots -plist disk3s5`; expected: `/usr/bin/tmutil destinationinfo -X`, `/usr/sbin/diskutil apfs list -plist`, `/usr/sbin/diskutil apfs listSnapshots -plist data`, `/usr/sbin/diskutil apfs listSnapshots -plist disk0`, `/usr/sbin/diskutil apfs listSnapshots -plist disk1`, `/usr/sbin/diskutil apfs listSnapshots -plist disk2`, `/usr/sbin/diskutil apfs listSnapshots -plist disk3`, `/usr/sbin/diskutil apfs listSnapshots -plist disk4`, `/usr/sbin/diskutil apfs listSnapshots -plist disk4s1`, `/usr/sbin/diskutil apfs listSnapshots -plist disk5`, `/usr/sbin/diskutil apfs listSnapshots -plist disk5s2`, `/usr/sbin/diskutil apfs listSnapshots -plist disk6`, `/usr/sbin/diskutil apfs listSnapshots -plist disk6s1`, `/usr/sbin/diskutil apfs listSnapshots -plist disk7`, `/usr/sbin/diskutil apfs listSnapshots -plist disk7s1`, `/usr/sbin/diskutil apfs listSnapshots -plist disk8`, `/usr/sbin/diskutil apfs listSnapshots -plist disk8s1`, `/usr/sbin/diskutil apfs listSnapshots -plist preboot`, `/usr/sbin/diskutil apfs listSnapshots -plist root`, `/usr/sbin/diskutil info -plist disk0`, `/usr/sbin/diskutil info -plist disk1`, `/usr/sbin/diskutil info -plist disk2`, `/usr/sbin/diskutil info -plist disk3`, `/usr/sbin/diskutil info -plist disk3s1s1`, `/usr/sbin/diskutil info -plist disk3s2`, `/usr/sbin/diskutil info -plist disk3s5`, `/usr/sbin/diskutil info -plist disk4`, `/usr/sbin/diskutil info -plist disk4s1`, `/usr/sbin/diskutil info -plist disk5`, `/usr/sbin/diskutil info -plist disk5s2`, `/usr/sbin/diskutil info -plist disk6`, `/usr/sbin/diskutil info -plist disk6s1`, `/usr/sbin/diskutil info -plist disk7`, `/usr/sbin/diskutil info -plist disk7s1`, `/usr/sbin/diskutil info -plist disk8`, `/usr/sbin/diskutil info -plist disk8s1`, `/usr/sbin/diskutil list -plist`; its local snapshots were not checked",
       "path": "/System/Volumes/Data"
     }
   ]

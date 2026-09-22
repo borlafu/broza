@@ -282,8 +282,8 @@ Design decisions taken at the start of M4 (2026-09-22), in the order the work la
    per volume; a trash Broza may not read is a `location_unreadable` warning). Paths are the direct
    children; action `purge` is the category default, risk amber. No safety change: `.Trashes` is
    already a conditional allowed root.
-2. **Irreversible executor** (`quarantine/mover.rs` → per-item dispatch): `Action::Quarantine` items
-   move into the session as today; `Action::Purge` items are re-checked against the token's
+2. **Irreversible executor** (`clean/executor.rs`; the mover keeps moving only `quarantine` items):
+   `Action::Quarantine` items move into the session as today; `Action::Purge` items are re-checked against the token's
    `(device, inode)` and removed with `remove_tree`, recorded `purged`, their allocated bytes added to
    `reclaimed_bytes`; `Action::TmutilDelete` items go to `SnapshotProvider::delete`, which takes an
    `Approved<SnapshotDelete>` (new port method; `tmutil deletelocalsnapshots <date>` in the adapter,
@@ -328,6 +328,9 @@ M4 progress:
 - [ ] 6. `ios-simulators` detector.
 - [ ] 7. `large-old-files` detector.
 - [ ] 8. `duplicates` detector.
+- [ ] `quarantined_bytes` reports the guard-verified *apparent* size for files while every other
+      figure is allocated (`quarantine/attempt.rs::measured_size`); pin the unit in §4.4 and
+      switch to allocated, or record the deviation in an ADR.
 - [ ] `suggest` under 15 s on the development machine; review; release 0.3.
 
 ### M5 — Inform-only, apps, polish (release 1.0)

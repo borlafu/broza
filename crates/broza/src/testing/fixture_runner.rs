@@ -35,6 +35,11 @@ const APFS_LIST_FIXTURE: &str = "apfs_list.plist";
 const DESTINATION_INFO_FIXTURE: &str = "tmutil_destinationinfo.plist";
 /// Prefix of every `diskutil info -plist <device>` recording.
 const INFO_PREFIX: &str = "info_";
+/// Prefix of a `diskutil apfs listSnapshots -plist <device>` recording; a device
+/// without one answers with [`NO_SNAPSHOTS_FIXTURE`].
+const SNAPSHOTS_PREFIX: &str = "apfs_list_snapshots_";
+/// The recording of a volume without snapshots, the default answer.
+const NO_SNAPSHOTS_FIXTURE: &str = "apfs_list_snapshots_data.plist";
 /// Suffix of every recording this module reads.
 const PLIST_SUFFIX: &str = ".plist";
 
@@ -56,8 +61,27 @@ pub fn fixture_runner(dir: &Path) -> Result<FakeRunner, BrozaError> {
     runner.script_output(TMUTIL, &DESTINATION_INFO_ARGS, recorded(&dir.join(DESTINATION_INFO_FIXTURE))?);
     for path in info_recordings(dir)? {
         script_info(&runner, &path)?;
+        script_snapshots(&runner, dir, &path)?;
     }
     Ok(runner)
+}
+
+/// Answer `diskutil apfs listSnapshots -plist <device>` for the device an
+/// `info_<device>.plist` recording names: with its own recording when the
+/// directory has one, with the empty list otherwise.
+fn script_snapshots(runner: &FakeRunner, dir: &Path, info: &Path) -> Result<(), BrozaError> {
+    let Some(device) = info
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix(INFO_PREFIX))
+        .and_then(|rest| rest.strip_suffix(PLIST_SUFFIX))
+    else {
+        return Ok(());
+    };
+    let own = dir.join(format!("{SNAPSHOTS_PREFIX}{device}{PLIST_SUFFIX}"));
+    let recording = if own.is_file() { own } else { dir.join(NO_SNAPSHOTS_FIXTURE) };
+    runner.script_output(DISKUTIL, &["apfs", "listSnapshots", "-plist", device], recorded(&recording)?);
+    Ok(())
 }
 
 /// Every `info_*.plist` in `dir`, in a stable order.

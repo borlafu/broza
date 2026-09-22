@@ -336,6 +336,12 @@ expression: "json_of(&[\"scan\", \"--json\"])"
       },
       {
         "kind": "file",
+        "path": "/System/Volumes/Data/Users/dana/.Trash/old-disk-image.dmg",
+        "size_bytes": 3300003840,
+        "volume_id": "disk3s5"
+      },
+      {
+        "kind": "file",
         "path": "/System/Volumes/Data/Users/dana/Library/Logs/App/app.log",
         "size_bytes": 1200001024,
         "volume_id": "disk3s5"
@@ -352,7 +358,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
   "warnings": [
     {
       "code": "size_exceeds_volume",
-      "message": "Data measures 425200009216 bytes but macOS reports 409422745600 in use on the volume. Each APFS clone is counted separately, so the sizes listed are upper bounds until clone accounting lands; the volume figure also includes snapshots and metadata a walk never sees.",
+      "message": "Data measures 428500013056 bytes but macOS reports 409422745600 in use on the volume. Each APFS clone is counted separately, so the sizes listed are upper bounds until clone accounting lands; the volume figure also includes snapshots and metadata a walk never sees.",
       "path": "/System/Volumes/Data"
     }
   ]

@@ -272,6 +272,19 @@ fn clean_apply_without_a_terminal_exits_seven_with_and_without_purge() {
 }
 
 #[test]
+fn clean_of_the_trash_purges_for_good_after_the_detailed_confirmation_that_yes_covers() {
+    let dry = json_of(&["clean", "--category", "trash", "--json"]);
+    let applied = json_of(&["clean", "--category", "trash", "--apply", "--yes", "--json"]);
+
+    assert_eq!(dry["data"]["items"][0]["action"], "purge", "{dry}");
+    assert_eq!(dry["data"]["items"][0]["status"], "planned", "{dry}");
+    assert_eq!(applied["data"]["items"][0]["status"], "purged", "{applied}");
+    assert!(applied["data"]["reclaimed_bytes"].as_u64().unwrap_or(0) > 0, "{applied}");
+    assert_eq!(applied["data"]["quarantined_bytes"], 0, "{applied}");
+    assert!(applied["data"]["quarantine_path"].is_null(), "a purge creates no session: {applied}");
+}
+
+#[test]
 fn clean_of_build_cache_skips_the_docker_disk_with_a_warning() {
     let envelope = json_of(&["clean", "--category", "build-cache", "--json"]);
 

@@ -17,11 +17,10 @@
 use crate::BrozaError;
 use crate::model::{Action, CleanPlan, ItemErrorCode, ItemStatus, QuarantineSession, Warning};
 use crate::ports::{Clock, FileOps, SnapshotProvider};
-use crate::quarantine::codes::changed_since_check;
-use crate::quarantine::guarded::io_code;
-use crate::quarantine::measure_dir_bytes;
+use crate::quarantine::codes::max_size_exceeded;
+use crate::quarantine::guarded::{io_code, recheck_identity};
 use crate::quarantine::mover::{movable_items, plan_indices};
-use crate::quarantine::{MoveRequest, quarantine_items};
+use crate::quarantine::{MoveRequest, exceeds_cap, measure_freed_bytes, quarantine_items};
 use crate::safety::guard::{Approved, ApprovedItem, Write, snapshot_deletions};
 
 /// Warning code: `tmutil` refused a snapshot deletion for lack of privileges.
@@ -58,7 +57,7 @@ pub fn execute(
         let moved = quarantine_items(token, request, fs, clock)?;
         (Some(moved.session), moved.plan, moved.warnings)
     };
-    let plan = purge_items(token, plan, fs)?;
+    let plan = purge_items(token, plan, fs, request.max_size)?;
     let plan = delete_snapshots(token, plan, snapshots, &mut warnings)?;
     Ok(Executed { session, plan, warnings })
 }
@@ -111,16 +110,27 @@ fn needs_admin(item: &ApprovedItem) -> Warning {
 }
 
 /// Remove every `purge` item for good, recording each outcome in the plan.
-fn purge_items(token: &Approved<Write>, plan: CleanPlan, fs: &dyn FileOps) -> Result<CleanPlan, BrozaError> {
+///
+/// `--max-size` is one cap for the whole run: the running total starts at what
+/// the mover already quarantined, and an item whose measured size would take it
+/// past the cap is left in place as `skipped` (`docs/cli-spec.md` §3.4, check 6).
+fn purge_items(
+    token: &Approved<Write>,
+    plan: CleanPlan,
+    fs: &dyn FileOps,
+    max_size: Option<u64>,
+) -> Result<CleanPlan, BrozaError> {
     let indices = plan_indices(token.plan(), token.items())?;
     let mut plan = plan;
+    let mut running = plan.quarantined_bytes();
     let mut freed = 0_u64;
     for (index, item) in indices.into_iter().zip(token.items()) {
         let is_purge = plan.items().get(index).is_some_and(|planned| planned.action == Action::Purge);
         if !is_purge {
             continue;
         }
-        let (status, error, bytes) = purge_one(item, fs);
+        let (status, error, bytes) = purge_one(item, fs, running, max_size);
+        running = running.saturating_add(bytes);
         freed = freed.saturating_add(bytes);
         plan = plan.with_item_status(index, status, error)?;
     }
@@ -128,24 +138,35 @@ fn purge_items(token: &Approved<Write>, plan: CleanPlan, fs: &dyn FileOps) -> Re
     plan.with_bytes(quarantined, reclaimed)
 }
 
-/// Re-check one item and remove it; the bytes it held come from a measurement
-/// taken right before, never from the plan.
-fn purge_one(item: &ApprovedItem, fs: &dyn FileOps) -> (ItemStatus, Option<ItemErrorCode>, u64) {
-    let current = match fs.metadata(item.path()) {
+/// Re-check one item, measure what removing it frees, check the cap, remove it.
+///
+/// The bytes come from a measurement taken right before, never from the plan,
+/// and count only files with a single name: a hard-linked file frees nothing.
+/// A removal that fails half-way is recorded as `failed` with `0` bytes, which
+/// under-reports what was freed rather than guessing.
+fn purge_one(
+    item: &ApprovedItem,
+    fs: &dyn FileOps,
+    running: u64,
+    max_size: Option<u64>,
+) -> (ItemStatus, Option<ItemErrorCode>, u64) {
+    let current = match recheck_identity(item, fs) {
         Ok(current) => current,
-        Err(error) => return (ItemStatus::Failed, Some(io_code(&error)), 0),
+        Err(code) => return (ItemStatus::Failed, Some(code), 0),
     };
-    if current.device != item.device() || current.inode != item.inode() {
-        return (ItemStatus::Failed, Some(changed_since_check()), 0);
-    }
     let bytes = if current.is_dir {
-        match measure_dir_bytes(fs, item.path(), None) {
+        match measure_freed_bytes(fs, item.path()) {
             Ok(bytes) => bytes,
             Err(error) => return (ItemStatus::Failed, Some(io_code(&error)), 0),
         }
+    } else if current.link_count > 1 {
+        0
     } else {
         current.allocated_bytes
     };
+    if exceeds_cap(running, bytes, max_size) {
+        return (ItemStatus::Skipped, Some(max_size_exceeded()), 0);
+    }
     match fs.remove_tree(item.path()) {
         Ok(()) => (ItemStatus::Purged, None, bytes),
         Err(error) => (ItemStatus::Failed, Some(io_code(&error)), 0),

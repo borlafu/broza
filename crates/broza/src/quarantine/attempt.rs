@@ -16,7 +16,8 @@ use crate::BrozaError;
 use crate::model::Warning;
 use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry};
 use crate::ports::{FileOps, RenameMode};
-use crate::quarantine::codes::{changed_since_check, max_size_exceeded};
+use crate::quarantine::codes::max_size_exceeded;
+use crate::quarantine::guarded::recheck_identity;
 use crate::quarantine::layout;
 use crate::quarantine::measure::{exceeds_cap, measure_dir_bytes};
 use crate::quarantine::report::rename_warning;
@@ -76,11 +77,8 @@ pub fn precheck(
     moved_bytes: u64,
     fs: &dyn FileOps,
 ) -> Result<u64, Attempt> {
-    let source = item.path();
-    let current = fs.metadata(source).map_err(|error| failed_io(&error))?;
-    if current.device != item.device() || current.inode != item.inode() {
-        return Err(Attempt::Refused { status: ItemStatus::Failed, error: changed_since_check() });
-    }
+    let current =
+        recheck_identity(item, fs).map_err(|error| Attempt::Refused { status: ItemStatus::Failed, error })?;
     if current.device != destination.root_device {
         return Err(Attempt::Refused { status: ItemStatus::Skipped, error: ItemErrorCode::CrossVolume });
     }

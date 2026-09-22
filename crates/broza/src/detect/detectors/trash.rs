@@ -61,7 +61,10 @@ fn home_trash(context: &DetectContext<'_>) -> Result<Detected, BrozaError> {
 fn external_trashes(context: &DetectContext<'_>) -> Result<Detected, BrozaError> {
     let mut detected = Detected::default();
     let mut paths = Vec::new();
-    for entry in context.mounts.entries().iter().filter(|entry| holds_a_trash(entry, context.home)) {
+    // The home's volume is found through the mount table, firmlinks included:
+    // `/Users/dana` and `/System/Volumes/Data/Users/dana` are the same volume.
+    let home_device = context.mounts.volume_for(context.home).map(|entry| entry.device);
+    for entry in context.mounts.entries().iter().filter(|entry| holds_a_trash(entry, home_device)) {
         let trashes = entry.mount_point.join(VOLUME_TRASHES);
         if !context.fs.exists(&trashes) {
             continue;
@@ -79,10 +82,13 @@ fn external_trashes(context: &DetectContext<'_>) -> Result<Detected, BrozaError>
             }
         };
         for user_trash in per_user {
-            // Another user's trash is not readable and not ours to empty.
-            if let Some(found) = list_trash(context, &user_trash, &mut Detected::default(), "") {
+            // Another user's trash is not readable and not ours to empty; a
+            // folder inside a readable one that cannot be measured is warned about.
+            let mut inner = Detected::default();
+            if let Some(found) = list_trash(context, &user_trash, &mut inner, "") {
                 paths.extend(found);
             }
+            detected.warnings.extend(inner.warnings);
         }
     }
     paths.sort_by(by_size_then_path);
@@ -98,10 +104,11 @@ fn external_trashes(context: &DetectContext<'_>) -> Result<Detected, BrozaError>
 
 /// `true` for a mounted volume whose `.Trashes` Broza may empty: writable,
 /// unprotected, and not the volume the home lives on (that one has `~/.Trash`).
-fn holds_a_trash(entry: &MountEntry, home: &Path) -> bool {
+/// A home whose volume is unknown keeps every volume's `.Trashes` off the list.
+fn holds_a_trash(entry: &MountEntry, home_device: Option<u64>) -> bool {
     entry.volume.writable_by_broza
         && !is_protected(entry.volume.role)
-        && !home.starts_with(&entry.mount_point)
+        && home_device.is_some_and(|device| device != entry.device)
 }
 
 /// The items directly inside `trash`, sized: files from `lstat`, directories
@@ -127,25 +134,48 @@ fn list_trash(
             return None;
         }
     };
-    let mut paths: Vec<FindingPath> = listing
-        .into_iter()
-        .filter_map(|(path, meta)| meta.ok().map(|meta| (path, meta)))
-        .map(|(path, meta)| {
-            let bytes = if meta.is_dir { dir_bytes(context, &path) } else { meta.allocated_bytes };
-            path_with(&path, bytes, meta.modified)
-        })
-        .collect();
+    let mut paths: Vec<FindingPath> = Vec::new();
+    for (path, meta) in listing {
+        let meta = match meta {
+            Ok(meta) => meta,
+            Err(error) => {
+                detected.warnings.push(Detected::unreadable(
+                    Category::Trash,
+                    &path,
+                    "this trashed item",
+                    &error,
+                ));
+                continue;
+            }
+        };
+        if !meta.is_dir {
+            paths.push(path_with(&path, meta.allocated_bytes, meta.modified));
+            continue;
+        }
+        // A directory Broza cannot measure is not listed at zero bytes: that
+        // would plan a purge the `--max-size` cap could never see.
+        match dir_bytes(context, &path) {
+            Ok(bytes) => paths.push(path_with(&path, bytes, meta.modified)),
+            Err(error) => {
+                detected.warnings.push(Detected::unreadable(
+                    Category::Trash,
+                    &path,
+                    "this trashed folder",
+                    &error,
+                ));
+            }
+        }
+    }
     paths.sort_by(by_size_then_path);
     Some(paths)
 }
 
 /// Allocated bytes of a directory: the walk's figure, or a direct measurement.
-fn dir_bytes(context: &DetectContext<'_>, path: &Path) -> u64 {
-    context
-        .node(path)
-        .map(|node| node.allocated_bytes)
-        .or_else(|| measure_dir_bytes(context.fs, path, None).ok())
-        .unwrap_or(0)
+fn dir_bytes(context: &DetectContext<'_>, path: &Path) -> Result<u64, BrozaError> {
+    match context.node(path) {
+        Some(node) => Ok(node.allocated_bytes),
+        None => measure_dir_bytes(context.fs, path, None),
+    }
 }
 
 #[cfg(test)]
@@ -231,6 +261,50 @@ mod tests {
         assert!(detected.findings.iter().all(|f| f.id().to_string() != "trash.external-volumes"));
         assert_eq!(detected.warnings.len(), 1, "{:?}", detected.warnings);
         assert_eq!(detected.warnings[0].code, LOCATION_UNREADABLE_CODE);
+    }
+
+    #[test]
+    fn the_data_volume_trashes_are_never_listed_whatever_spelling_the_home_uses() {
+        let data_device = crate::testing::mac_mount_table()
+            .volume_for(Path::new("/Users/dana"))
+            .map_or_else(|| panic!("the fake table knows the Data volume"), |entry| entry.device);
+        let fs = FakeFileOps::new()
+            .with_root("/", 1)
+            .with_root("/Users", data_device)
+            .with_root("/System/Volumes/Data", data_device)
+            .with_root("/Volumes/External", 6);
+        for path in [
+            "/Users/dana/.Trash/mine.bin",
+            "/System/Volumes/Data/.Trashes/501/not-mine.bin",
+            "/Volumes/External/.Trashes/501/ext.bin",
+        ] {
+            fs.add_file(path, &[]);
+            fs.set_size(path, 9000);
+        }
+        let world = context_over(&fs, std::path::PathBuf::from("/Users/dana"));
+
+        let detected = Trash.detect(&world.context()).unwrap_or_else(|e| panic!("{e}"));
+
+        let external = by_id(&detected, "trash.external-volumes");
+        assert_eq!(listed(external), vec!["/Volumes/External/.Trashes/501/ext.bin"], "{detected:?}");
+        assert_eq!(listed(by_id(&detected, "trash.home")), vec!["/Users/dana/.Trash/mine.bin"]);
+    }
+
+    #[test]
+    fn a_trashed_folder_that_cannot_be_measured_is_a_warning_not_a_zero_byte_purge() {
+        let fs = fs();
+        fs.add_file(format!("{H}/.Trash/Locked/secret"), &[]);
+        fs.add_denied(format!("{H}/.Trash/Locked"));
+
+        let detected = detect(&fs);
+
+        let trash = by_id(&detected, "trash.home");
+        assert!(listed(trash).iter().all(|p| !p.ends_with("Locked")), "{:?}", listed(trash));
+        assert!(
+            detected.warnings.iter().any(|w| w.code == LOCATION_UNREADABLE_CODE),
+            "{:?}",
+            detected.warnings
+        );
     }
 
     #[test]

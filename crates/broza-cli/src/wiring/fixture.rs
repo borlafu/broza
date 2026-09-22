@@ -63,12 +63,13 @@ const FIRMLINKS: &[u8] = b"/Applications\tApplications\n\
 /// A handful of sized files on the Data volume, so a replayed `scan` has
 /// consumers to list. Sizes are round on purpose: they are a fixture, not a
 /// recording, and the snapshot should read as one.
-const RECORDED_FILES: [(&str, u64); 6] = [
+const RECORDED_FILES: [(&str, u64); 7] = [
     ("/System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o", 212_400_000_000),
     ("/System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db", 84_100_000_000),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", 61_700_000_000),
     ("/System/Volumes/Data/Users/dana/code/old-site/node_modules/left-pad/index.js", 27_200_000_000),
     ("/System/Volumes/Data/Users/dana/Library/Logs/App/app.log", 1_200_000_000),
+    ("/System/Volumes/Data/Users/dana/.Trash/old-disk-image.dmg", 3_300_000_000),
     (
         "/System/Volumes/Data/Users/dana/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
         38_600_000_000,

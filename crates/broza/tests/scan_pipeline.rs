@@ -11,11 +11,11 @@ mod scan_world;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use broza::BrozaError;
 use broza::model::ItemKind;
 use broza::scan::MountTable;
 use broza::scan::{ScanProgress, ScanRequest, scan_all, scan_paths, scan_volume};
 use broza::testing::mac_mount_table;
+use broza::{BrozaError, ExitCode};
 use scan_world::*;
 
 #[test]
@@ -239,4 +239,33 @@ fn a_volume_whose_root_cannot_be_read_is_reported_as_empty_and_warned_about() {
     assert_eq!(scan.root.size_bytes, 0);
     assert!(scan.root.children_truncated);
     assert_eq!(scan.warnings.len(), 1, "{:?}", scan.warnings);
+}
+
+#[test]
+fn a_named_root_macos_refuses_to_list_is_a_permission_error_not_a_warning() {
+    let (ports, handles) = ports();
+    let documents = PathBuf::from("/System/Volumes/Data/Users/dana/Documents");
+    handles.fs.add_denied(&documents);
+
+    let refused = scan_paths(std::slice::from_ref(&documents), &request(), &ports, &mac_mount_table(), None);
+    let inside = scan_paths(
+        &[PathBuf::from("/System/Volumes/Data/Users/dana")],
+        &request(),
+        &ports,
+        &mac_mount_table(),
+        None,
+    );
+
+    match refused {
+        Err(error @ BrozaError::PermissionDenied { .. }) => {
+            assert_eq!(ExitCode::from(&error), ExitCode::PermissionDenied);
+            assert!(error.to_string().contains("Documents"), "{error}");
+        }
+        other => panic!("naming an unreadable root is impossible without the permission: {other:?}"),
+    }
+    let home = inside.unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        home[0].warnings.iter().any(|w| w.code == "permission_denied"),
+        "a refusal inside stays a warning"
+    );
 }

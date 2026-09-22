@@ -135,9 +135,9 @@ Broza is designed so that a mistake cannot cost you data.
 | `build-cache` | Xcode DerivedData and Archives, orphan `node_modules`, `__pycache__`, `.gradle`, `target/`, Docker disk image | Safe / Review | quarantine |
 | `ios-simulators` | Unused iOS simulator runtimes and devices | Review | quarantine |
 | `trash` | Trash on every volume | Review | empty |
-| `snapshots` | APFS local snapshots (Time Machine) | Review | `tmutil` |
+| `snapshots` | APFS local snapshots (Time Machine) | Review | delete by UUID (`diskutil`) |
 | `old-backups` | Old iPhone and iPad backups in `MobileSync/Backup` | Review | quarantine |
-| `unused-apps` | Apps not opened in over a year, plus their leftovers | Review | quarantine |
+| `unused-apps` | Apps not opened in over a year, plus leftovers of uninstalled apps | Review / Info only | quarantine |
 | `cloud-synced` | Files already stored in iCloud Drive, Dropbox, OneDrive, Google Drive | Info only | report |
 | `duplicates` | Identical files by content hash | Review | quarantine |
 | `large-old-files` | Large files not opened in a long time | Review | quarantine |
@@ -171,7 +171,9 @@ by deleting files by hand. Broza uses `tmutil` for this and never touches update
 - Apple Silicon (M-series). Intel Macs are not supported.
 - No special permissions to enumerate disks or scan your home folder.
 - Full Disk Access is optional. It lets Broza scan protected areas such as Mail, Safari, and
-  device backups. Without it, Broza scans what it can and tells you what it skipped.
+  device backups. Without it, Broza scans what it can and tells you what it skipped: System
+  Settings → Privacy & Security → Full Disk Access, then add your terminal (or the `broza`
+  binary). Only a path you name that macOS refuses outright ends the command (exit `3`).
 
 ## Scripting and JSON
 
@@ -217,16 +219,19 @@ Phase 1 delivers the CLI in six milestones:
 2. **M1** Safety kernel: dry-run, confirmation policy, protected volumes.
 3. **M2** Read-only analysis: `scan` and `explain`. First release (0.1).
 4. **M3** Safe detectors, quarantine, `clean`, `restore`. Release 0.2.
-5. **M4** Review-level detectors: trash, snapshots, backups, simulators, duplicates, large files.
-6. **M5** Cloud-synced reporting, unused apps, profiles, release 1.0.
+5. **M4** Review-level detectors: trash, snapshots, backups, simulators, duplicates, large files;
+   a scan cache that makes `suggest` run warm. Release 0.3.
+6. **M5** Cloud-synced reporting, unused apps, profiles, SBOM in releases. Release 1.0.
 
 Phase 2 is a paid desktop GUI built on the same open-source core. Details in the
 [implementation plan](docs/implementation-plan.md) and the [product requirements](docs/prd.md).
 
 ## Contributing
 
-Contributions are welcome once the M0 skeleton lands. The project follows test-driven
-development, conventional commits, and a set of safety invariants that no pull request may weaken.
+Contributions are welcome. The project follows test-driven development, conventional commits,
+and a set of safety invariants that no pull request may weaken. Releases are built by `cargo-dist`
+from the committed `Cargo.lock` (`cargo build --locked` in CI) and ship a CycloneDX SBOM; code
+signing and notarization arrive with the Phase 2 app, which needs the same Developer ID.
 Human contributors: read the [PRD](docs/prd.md) and [CLI spec](docs/cli-spec.md). AI coding
 agents: read [AGENTS.md](AGENTS.md).
 

@@ -406,29 +406,29 @@ Evaluate real traction against the §9 threshold **before** investing in the GUI
 
 ## 16. Requirements traceability
 
-| ID | Milestone | Notes |
-|---|---|---|
-| RF-01 | M2 | `diskutil` plist adapters + NSURL purgeable estimate |
-| RF-02 | M2 | Hard-link dedupe by `(dev, inode)`; APFS clone accounting best-effort, completed post-1.0 |
-| RF-03 | M2 | Walker + scan cache |
-| RF-04 | M2 | `explain` texts for roles, paths, categories |
-| RF-05 | M2 | Tree + usage bars; treemap deferred (D15) |
-| RF-06 | M0, M2, M3 | Contract frozen in M0; `scan`/`explain` in M2; `suggest`/`clean` in M3 |
-| RF-07 | M1, M3 | Policy in M1; executor in M3 |
-| RF-08 | M3 | Quarantine store, `quarantine` command, `restore`, expiry |
-| RF-09 | M1 | Role rejection, root allowlist, exclusions |
-| RF-10 | Deferred | Post-1.0 (D14) |
-| RF-11 to RF-16 | Phase 2 | GUI |
-| RF-17 | M3 | Donation gate, all six conditions + 30-day marker |
-| RF-18 | M1, M3 | Confirmation matrix in M1; exit `7` path end-to-end in M3 |
-| RF-19 | M1, M5 | `inform_only` forced by construction in M1; `cloud-synced` detector in M5 |
-| Detectors green | M3 | `user-cache`, `build-cache` |
-| Detectors amber | M4 | `trash`, `snapshots`, `old-backups`, `ios-simulators`, `duplicates`, `large-old-files` |
-| Detectors red/apps | M5 | `cloud-synced`, `unused-apps` |
-| RNF-01 | M1, M3 | Structural safety kernel + quarantine |
-| RNF-02 | M2, M4 | `scan` benchmarks in M2; `suggest` < 15 s in M4 |
-| RNF-03 | M0 to M5 | No network code in v1; verified at M5 |
-| RNF-04 | M0 | CI matrix macOS 26 + 27, arm64 only |
-| RNF-05 | M0, M5 | `cargo-dist` in M0; SBOM, `--locked` reproducible build, signing in M5 |
-| RNF-06 | Phase 2 | GUI accessibility; CLI text labels for risk from M2 |
-| RNF-07 | M0, Phase 2 | English CLI from M0 (D11); GUI localization in Phase 2 |
+| ID | Milestone | Notes | Covered by |
+|---|---|---|---|
+| RF-01 | M2 | `diskutil` plist adapters + NSURL purgeable estimate | `crates/broza/tests/diskutil_*.rs`, `adapters/nsurl_space.rs` tests |
+| RF-02 | M2 | Hard-link dedupe by `(dev, inode)`; APFS clone accounting best-effort, completed post-1.0 | `scan/walker/dedupe.rs` tests, `tests/scan_cache_pipeline.rs::hard_links_*` |
+| RF-03 | M2 | Walker + scan cache | `tests/scan_pipeline.rs`, `tests/scan_cache_pipeline.rs` |
+| RF-04 | M2 | `explain` texts for roles, paths, categories | `detect/explain.rs` tests, `crates/broza-cli/tests/scan_explain.rs` |
+| RF-05 | M2 | Tree + usage bars; treemap deferred (D15) | `scan/aggregate/tree.rs` tests, `output/human/scan` tests |
+| RF-06 | M0, M2, M3 | Contract frozen in M0; `scan`/`explain` in M2; `suggest`/`clean` in M3 | `tests/json_contract.rs`, every `--json`/`--csv` snapshot under `crates/broza-cli/tests/snapshots/` |
+| RF-07 | M1, M3 | Policy in M1; executor in M3 | `tests/safety_confirmation.rs`, `scan_explain.rs::clean_json_dry_run_*` |
+| RF-08 | M3 | Quarantine store, `quarantine` command, `restore`, expiry | `tests/quarantine_roundtrip.rs`, `tests/quarantine_probes.rs` |
+| RF-09 | M1 | Role rejection, root allowlist, exclusions | `tests/safety_kernel.rs`, `safety/roots.rs` tests |
+| RF-10 | Deferred | Post-1.0 (D14) | — |
+| RF-11 to RF-16 | Phase 2 | GUI | — |
+| RF-17 | M3 | Donation gate, all six conditions + 30-day marker | `crates/broza-cli/src/donate_display.rs` tests, `tests/pipeline.rs` |
+| RF-18 | M1, M3 | Confirmation matrix in M1; exit `7` path end-to-end in M3 | `tests/safety_confirmation.rs`, `scan_explain.rs::clean_apply_without_a_terminal_*` |
+| RF-19 | M1, M5 | `inform_only` forced by construction in M1; `cloud-synced` detector in M5 | `model/finding.rs` tests, `detect/detectors/cloud_synced.rs` tests, `tests/safety_kernel.rs::an_inform_only_*` |
+| Detectors green | M3 | `user-cache`, `build-cache` | `detect/detectors/{user_cache,build_cache,node_modules}.rs` tests |
+| Detectors amber | M4 | `trash`, `snapshots`, `old-backups`, `ios-simulators`, `duplicates`, `large-old-files` | `detect/detectors/{trash,snapshots,old_backups,ios_simulators,duplicates,large_old_files}.rs` tests, `scan_explain.rs::clean_of_*` |
+| Detectors red/apps | M5 | `cloud-synced`, `unused-apps` | `detect/detectors/{cloud_synced,unused_apps}.rs` tests, `scan_explain.rs::clean_of_unused_apps_*` |
+| RNF-01 | M1, M3 | Structural safety kernel + quarantine | `tests/safety_kernel.rs`, `tests/compile_fail/` (trybuild) |
+| RNF-02 | M2, M4 | `scan` benchmarks in M2; `suggest` < 15 s in M4 | `tests/scan_bench.rs` (ignored benchmark), `tests/scan_cache_pipeline.rs::a_warm_walk_*` |
+| RNF-03 | M0 to M5 | No network code in v1; verified at M5 | no network dependency in `Cargo.lock`; `adapters/` is the only process boundary |
+| RNF-04 | M0 | CI matrix macOS 26 + 27, arm64 only | `.github/workflows/ci.yml` matrix; fixtures under `tests/fixtures/plist/macos26/` |
+| RNF-05 | M0, M5 | `cargo-dist` in M0; SBOM, `--locked` reproducible build, signing in M5 | `dist-workspace.toml` (`cargo-cyclonedx`), `ci.yml` `--locked` |
+| RNF-06 | Phase 2 | GUI accessibility; CLI text labels for risk from M2 | — |
+| RNF-07 | M0, Phase 2 | English CLI from M0 (D11); GUI localization in Phase 2 | — |

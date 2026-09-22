@@ -127,13 +127,35 @@ pub fn scan_paths(
         .iter()
         .map(|root| resolve_root(root, mounts, ports.fs.as_ref()).map(|entry| (entry, root.as_path())))
         .collect::<Result<Vec<_>, BrozaError>>()?;
-    let Some(sink) = progress else {
-        return scan_each_root(&targets, request, ports, None);
-    };
-    let reporter = ProgressReporter::new(sink, ports.clock.as_ref());
-    let scans = scan_each_root(&targets, request, ports, Some(&reporter));
-    reporter.flush();
-    scans
+    let scans = match progress {
+        None => scan_each_root(&targets, request, ports, None),
+        Some(sink) => {
+            let reporter = ProgressReporter::new(sink, ports.clock.as_ref());
+            let scans = scan_each_root(&targets, request, ports, Some(&reporter));
+            reporter.flush();
+            scans
+        }
+    }?;
+    // A root the user named that macOS would not let Broza read at all is an
+    // operation that could not be done without the permission: exit `3`
+    // (`docs/cli-spec.md` §6). A refusal *inside* a readable root stays a warning.
+    for scan in &scans {
+        if let Some(refused) = refused_root(scan) {
+            return Err(BrozaError::PermissionDenied { path: refused.to_path_buf() });
+        }
+    }
+    Ok(scans)
+}
+
+/// The scan's own root, when macOS refused to list it for lack of permission.
+fn refused_root(scan: &VolumeScan) -> Option<&Path> {
+    let root = scan.root.path.as_path();
+    scan.warnings
+        .iter()
+        .any(|warning| {
+            warning.code == walker::PERMISSION_DENIED_CODE && warning.path.as_deref() == Some(root)
+        })
+        .then_some(root)
 }
 
 /// The mount entry a scan root belongs to, when Broza may walk it at all.

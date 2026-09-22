@@ -20,7 +20,8 @@ use crate::output::OutputFormat;
 pub const PERMISSION_DENIED_CODE: &str = "permission_denied";
 /// The one hint that follows a run which had to skip something (§6).
 pub const FULL_DISK_ACCESS_HINT: &str = "Some locations were skipped. Grant Full Disk Access: \
-System Settings → Privacy & Security → Full Disk Access.";
+System Settings → Privacy & Security → Full Disk Access, then add your terminal application (or \
+the broza binary).";
 
 /// Warnings go to stderr; `--quiet` and the machine-readable formats silence them.
 ///

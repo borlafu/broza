@@ -979,7 +979,7 @@ The figures follow principle 8: pending and freed bytes are reported separately 
 | List snapshots (`diskutil apfs listSnapshots`) | None |
 | Delete snapshots (`diskutil apfs deleteSnapshot -uuid`) | May require ownership of the disk or administrator privileges on macOS 26/27; Broza does not escalate |
 
-If *Full Disk Access* is missing, Broza **does not fail**: it completes what it can, adds a warning to `warnings[]` and explains on stderr how to grant it: **System Settings → Privacy & Security → Full Disk Access**, then add the terminal application (or the `broza` binary). It returns exit code `3` only when the operation was impossible without it.
+If *Full Disk Access* is missing, Broza **does not fail**: it completes what it can, adds a warning to `warnings[]` and explains on stderr how to grant it: **System Settings → Privacy & Security → Full Disk Access**, then add the terminal application (or the `broza` binary). It returns exit code `3` only when the operation was impossible without it: a `scan <PATH>` whose root itself macOS refuses to list. A refusal inside a readable root, or anywhere in a volume-wide scan, is a warning (`permission_denied`, summarised as `permission_denied_summary`).
 
 If `diskutil` refuses a snapshot deletion for lack of privileges, the item is marked `failed` with `error: "permission_denied"`, the exit code is `5`, and the `snapshot_needs_admin` warning carries the exact `diskutil` command the user may run with `sudo`. Broza never invokes `sudo` itself. The action keeps its historical name `tmutil_delete` in the contract.
 
@@ -1118,5 +1118,6 @@ Everything below shipped with 0.3.0; the milestone that produced each change is 
 
 Everything below ships with 1.0.0; the milestone that produced each change is in parentheses.
 
+- §6 (M5): a `scan <PATH>` whose root macOS refuses to list is exit `3`; a refusal inside a readable root stays a warning. The stderr hint names the setting and what to add to it.
 - §3.3 (M5): `unused-apps` detector — `applications` (amber), `unverified` (red, low confidence), `leftovers` (amber, by bundle identifier).
 - §3.3 (M5): `cloud-synced` detector — one inform-only finding per provider (`icloud`, `dropbox`, `onedrive`, `google-drive`, `other`), roots, measurement and `instructions` spelled out.

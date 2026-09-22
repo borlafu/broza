@@ -166,17 +166,22 @@ impl Detector for CloudSynced {
 }
 
 /// Every cloud root present under the home, with its provider.
+///
+/// A root is a directory the provider owns; a file at one of these names (a
+/// `.DS_Store` beside the File Provider roots, the note Dropbox leaves at
+/// `~/Dropbox` after moving to File Provider) or a symlink to a root already
+/// counted is not one.
 fn roots(context: &DetectContext<'_>, detected: &mut Detected) -> Vec<(Provider, PathBuf)> {
     let mut roots = Vec::new();
     let icloud = context.under_home(ICLOUD_ROOT);
-    if context.fs.exists(&icloud) {
+    if is_directory(context, &icloud, detected) {
         roots.push((Provider::ICloud, icloud));
     }
     let storage = context.under_home(CLOUD_STORAGE_DIR);
-    if context.fs.exists(&storage) {
+    if is_directory(context, &storage, detected) {
         match context.fs.read_dir(&storage) {
             Ok(entries) => {
-                for entry in entries {
+                for entry in entries.into_iter().filter(|entry| is_directory(context, entry, detected)) {
                     let name = entry.file_name().and_then(|name| name.to_str()).unwrap_or_default();
                     roots.push((Provider::of_storage_entry(name), entry));
                 }
@@ -191,11 +196,29 @@ fn roots(context: &DetectContext<'_>, detected: &mut Detected) -> Vec<(Provider,
     }
     for (folder, provider) in LEGACY_ROOTS {
         let root = context.under_home(folder);
-        if context.fs.exists(&root) {
+        if is_directory(context, &root, detected) {
             roots.push((provider, root));
         }
     }
     roots
+}
+
+/// `true` for a real directory: not a file, not a symlink, not a placeholder.
+/// One Broza may not even `stat` is a warning; one that is not there is not.
+fn is_directory(context: &DetectContext<'_>, path: &Path, detected: &mut Detected) -> bool {
+    match context.fs.metadata(path) {
+        Ok(meta) => meta.is_dir && !meta.is_symlink && !meta.is_dataless,
+        Err(BrozaError::TargetNotFound(_)) => false,
+        Err(error) => {
+            detected.warnings.push(Detected::unreadable(
+                Category::CloudSynced,
+                path,
+                "its synced files",
+                &error,
+            ));
+            false
+        }
+    }
 }
 
 /// The local bytes and files of one root: a walk that counts placeholders as
@@ -316,6 +339,33 @@ mod tests {
         let dropbox = &detected.findings[1];
         assert_eq!(dropbox.paths()[0].path, Path::new(&format!("{H}/Library/CloudStorage/Dropbox-Personal")));
         assert!(detected.warnings.is_empty(), "{:?}", detected.warnings);
+    }
+
+    #[test]
+    fn a_file_or_a_symlink_where_a_root_would_be_is_not_a_root() {
+        let fs = fs();
+        // Dropbox leaves a note at the old place and a `.DS_Store` beside the roots.
+        fs.add_file(
+            format!("{H}/Dropbox"),
+            b"Your Dropbox folder has moved to ~/Library/CloudStorage/Dropbox",
+        );
+        fs.add_file(format!("{H}/Library/CloudStorage/.DS_Store"), b"ds");
+        fs.add_symlink(format!("{H}/OneDrive"), format!("{H}/Library/CloudStorage/Dropbox-Personal"));
+
+        let detected = detect(&fs);
+
+        let ids: Vec<String> = detected.findings.iter().map(|f| f.id().to_string()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "cloud-synced.icloud",
+                "cloud-synced.dropbox",
+                "cloud-synced.google-drive",
+                "cloud-synced.other"
+            ],
+            "{detected:?}"
+        );
+        assert!(detected.warnings.is_empty(), "nothing to warn about: {:?}", detected.warnings);
     }
 
     #[test]

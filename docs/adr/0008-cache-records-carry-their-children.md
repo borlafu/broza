@@ -18,7 +18,7 @@ files.
 
 ## Decision
 
-- A record (`DirRecord`, store layout version 2) carries, besides the aggregate: the names and
+- A record (`DirRecord`, store layout version 3) carries, besides the aggregate: the names and
   `(inode, mtime)` of the directories directly inside it, and every file directly inside it of at
   least `CACHE_FILE_FLOOR_BYTES` (1 MB, equal to the detectors' file floor) with its name, sizes,
   inode, link count and times. Names are stored as bytes, since a path need not be UTF-8.
@@ -43,7 +43,7 @@ files.
 - The store grows to hold names and big files: about 30 MB for a home of a few million entries.
 - What `suggest` shows may be up to `cache-ttl` old for files that grew in place, as `scan`
   always could; `--no-cache` walks cold. `clean` stays at the cold rate.
-- New with layout 2: a directory whose mtime was set back after its contents changed (`rsync -t`,
+- New with this layout: a directory whose mtime was set back after its contents changed (`rsync -t`,
   `tar -p`, a restore) is served with the names its record kept, so a warm report can list
   entries that are gone or miss new ones until the TTL. Layout 1 could only report a stale size.
 - A refused subtree is remembered for the walk (`Denied`), so a change deep in a tree costs one

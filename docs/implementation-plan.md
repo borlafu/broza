@@ -126,7 +126,7 @@ Manifest written via tmp + rename after each item. Restore per session in revers
 
 ### 3.4 Scan cache
 
-`~/.cache/broza/v1/<volume_uuid>/dirs.bin`, versioned magic header (layout version 2), records
+`~/.cache/broza/v1/<volume_uuid>/dirs.bin`, versioned magic header (layout version 3), records
 keyed by `(dev, inode, mtime_ns)` with the aggregate bytes, the directory's child directories
 (name, inode, mtime) and its files of at least 1 MB (name, sizes, inode, link count, times). A
 subtree is served whole, rebuilt record by record, when its key matches, every record below is
@@ -342,7 +342,7 @@ M4 progress:
       path (review of 9680047, LOW). The applied `clean` envelope has a JSON snapshot test.
 - [x] `quarantined_bytes` is allocated bytes like every other counter (`WritablePath::allocated_bytes`,
       `quarantine/attempt.rs::measured_size`); §4.4 pinned.
-- [x] `suggest` under 15 s on the development machine. Cache layout 2 (ADR 0008): records carry
+- [x] `suggest` under 15 s on the development machine. Cache layout 3 (ADR 0008): records carry
       their child directories and their files from 1 MB, so an unchanged subtree is served whole
       with the nodes and files the detectors read; `suggest` sets its floor to the file report's
       (1 MB) and trusts the cache, `clean` walks cold. Measured 2026-09-22 on the developer's home

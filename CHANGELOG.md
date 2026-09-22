@@ -20,7 +20,7 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 
 ### Changed
 
-- Scan cache layout 2: records carry their child directories and their files from 1 MB, so an
+- Scan cache layout 3: records carry their child directories and their files from 1 MB, so an
   unchanged subtree is served whole; `suggest` runs warm (under 9 s on a developer's home that
   walks cold in 36 s) and `clean` walks cold on purpose. A store from an older Broza is
   replaced, not refused (ADR 0008).

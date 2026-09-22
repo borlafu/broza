@@ -1105,7 +1105,7 @@ Everything below ships between 0.2.0 and 0.3.0; the milestone that produced each
 - §3.5 and §3.8 (M3): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.
 - §3.5 (M3): `restore` resolves every id before writing (unknown item ids exit `4` too), `--all`/`--session`/`ID…` are mutually exclusive, `--all` reports unreadable sessions in `errors[]`; §5: a zero figure drops only its own part of the parenthesis.
 - §3.4 (M4): `purge` items are executed (re-check, remove, allocated bytes to `reclaimed_bytes`); a plan without `quarantine` items creates no session; `clean --apply --purge` works. `trash` detector documented in §3.3.
-- §7 (M4): scan cache layout 2 — records carry their child directories and their files from 1 MB, subtrees are served whole, `suggest` runs warm, `clean` walks cold; a store from an older Broza is replaced, not refused (ADR 0008).
+- §7 (M4): scan cache layout 3 — records carry their child directories and their files from 1 MB, subtrees are served whole, `suggest` runs warm, `clean` walks cold; a store from an older Broza is replaced, not refused (ADR 0008).
 - §4.4 (M4): `quarantined_bytes` pinned to allocated bytes, like `reclaimed_bytes` and `reclaimable_bytes`.
 - §3.3 and §4.1 (M4): `duplicates` detector (`duplicates.home`; scope, size window, kept copy and clone caveat spelled out); `file_report_truncated` warning.
 - §3.3 and §4.1 (M4): `large-old-files` detector (`large-old-files.home`, `mdls` through the process port, `spotlight_unavailable` warning).

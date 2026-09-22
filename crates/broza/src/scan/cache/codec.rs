@@ -12,9 +12,11 @@ use crate::scan::cache::key::DirRecord;
 pub const MAGIC: &[u8; 4] = b"BRZC";
 /// Layout version of the store; bumped whenever [`DirRecord`] changes shape.
 ///
-/// Version 2 (ADR 0008): records carry their child directories and their big
-/// files, so a subtree can be rebuilt from the store.
-pub const STORE_VERSION: u8 = 2;
+/// Version 3 (ADR 0008): records carry their child directories (with their
+/// device) and their big files, so a subtree can be rebuilt from the store.
+/// Version 2 was the same without the child's device and never shipped; a
+/// file in either older layout is replaced, not refused.
+pub const STORE_VERSION: u8 = 3;
 /// What the user can do about a cache Broza refuses to read.
 pub const NO_CACHE_HINT: &str = "retry with --no-cache";
 /// Bytes of the header: the magic plus the version byte.

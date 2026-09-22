@@ -34,7 +34,7 @@
 //! The root is always walked, and the caller can hold the cache off to any
 //! depth ([`WalkOptions::cache_from_depth`]): whatever the report shows has to
 //! be measured this run, or a warm scan would print a tree with no branches.
-//! Below that, an unchanged directory is taken from its [`DirRecord`] whole —
+//! Below that, an unchanged directory is taken from its [`crate::scan::DirRecord`] whole —
 //! bytes, counts and all — and its subtree is not walked.
 
 mod dedupe;
@@ -48,14 +48,14 @@ use std::path::{Path, PathBuf};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 pub use types::{
-    DirIdentity, DirNode, FileEntry, MIN_CACHE_DEPTH, PERMISSION_DENIED_CODE, SkipHook,
+    CachedSubtree, DirIdentity, DirNode, FileEntry, MIN_CACHE_DEPTH, PERMISSION_DENIED_CODE, SkipHook,
     UNREADABLE_ENTRY_CODE, WalkOptions, WalkResult,
 };
 
 use crate::BrozaError;
 use crate::ports::{EntryMetadata, FileOps};
-use crate::scan::cache::DirRecord;
 use parts::{Children, Context, Leaves, Partial, Totals};
+use top_files::TopFiles;
 
 /// Walk `root`, aggregating every directory below it.
 ///
@@ -87,8 +87,8 @@ pub fn walk(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -> WalkRes
 /// own right ([`Totals::as_child`]); the node keeps the view from inside.
 fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'_>) -> Partial {
     let identity = DirIdentity::of(path, meta);
-    if let Some(record) = cached(&identity, depth, context) {
-        return cached_dir(&identity, &record, context);
+    if let Some(subtree) = cached(&identity, depth, context).filter(|subtree| !subtree.nodes.is_empty()) {
+        return cached_dir(&identity, subtree, depth, context);
     }
     let listing = match context.fs.read_dir_with_metadata(path) {
         Ok(listing) => listing,
@@ -124,6 +124,8 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     all_errors.extend(below.errors);
     let mut direct_maxima = below.direct_maxima;
     direct_maxima.push((identity.path.clone(), totals.largest_direct_file_bytes));
+    let mut cache_files = leaves.cache_files;
+    cache_files.extend(below.cache_files);
     Partial {
         nodes,
         files: leaves.files.merge(below.files),
@@ -132,35 +134,63 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
         totals: totals.as_child(),
         direct_maxima,
         hidden,
+        cache_files,
     }
 }
 
 /// What the cache says about this directory, if it may speak at this depth.
-fn cached(identity: &DirIdentity, depth: usize, context: &Context<'_>) -> Option<DirRecord> {
+fn cached(identity: &DirIdentity, depth: usize, context: &Context<'_>) -> Option<CachedSubtree> {
     if !context.options.cache_answers_at(depth) {
         return None;
     }
     context.options.skip_hook.and_then(|hook| hook(identity))
 }
 
-/// A directory served from the cache: measured last time, not walked again.
-fn cached_dir(identity: &DirIdentity, record: &DirRecord, context: &Context<'_>) -> Partial {
-    let totals = Totals {
-        size_bytes: record.size_bytes,
-        allocated_bytes: record.allocated_bytes,
-        file_count: record.file_count,
-        dir_count: record.dir_count,
-        dataless_count: record.dataless_count,
-        largest_item_bytes: record.largest_item_bytes,
-        largest_direct_file_bytes: 0,
-        has_truncation: record.has_truncation,
+/// A subtree served from the cache: measured last time, not walked again.
+///
+/// Its nodes come back as the cache kept them (those below `max_depth` hidden,
+/// like walked ones), its files above each floor are collected like walked
+/// ones, and the aggregate of its root is what the parent adds up.
+fn cached_dir(
+    identity: &DirIdentity,
+    subtree: CachedSubtree,
+    depth: usize,
+    context: &Context<'_>,
+) -> Partial {
+    let CachedSubtree { nodes, files } = subtree;
+    let Some(root) = nodes.first() else {
+        return Partial::empty(context.options.report_files_top);
     };
-    context.report(record.file_count.saturating_add(record.dir_count).saturating_add(1), record.size_bytes);
-    Partial {
-        nodes: vec![DirNode::new(identity, totals, false).served_from_cache()],
-        totals: totals.as_child(),
-        ..Partial::empty(context.options.report_files_top)
+    let totals = Totals {
+        size_bytes: root.size_bytes,
+        allocated_bytes: root.allocated_bytes,
+        file_count: root.file_count,
+        dir_count: root.dir_count,
+        dataless_count: root.dataless_count,
+        largest_item_bytes: root.largest_item_bytes,
+        largest_direct_file_bytes: 0,
+        has_truncation: root.has_truncation,
+    };
+    context.report(root.file_count.saturating_add(root.dir_count).saturating_add(1), root.size_bytes);
+    let root_depth = identity.path.components().count();
+    let reported = |node: &DirNode| {
+        let below_root = node.path.components().count().saturating_sub(root_depth);
+        context.options.max_depth.is_none_or(|max| depth.saturating_add(below_root) <= max)
+    };
+    let (nodes, hidden): (Vec<DirNode>, Vec<DirNode>) = nodes.into_iter().partition(reported);
+    let cap = context.options.report_files_top;
+    let mut top = TopFiles::new(cap);
+    let mut cache_files = Vec::new();
+    for file in files {
+        let reportable = file.size_bytes.max(file.allocated_bytes);
+        if context.options.report_files_min_size.is_some_and(|min| reportable >= min) {
+            top = top.with(file.clone());
+        }
+        if context.options.cache_files_min_size.is_some_and(|min| reportable >= min) {
+            cache_files.push(file);
+        }
     }
+    Partial { nodes, hidden, files: top, cache_files, totals: totals.as_child(), ..Partial::empty(cap) }
 }
 
 /// A directory Broza may not read: a warning, an empty node, and the walk goes on.
@@ -180,7 +210,12 @@ fn walk_leaf_root(root: &Path, meta: &EntryMetadata, context: &Context<'_>) -> P
     let cap = context.options.report_files_top;
     let leaves = Leaves::empty(cap).add_leaf(root, meta, context);
     context.report(leaves.entries, leaves.totals.size_bytes);
-    Partial { files: leaves.files, totals: leaves.totals, ..Partial::empty(cap) }
+    Partial {
+        files: leaves.files,
+        cache_files: leaves.cache_files,
+        totals: leaves.totals,
+        ..Partial::empty(cap)
+    }
 }
 
 /// Recompute every directory's largest item from what the settled tree holds.
@@ -225,7 +260,8 @@ fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u
 /// Parallel walks finish in whatever order the threads happen to take, and a report
 /// that changes between two identical scans is a report nobody can diff.
 fn sorted(partial: Partial) -> WalkResult {
-    let Partial { mut nodes, files, links, mut errors, mut direct_maxima, hidden, .. } = partial;
+    let Partial { mut nodes, files, links, mut errors, mut direct_maxima, hidden, mut cache_files, .. } =
+        partial;
     let hidden_paths: HashSet<PathBuf> = hidden.iter().map(|node| node.path.clone()).collect();
     nodes.extend(hidden);
     let files_truncated = files.is_truncated();
@@ -238,12 +274,15 @@ fn sorted(partial: Partial) -> WalkResult {
             direct_maxima.push((parent.to_path_buf(), link.allocated_bytes));
         }
     }
+    let dropped: HashSet<&Path> = settled.dropped.iter().map(PathBuf::as_path).collect();
+    cache_files.retain(|file| !dropped.contains(file.path.as_path()));
     let mut nodes = recompute_largest_items(settled.nodes, &direct_maxima);
     nodes.retain(|node| !hidden_paths.contains(&node.path));
     nodes.sort_by(|left, right| left.path.cmp(&right.path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
+    cache_files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));
-    WalkResult { nodes, files, files_truncated, errors }
+    WalkResult { nodes, files, files_truncated, cache_files, errors }
 }
 
 #[cfg(test)]

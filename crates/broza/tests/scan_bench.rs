@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use broza::adapters::{StdFileOps, SystemClock};
 use broza::ports::Clock;
-use broza::scan::cache::{CacheKey, CacheStore, DirRecord, store_path};
+use broza::scan::cache::{CACHE_FILE_FLOOR_BYTES, CacheKey, CacheStore, records_of, store_path};
 use broza::scan::walker::{DirIdentity, WalkOptions, WalkResult, walk};
 
 /// Cache lifetime used by the benchmark, long enough that nothing expires.
@@ -64,17 +64,20 @@ fn exclusions() -> Vec<PathBuf> {
 /// Walk `root` once, with `store` answering for unchanged subtrees.
 fn timed_walk(root: &Path, store: &CacheStore) -> (WalkResult, Duration) {
     // The same policy `scan_volume` applies, so the benchmark measures what
-    // the product does: a record is only served when nothing inside could be
-    // listed on its own and the subtree holds no hard link and no hole.
+    // the product does: a subtree is served when the store can rebuild it
+    // whole, it holds no hard link and no hole, and the cache carries every
+    // file the report could list.
     let hook = |identity: &DirIdentity| {
         let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
-        let reportable_inside = record.largest_item_bytes >= BENCH_MIN_FILE_BYTES;
-        (record.is_usable() && !reportable_inside).then(|| record.clone())
+        let complete = BENCH_MIN_FILE_BYTES >= CACHE_FILE_FLOOR_BYTES
+            || record.largest_item_bytes < BENCH_MIN_FILE_BYTES;
+        (record.is_usable() && complete).then(|| store.subtree(identity)).flatten()
     };
     let options = WalkOptions {
         skip_hook: Some(&hook),
         cache_from_depth: BENCH_DEPTH + 1,
         report_files_min_size: Some(BENCH_MIN_FILE_BYTES),
+        cache_files_min_size: Some(CACHE_FILE_FLOOR_BYTES),
         report_files_top: BENCH_TOP,
         exclude: exclusions(),
         ..WalkOptions::default()
@@ -124,7 +127,7 @@ fn bench_home_walk() {
     report("cold", &cold_result, cold);
 
     let now = clock.now();
-    let records = cold_result.nodes.iter().filter_map(|node| DirRecord::of(node, now));
+    let records = records_of(&cold_result, now);
     let saved = CacheStore::empty(&clock, BENCH_TTL).with_records(records);
     let started = Instant::now();
     saved.save(&store_path, &StdFileOps).unwrap_or_else(|e| panic!("save: {e}"));

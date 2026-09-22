@@ -4,7 +4,10 @@
 //! `(device, inode, mtime)` of each directory. A directory whose key is unchanged
 //! and whose record is younger than `cache-ttl` is served from the store and its
 //! subtree is not walked at all — that is what turns a cold scan of ten seconds
-//! into a warm one under a second.
+//! into a warm one under a second. Each record names the directories and the
+//! files of at least [`CACHE_FILE_FLOOR_BYTES`] directly inside it, so the
+//! store rebuilds a served subtree node by node and the detectors of `suggest`
+//! see the same directories and files a walk would have given them (ADR 0008).
 //!
 //! # What the cache does not promise
 //!
@@ -18,8 +21,10 @@
 
 pub mod codec;
 pub mod key;
+pub mod records;
 pub mod store;
 
 pub use codec::{MAGIC, NO_CACHE_HINT, STORE_VERSION};
-pub use key::{CacheKey, DirRecord};
+pub use key::{CACHE_FILE_FLOOR_BYTES, CacheKey, ChildDir, DirRecord, FileRecord};
+pub use records::records_of;
 pub use store::{BSD_ID_KEY_CODE, CacheStore, STORE_FILE_NAME, store_path};

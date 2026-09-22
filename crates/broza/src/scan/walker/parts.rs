@@ -178,6 +178,8 @@ pub(super) struct Partial {
     /// Directories below `max_depth`: measured and settled like the rest, so the
     /// nodes above them are computed from the truth, then left out of the report.
     pub hidden: Vec<DirNode>,
+    /// Every file above the cache's floor, unbounded, for the scan cache.
+    pub cache_files: Vec<FileEntry>,
 }
 
 impl Partial {
@@ -191,6 +193,7 @@ impl Partial {
             totals: Totals::default(),
             direct_maxima: Vec::new(),
             hidden: Vec::new(),
+            cache_files: Vec::new(),
         }
     }
 
@@ -201,6 +204,7 @@ impl Partial {
         self.errors.append(&mut other.errors);
         self.direct_maxima.append(&mut other.direct_maxima);
         self.hidden.append(&mut other.hidden);
+        self.cache_files.append(&mut other.cache_files);
         Self {
             files: self.files.merge(other.files),
             totals: self.totals.merge(other.totals),
@@ -209,6 +213,7 @@ impl Partial {
             errors: self.errors,
             direct_maxima: self.direct_maxima,
             hidden: self.hidden,
+            cache_files: self.cache_files,
         }
     }
 }
@@ -224,12 +229,20 @@ pub(super) struct Leaves {
     pub links: Vec<LinkSighting>,
     /// How many entries were looked at.
     pub entries: u64,
+    /// Every file above the cache's floor, for the scan cache.
+    pub cache_files: Vec<FileEntry>,
 }
 
 impl Leaves {
     /// No leaves yet, keeping at most `cap` files.
     pub fn empty(cap: usize) -> Self {
-        Self { totals: Totals::default(), files: TopFiles::new(cap), links: Vec::new(), entries: 0 }
+        Self {
+            totals: Totals::default(),
+            files: TopFiles::new(cap),
+            links: Vec::new(),
+            entries: 0,
+            cache_files: Vec::new(),
+        }
     }
 
     /// Count one non-directory entry.
@@ -256,8 +269,10 @@ impl Leaves {
         // Either size clears the threshold: the readers downstream filter on
         // the one they mean, and a sparse or compressed file is not lost here.
         let reportable = meta.size_bytes.max(meta.allocated_bytes);
-        if context.options.report_files_min_size.is_some_and(|min| reportable >= min) {
-            self.files = self.files.with(FileEntry {
+        let reported = context.options.report_files_min_size.is_some_and(|min| reportable >= min);
+        let cached = context.options.cache_files_min_size.is_some_and(|min| reportable >= min);
+        if reported || cached {
+            let entry = FileEntry {
                 path: path.to_path_buf(),
                 size_bytes: meta.size_bytes,
                 allocated_bytes: meta.allocated_bytes,
@@ -266,7 +281,13 @@ impl Leaves {
                 link_count: meta.link_count,
                 modified: meta.modified,
                 accessed: meta.accessed,
-            });
+            };
+            if cached {
+                self.cache_files.push(entry.clone());
+            }
+            if reported {
+                self.files = self.files.with(entry);
+            }
         }
         Self { entries, totals: self.totals.merge(Totals::leaf(meta)), ..self }
     }

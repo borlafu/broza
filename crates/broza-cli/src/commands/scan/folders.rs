@@ -119,7 +119,12 @@ pub fn request_for_home(settings: &FolderSettings) -> Result<ScanRequest, BrozaE
         tree: false,
     };
     let request = request_for(&args, settings)?;
-    Ok(ScanRequest { file_report: Some(FileReport::for_detectors()), ..request })
+    // The detectors read directory nodes and the file report, never the
+    // largest-items list, so the only floor that matters to them is the file
+    // report's; setting `min_size` to it lets the cache serve every subtree
+    // whose files it carries (`docs/cli-spec.md` §7).
+    let report = FileReport::for_detectors();
+    Ok(ScanRequest { file_report: Some(report), min_size: report.min_size, ..request })
 }
 
 /// The core request the flags and the settings add up to.

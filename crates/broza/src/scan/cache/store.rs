@@ -4,7 +4,7 @@
 //! reads from a store and the aggregation that adds to it never fight over one
 //! mutable map.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -14,6 +14,8 @@ use crate::BrozaError;
 use crate::ports::{Clock, FileOps};
 use crate::scan::cache::codec::{NO_CACHE_HINT, decode, encode};
 use crate::scan::cache::key::{CacheKey, DirRecord};
+use crate::scan::cache::records::{child_key, child_path, empty_subtree, file_of, node_of};
+use crate::scan::walker::{CachedSubtree, DirIdentity};
 
 /// Name of the store file inside a volume's cache directory.
 pub const STORE_FILE_NAME: &str = "dirs.bin";
@@ -80,11 +82,12 @@ impl CacheStore {
             Err(BrozaError::TargetNotFound(_)) => return Ok(empty),
             Err(error) => return Err(BrozaError::Cache(format!("{error}; {NO_CACHE_HINT}"))),
         };
-        let records = decode(&bytes)?;
-        // Anything already expired has to go the next time this is written.
-        let expired = records.iter().any(|record| !empty.is_fresh(record));
-        let records = records.into_iter().map(|record| (record.key, record)).collect();
-        Ok(Self { records, changed: expired, ..empty })
+        let decoded = decode(&bytes)?;
+        // Anything already expired has to go the next time this is written,
+        // and so does a file in an older layout.
+        let expired = decoded.records.iter().any(|record| !empty.is_fresh(record));
+        let records = decoded.records.into_iter().map(|record| (record.key, record)).collect();
+        Ok(Self { records, changed: expired || decoded.outdated, ..empty })
     }
 
     /// An empty store that answers against `clock` and `ttl`.
@@ -105,6 +108,50 @@ impl CacheStore {
     /// opened on a ticking clock, are fresh.
     pub fn lookup(&self, key: &CacheKey) -> Option<&DirRecord> {
         self.records.get(key).filter(|record| self.is_fresh(record))
+    }
+
+    /// The whole subtree under `identity`, rebuilt from the store, or nothing.
+    ///
+    /// Nothing when the directory has no fresh usable record, or when any
+    /// directory below it has none: a subtree is served whole or not at all,
+    /// so a warm scan never reports a directory whose contents it half knows.
+    /// The directory asked about comes first, then its descendants, each with
+    /// the big files the record kept.
+    pub fn subtree(&self, identity: &DirIdentity) -> Option<CachedSubtree> {
+        let key = CacheKey::of(identity)?;
+        let record = self.lookup(&key).filter(|record| record.is_usable())?;
+        let mut subtree = empty_subtree();
+        let mut visited = HashSet::new();
+        self.rebuild(&identity.path, record, &mut subtree, &mut visited).then_some(subtree)
+    }
+
+    /// Add `record` at `path` and everything below it; `false` when a
+    /// descendant is missing, unusable, or already seen (a store that loops is
+    /// a store that lies).
+    fn rebuild(
+        &self,
+        path: &Path,
+        record: &DirRecord,
+        subtree: &mut CachedSubtree,
+        visited: &mut HashSet<CacheKey>,
+    ) -> bool {
+        if !visited.insert(record.key) {
+            return false;
+        }
+        subtree.nodes.push(node_of(path, record));
+        subtree.files.extend(record.files.iter().map(|file| file_of(path, record.key.device, file)));
+        for child in &record.child_dirs {
+            let Some(child_record) = child_key(&record.key, child)
+                .and_then(|key| self.lookup(&key))
+                .filter(|child_record| child_record.is_usable())
+            else {
+                return false;
+            };
+            if !self.rebuild(&child_path(path, child), child_record, subtree, visited) {
+                return false;
+            }
+        }
+        true
     }
 
     /// A copy of the store with `record` added, replacing any record of its key.
@@ -201,6 +248,7 @@ mod tests {
     use crate::ExitCode;
     use crate::ports::{Clock, FileOps};
     use crate::scan::cache::key::{CacheKey, DirRecord};
+    use crate::scan::walker::DirIdentity;
     use crate::testing::{FakeFileOps, FixedClock};
 
     /// A day, the default `cache-ttl`.
@@ -228,6 +276,8 @@ mod tests {
             has_hard_links: false,
             has_truncation: false,
             recorded_at,
+            child_dirs: Vec::new(),
+            files: Vec::new(),
         }
     }
 
@@ -246,6 +296,82 @@ mod tests {
 
     fn load(fs: &FakeFileOps, clock: &FixedClock) -> CacheStore {
         CacheStore::load(&path(), fs, clock, TTL).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// A record whose child list and file list are given.
+    fn record_with(
+        inode: u64,
+        children: &[(&str, u64)],
+        files: &[(&str, u64)],
+        recorded_at: Timestamp,
+    ) -> DirRecord {
+        use crate::scan::cache::key::{ChildDir, FileRecord};
+        let child_dirs = children
+            .iter()
+            .map(|(name, inode)| ChildDir {
+                name: name.as_bytes().to_vec(),
+                inode: *inode,
+                mtime_ns: Some(42),
+            })
+            .collect();
+        let files = files
+            .iter()
+            .map(|(name, size)| FileRecord {
+                name: name.as_bytes().to_vec(),
+                size_bytes: *size,
+                allocated_bytes: *size,
+                inode: 900 + *size,
+                link_count: 1,
+                modified_ns: Some(1),
+                accessed_ns: Some(2),
+            })
+            .collect();
+        DirRecord { child_dirs, files, ..record(inode, recorded_at) }
+    }
+
+    fn identity_of(inode: u64) -> DirIdentity {
+        DirIdentity {
+            path: PathBuf::from("/vol/a"),
+            device: 1,
+            inode,
+            mtime: Timestamp::from_nanosecond(42).ok(),
+        }
+    }
+
+    #[test]
+    fn a_subtree_is_rebuilt_whole_with_its_files_or_not_at_all() {
+        let clock = FixedClock::default();
+        let now = clock.now();
+        let whole = CacheStore::empty(&clock, TTL).with_records([
+            record_with(1, &[("sub", 2)], &[("big.bin", 5_000_000)], now),
+            record_with(2, &[], &[("deep.bin", 2_000_000)], now),
+        ]);
+        let half = CacheStore::empty(&clock, TTL).with_records([record_with(1, &[("sub", 2)], &[], now)]);
+
+        let served = whole.subtree(&identity_of(1)).unwrap_or_else(|| panic!("servable"));
+        let paths: Vec<PathBuf> = served.nodes.iter().map(|node| node.path.clone()).collect();
+        let files: Vec<PathBuf> = served.files.iter().map(|file| file.path.clone()).collect();
+
+        assert_eq!(paths, vec![PathBuf::from("/vol/a"), PathBuf::from("/vol/a/sub")]);
+        assert_eq!(files, vec![PathBuf::from("/vol/a/big.bin"), PathBuf::from("/vol/a/sub/deep.bin")]);
+        assert!(served.nodes.iter().all(|node| node.from_cache));
+        assert_eq!(served.files[0].size_bytes, 5_000_000);
+        assert!(
+            half.subtree(&identity_of(1)).is_none(),
+            "a child without a record makes the parent unservable"
+        );
+    }
+
+    #[test]
+    fn a_store_that_loops_or_hides_a_hard_link_is_not_served() {
+        let clock = FixedClock::default();
+        let now = clock.now();
+        let looping = CacheStore::empty(&clock, TTL).with_records([record_with(1, &[("me", 1)], &[], now)]);
+        let linked = CacheStore::empty(&clock, TTL)
+            .with_records([DirRecord { has_hard_links: true, ..record_with(1, &[], &[], now) }]);
+
+        assert!(looping.subtree(&identity_of(1)).is_none());
+        assert!(linked.subtree(&identity_of(1)).is_none());
     }
 
     #[test]

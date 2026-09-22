@@ -23,7 +23,7 @@ pub mod walker;
 mod warnings;
 
 pub use aggregate::{TreeNode, TreeView, largest_items, tree};
-pub use cache::{CacheKey, CacheStore, DirRecord};
+pub use cache::{CACHE_FILE_FLOOR_BYTES, CacheKey, CacheStore, DirRecord};
 pub use mount::{MountEntry, MountTable};
 pub use progress::{ProgressReporter, ScanProgress};
 pub use request::{
@@ -272,7 +272,7 @@ fn save_store<'a>(
     // walk: a walk longer than `cache-ttl` would otherwise write records the
     // store considers too new to keep, and never fill.
     let recorded_at = store.opened_at();
-    let fresh = walked.flat_map(|walk| walk.nodes.iter()).filter_map(|node| DirRecord::of(node, recorded_at));
+    let fresh = walked.flat_map(|walk| cache::records_of(walk, recorded_at));
     let updated = store.with_records(fresh);
     if !updated.has_changes() {
         // Nothing the file does not already say. On a big volume this is tens
@@ -290,13 +290,17 @@ fn walk_volume(
     store: &CacheStore,
     reporter: Option<&ProgressReporter<'_>>,
 ) -> WalkResult {
-    // A cached subtree is only reused when nothing inside it could have been
-    // listed on its own; otherwise a warm scan would quietly drop an entry that
-    // a cold scan shows, and the two would disagree about the same disk.
+    // A cached subtree is reused only when the store can give back everything
+    // the request would list: every directory, and every file above the
+    // request's floor. Records keep files from `CACHE_FILE_FLOOR_BYTES` up, so
+    // a request with a lower floor is served only for subtrees holding nothing
+    // it could list; otherwise a warm scan would quietly drop an entry that a
+    // cold scan shows, and the two would disagree about the same disk.
+    let floor = request.reporting_floor();
     let hook = |identity: &DirIdentity| {
         let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
-        let reportable_inside = record.largest_item_bytes >= request.reporting_floor();
-        (record.is_usable() && !reportable_inside).then(|| record.clone())
+        let complete = floor >= CACHE_FILE_FLOOR_BYTES || record.largest_item_bytes < floor;
+        (record.is_usable() && complete).then(|| store.subtree(identity)).flatten()
     };
     let files = request.file_report();
     let options = WalkOptions {
@@ -311,6 +315,8 @@ fn walk_volume(
         // With nothing to list, collecting file entries only to drop them
         // would allocate one per file of the volume.
         report_files_min_size: (files.top > 0).then_some(files.min_size),
+        // Kept for the store, so a subtree served next time carries its files.
+        cache_files_min_size: request.cache_root.is_some().then_some(CACHE_FILE_FLOOR_BYTES),
         report_files_top: files.top,
         progress: reporter,
     };

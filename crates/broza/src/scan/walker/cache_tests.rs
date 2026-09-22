@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use super::tests::{node, record, sample, walk_sample};
+use super::tests::{node, sample, subtree, walk_sample};
 use crate::scan::walker::{DirIdentity, WalkOptions};
 
 #[test]
@@ -11,7 +11,7 @@ fn a_cache_hit_reuses_the_whole_aggregate_and_does_not_descend() {
     let seen: Mutex<Vec<DirIdentity>> = Mutex::new(Vec::new());
     let hook = |identity: &DirIdentity| {
         seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(identity.clone());
-        (identity.path == Path::new("/vol/a")).then(|| record(identity, 777))
+        (identity.path == Path::new("/vol/a")).then(|| subtree(identity, 777))
     };
     let options = WalkOptions { skip_hook: Some(&hook), ..WalkOptions::default() };
 
@@ -35,7 +35,7 @@ fn a_cache_hit_reuses_the_whole_aggregate_and_does_not_descend() {
 
 #[test]
 fn the_cache_is_never_asked_about_the_root_itself() {
-    let hook = |identity: &DirIdentity| Some(record(identity, 1));
+    let hook = |identity: &DirIdentity| Some(subtree(identity, 1));
     let options = WalkOptions { skip_hook: Some(&hook), ..WalkOptions::default() };
 
     let result = walk_sample(&sample(), &options);
@@ -47,7 +47,7 @@ fn the_cache_is_never_asked_about_the_root_itself() {
 
 #[test]
 fn the_cache_can_be_held_off_until_a_deeper_level() {
-    let hook = |identity: &DirIdentity| Some(record(identity, 1));
+    let hook = |identity: &DirIdentity| Some(subtree(identity, 1));
     let options = WalkOptions { skip_hook: Some(&hook), cache_from_depth: 2, ..WalkOptions::default() };
 
     let result = walk_sample(&sample(), &options);

@@ -11,7 +11,10 @@ use crate::scan::cache::key::DirRecord;
 /// First bytes of every store file.
 pub const MAGIC: &[u8; 4] = b"BRZC";
 /// Layout version of the store; bumped whenever [`DirRecord`] changes shape.
-pub const STORE_VERSION: u8 = 1;
+///
+/// Version 2 (ADR 0008): records carry their child directories and their big
+/// files, so a subtree can be rebuilt from the store.
+pub const STORE_VERSION: u8 = 2;
 /// What the user can do about a cache Broza refuses to read.
 pub const NO_CACHE_HINT: &str = "retry with --no-cache";
 /// Bytes of the header: the magic plus the version byte.
@@ -31,11 +34,24 @@ pub fn encode(records: &[&DirRecord]) -> Result<Vec<u8>, BrozaError> {
     Ok(bytes)
 }
 
+/// What decoding a store file produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decoded {
+    /// The records, none when the file was written by an older Broza.
+    pub records: Vec<DirRecord>,
+    /// `true` when the file was an older layout: nothing in it is read, and
+    /// the store is rewritten in this layout on the next save.
+    pub outdated: bool,
+}
+
 /// Decode the bytes of a store file.
 ///
-/// Every failure — wrong magic, unknown version, truncated or trailing bytes — is
-/// a [`BrozaError::Cache`], so the CLI exits `9` and says what to do about it.
-pub fn decode(bytes: &[u8]) -> Result<Vec<DirRecord>, BrozaError> {
+/// Every failure — wrong magic, a version from the future, truncated or trailing
+/// bytes — is a [`BrozaError::Cache`], so the CLI exits `9` and says what to do
+/// about it. A file from an older Broza is not a failure: the cache is a
+/// convenience, and upgrading must not cost the user an error. It is
+/// [`Decoded::outdated`] and replaced.
+pub fn decode(bytes: &[u8]) -> Result<Decoded, BrozaError> {
     let (header, body) = bytes.split_at_checked(HEADER_LEN).ok_or_else(|| {
         cache_error(&format!("the store is {} bytes long, shorter than its header", bytes.len()))
     })?;
@@ -43,6 +59,9 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<DirRecord>, BrozaError> {
         return Err(cache_error("the file does not start with the Broza cache magic"));
     }
     let version = header[MAGIC.len()];
+    if version < STORE_VERSION {
+        return Ok(Decoded { records: Vec::new(), outdated: true });
+    }
     if version != STORE_VERSION {
         return Err(cache_error(&format!(
             "the store is version {version}, this Broza writes version {STORE_VERSION}"
@@ -53,7 +72,7 @@ pub fn decode(bytes: &[u8]) -> Result<Vec<DirRecord>, BrozaError> {
     if !rest.is_empty() {
         return Err(cache_error(&format!("{} bytes left over after the records", rest.len())));
     }
-    Ok(records)
+    Ok(Decoded { records, outdated: false })
 }
 
 /// A cache error carrying the hint the user needs.
@@ -82,6 +101,8 @@ mod tests {
             has_hard_links: false,
             has_truncation: false,
             recorded_at: Timestamp::UNIX_EPOCH,
+            child_dirs: Vec::new(),
+            files: Vec::new(),
         }
     }
 
@@ -108,7 +129,8 @@ mod tests {
         let encoded = ok(encode(&borrowed));
         let decoded = ok(decode(&encoded));
 
-        assert_eq!(decoded, records);
+        assert_eq!(decoded.records, records);
+        assert!(!decoded.outdated);
     }
 
     #[test]
@@ -124,7 +146,7 @@ mod tests {
         let encoded = ok(encode(&[]));
 
         assert!(encoded.len() > MAGIC.len());
-        assert_eq!(ok(decode(&encoded)), Vec::new());
+        assert_eq!(ok(decode(&encoded)).records, Vec::new());
     }
 
     #[test]
@@ -142,6 +164,17 @@ mod tests {
         let message = expect_cache_error(&bytes);
 
         assert!(message.contains(NO_CACHE_HINT), "{message}");
+    }
+
+    #[test]
+    fn a_store_from_an_older_broza_is_replaced_not_refused() {
+        let mut bytes = ok(encode(&[&record(1)]));
+        bytes[MAGIC.len()] = STORE_VERSION - 1;
+
+        let decoded = ok(decode(&bytes));
+
+        assert!(decoded.outdated);
+        assert!(decoded.records.is_empty(), "nothing of the old layout is trusted");
     }
 
     #[test]

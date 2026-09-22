@@ -70,6 +70,7 @@ pub fn run(context: &SuggestContext<'_>) -> Result<Outcome, BrozaError> {
         now: context.generated_at,
         unused_after,
         categories: categories.as_deref(),
+        trust_cache: true,
     })?;
     let findings = filter::apply(detected.findings, core_risk(context.args.risk), min_size.bytes());
     let warnings = [context.warnings.clone(), detected.warnings].concat();

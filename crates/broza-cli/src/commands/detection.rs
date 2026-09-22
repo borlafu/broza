@@ -11,7 +11,7 @@ use broza::BrozaError;
 use broza::detect::{DetectContext, DetectPorts, Registry};
 use broza::model::{Category, Finding, Warning};
 use broza::ports::Ports;
-use broza::scan::{MountTable, VolumeScan, scan_paths};
+use broza::scan::{MountTable, ScanRequest, VolumeScan, scan_paths};
 use broza::units::{ByteSize, DurationSpec};
 use jiff::Timestamp;
 
@@ -32,6 +32,13 @@ pub struct DetectionRequest<'a> {
     pub unused_after: Duration,
     /// `--category`, resolved; `None` runs every detector.
     pub categories: Option<&'a [Category]>,
+    /// Whether the home walk may take unchanged subtrees from the scan cache.
+    ///
+    /// `suggest` may: it reports, and a cached figure up to `cache-ttl` old is
+    /// what the cache promises. `clean` may not: its plan is checked against
+    /// the disk item by item, and a size the cache remembered from before a
+    /// file grew would be refused there and abort the run.
+    pub trust_cache: bool,
 }
 
 /// What a detection run produced, with the mount table it used.
@@ -74,7 +81,8 @@ pub fn detect(request: &DetectionRequest<'_>) -> Result<Detection, BrozaError> {
 /// The home walk detectors read — its directories, its big files and its
 /// warnings; it refreshes `scan`'s cache on the way.
 fn walk_home(request: &DetectionRequest<'_>, mounts: &MountTable) -> Result<VolumeScan, BrozaError> {
-    let scan_request = request_for_home(request.folders)?;
+    let for_home = request_for_home(request.folders)?;
+    let scan_request = ScanRequest { no_cache: for_home.no_cache || !request.trust_cache, ..for_home };
     let mut scans = scan_paths(&[request.home.to_path_buf()], &scan_request, request.ports, mounts, None)?;
     scans.pop().ok_or_else(|| BrozaError::Other("the home walk produced nothing".into()))
 }

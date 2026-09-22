@@ -39,16 +39,17 @@ pub(super) fn settle_hard_links(
     links: Vec<LinkSighting>,
 ) -> Settled {
     if links.is_empty() {
-        return Settled { nodes, files, credited: Vec::new() };
+        return Settled { nodes, files, credited: Vec::new(), dropped: Vec::new() };
     }
     let nodes = mark_uncacheable(nodes, &hiders(&links));
     let (duplicates, credited) = partition_names(links);
     if duplicates.is_empty() {
-        return Settled { nodes, files, credited };
+        return Settled { nodes, files, credited, dropped: Vec::new() };
     }
     let dropped: HashSet<&Path> = duplicates.iter().map(|link| link.path.as_path()).collect();
     let kept_files = files.into_iter().filter(|file| !dropped.contains(file.path.as_path())).collect();
-    Settled { nodes: subtract(nodes, &duplicates), files: kept_files, credited }
+    let dropped = duplicates.iter().map(|link| link.path.clone()).collect();
+    Settled { nodes: subtract(nodes, &duplicates), files: kept_files, credited, dropped }
 }
 
 /// What settling the hard links leaves behind.
@@ -61,6 +62,8 @@ pub(super) struct Settled {
     /// directory the file is credited to. What the largest item of that
     /// directory is recomputed from.
     pub credited: Vec<LinkSighting>,
+    /// The names that were discounted: other lists of files drop them too.
+    pub dropped: Vec<PathBuf>,
 }
 
 /// Directories that hold some, but not all, of an inode's names.

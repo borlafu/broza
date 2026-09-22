@@ -5,6 +5,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::scan::walker::{DirIdentity, DirNode};
 
+/// Smallest file a record keeps by name: the detectors' floor
+/// ([`crate::scan::DETECTOR_FILES_MIN_BYTES`]), so a subtree served from the
+/// cache hides no candidate from them.
+pub const CACHE_FILE_FLOOR_BYTES: u64 = 1_000_000;
+const _: () = assert!(CACHE_FILE_FLOOR_BYTES == crate::scan::request::DETECTOR_FILES_MIN_BYTES);
+
+/// A directory directly inside a recorded one, by the key its own record has.
+///
+/// The name is the raw bytes of the entry: a path Broza did not choose need
+/// not be UTF-8, and the cache must give it back exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChildDir {
+    /// The entry name, as bytes.
+    pub name: Vec<u8>,
+    /// Inode number (`st_ino`) of the child.
+    pub inode: u64,
+    /// Modification time of the child in nanoseconds since the unix epoch;
+    /// `None` when the filesystem gave none, in which case the child has no
+    /// record and the parent can never be served.
+    pub mtime_ns: Option<i128>,
+}
+
+/// A file directly inside a recorded directory, at or above
+/// [`CACHE_FILE_FLOOR_BYTES`]: what the walk would have reported about it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileRecord {
+    /// The entry name, as bytes.
+    pub name: Vec<u8>,
+    /// Apparent size in bytes.
+    pub size_bytes: u64,
+    /// Allocated size in bytes.
+    pub allocated_bytes: u64,
+    /// Inode number (`st_ino`).
+    pub inode: u64,
+    /// Number of hard links.
+    pub link_count: u64,
+    /// Last modification time in nanoseconds since the unix epoch.
+    pub modified_ns: Option<i128>,
+    /// Last access time in nanoseconds since the unix epoch.
+    pub accessed_ns: Option<i128>,
+}
+
 /// Identity of a directory as the cache sees it.
 ///
 /// `mtime` is part of the key rather than a field to compare: a directory whose
@@ -61,6 +103,11 @@ pub struct DirRecord {
     pub has_truncation: bool,
     /// When the aggregate was measured; the TTL is counted from here.
     pub recorded_at: Timestamp,
+    /// The directories directly inside, so the whole subtree can be rebuilt
+    /// from the store without walking it.
+    pub child_dirs: Vec<ChildDir>,
+    /// The files directly inside at or above [`CACHE_FILE_FLOOR_BYTES`].
+    pub files: Vec<FileRecord>,
 }
 
 impl DirRecord {
@@ -91,6 +138,20 @@ impl DirRecord {
             && self.largest_item_bytes == other.largest_item_bytes
             && self.has_hard_links == other.has_hard_links
             && self.has_truncation == other.has_truncation
+            && self.child_dirs == other.child_dirs
+            && self.files == other.files
+    }
+
+    /// The same record, knowing which directories are directly inside.
+    #[must_use]
+    pub fn with_child_dirs(self, child_dirs: Vec<ChildDir>) -> Self {
+        Self { child_dirs, ..self }
+    }
+
+    /// The same record, knowing which big files are directly inside.
+    #[must_use]
+    pub fn with_files(self, files: Vec<FileRecord>) -> Self {
+        Self { files, ..self }
     }
 
     /// Record of a freshly walked directory.
@@ -116,6 +177,8 @@ impl DirRecord {
             has_hard_links: node.has_hard_links,
             has_truncation: node.has_truncation,
             recorded_at,
+            child_dirs: Vec::new(),
+            files: Vec::new(),
         })
     }
 }

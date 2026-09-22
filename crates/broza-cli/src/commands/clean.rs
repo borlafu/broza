@@ -75,6 +75,7 @@ pub fn run(context: &CleanContext<'_>) -> Result<Outcome, BrozaError> {
         now: context.generated_at,
         unused_after,
         categories: selection.categories.as_deref(),
+        trust_cache: false,
     })?;
     let root = detection::quarantine_root(context.config, home);
     let session_id = generate_session_id(context.ports.clock.as_ref())?;

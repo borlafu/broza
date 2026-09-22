@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use broza::model::Volume;
 use broza::ports::FileOps;
+use broza::scan::{FileReport, ScanRequest, scan_paths, scan_volume};
 use broza::scan::{MountEntry, MountTable};
-use broza::scan::{ScanRequest, scan_paths, scan_volume};
 use broza::testing::mac_mount_table;
 use broza::{BrozaError, ExitCode};
 use scan_world::*;
@@ -288,4 +288,67 @@ fn two_roots_on_one_volume_share_one_store_and_both_are_kept() {
     let store_after_each = handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(store_after_both, store_after_each, "the joint scan already held both roots' records");
+}
+
+/// The request `suggest` makes: every directory node and every file from 1 MB.
+fn for_detectors() -> ScanRequest {
+    let report = FileReport::for_detectors();
+    ScanRequest { file_report: Some(report), min_size: report.min_size, depth: 0, top: 0, ..request() }
+}
+
+const BIG: &str = "/System/Volumes/Data/Users/dana/Documents/big.bin";
+
+#[test]
+fn a_warm_walk_for_the_detectors_serves_whole_subtrees_with_their_files() {
+    let (ports, handles) = ports();
+    handles.fs.add_file(BIG, &[]);
+    handles.fs.set_size(BIG, 5 * A_MEGABYTE);
+
+    let cold = scan_data(&ports, &for_detectors());
+    let warm = scan_data(&ports, &for_detectors());
+
+    let paths =
+        |scan: &broza::scan::VolumeScan| scan.nodes.iter().map(|n| n.path.clone()).collect::<Vec<_>>();
+    assert_eq!(paths(&warm), paths(&cold), "every directory node is back");
+    assert_eq!(warm.files, cold.files, "every file above the floor is back");
+    assert!(warm.files.iter().any(|file| file.path == Path::new(BIG)), "{:?}", warm.files);
+    let documents = warm
+        .nodes
+        .iter()
+        .find(|node| node.path == Path::new("/System/Volumes/Data/Users/dana/Documents"))
+        .unwrap_or_else(|| panic!("Documents"));
+    assert!(documents.from_cache, "Documents was served, not walked");
+    assert!(!warm.root.from_cache, "the root is always walked");
+}
+
+#[test]
+fn a_served_subtree_keeps_the_sizes_it_was_recorded_with_until_the_cache_is_bypassed() {
+    let (ports, handles) = ports();
+    handles.fs.add_file(BIG, &[]);
+    handles.fs.set_size(BIG, 5 * A_MEGABYTE);
+    let cold = scan_data(&ports, &for_detectors());
+
+    // Grown in place: the directory's mtime is unchanged, so the cache answers.
+    handles.fs.set_size(BIG, 6 * A_MEGABYTE);
+    let warm = scan_data(&ports, &for_detectors());
+    let forced = scan_data(&ports, &ScanRequest { no_cache: true, ..for_detectors() });
+
+    let big = |scan: &broza::scan::VolumeScan| {
+        scan.files.iter().find(|file| file.path == Path::new(BIG)).map(|file| file.size_bytes)
+    };
+    assert_eq!(big(&warm), big(&cold), "the cached file entry is the recorded one");
+    assert_eq!(big(&forced), Some(6 * A_MEGABYTE), "--no-cache measures again");
+}
+
+#[test]
+fn a_store_written_by_an_older_broza_is_replaced_without_an_error() {
+    let (ports, handles) = ports();
+    handles.fs.add_dir(Path::new(DATA_STORE).parent().unwrap_or_else(|| panic!("parent")));
+    handles.fs.add_file(DATA_STORE, b"BRZC\x01whatever the old layout held");
+
+    let scan = scan_data(&ports, &request());
+
+    assert!(!scan.nodes.is_empty(), "the scan ran");
+    let bytes = handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(bytes[4], broza::scan::cache::STORE_VERSION, "rewritten in the current layout");
 }

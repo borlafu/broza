@@ -5,29 +5,33 @@
 
 use std::path::{Path, PathBuf};
 
-use jiff::Timestamp;
-
-use super::{DirIdentity, DirNode, WalkOptions, WalkResult, walk};
-use crate::scan::cache::{CacheKey, DirRecord};
+use super::{CachedSubtree, DirIdentity, DirNode, WalkOptions, WalkResult, walk};
 use crate::scan::progress::ProgressReporter;
 use crate::testing::{FakeFileOps, FixedClock};
 
 /// How many files a test keeps, when it asks for files at all.
 const KEEP_FILES: usize = 10;
 
-/// A cache record standing for a subtree of `size_bytes`.
-pub(super) fn record(identity: &DirIdentity, size_bytes: u64) -> DirRecord {
-    DirRecord {
-        key: CacheKey::of(identity).unwrap_or_else(|| panic!("no key for {identity:?}")),
-        size_bytes,
-        allocated_bytes: size_bytes * 2,
-        file_count: 3,
-        dir_count: 1,
-        dataless_count: 0,
-        largest_item_bytes: size_bytes,
-        has_hard_links: false,
-        has_truncation: false,
-        recorded_at: Timestamp::UNIX_EPOCH,
+/// A cached subtree of one directory standing for `size_bytes` of files.
+pub(super) fn subtree(identity: &DirIdentity, size_bytes: u64) -> CachedSubtree {
+    CachedSubtree {
+        nodes: vec![DirNode {
+            path: identity.path.clone(),
+            size_bytes,
+            allocated_bytes: size_bytes * 2,
+            file_count: 3,
+            dir_count: 1,
+            dataless_count: 0,
+            largest_item_bytes: size_bytes,
+            has_hard_links: false,
+            has_truncation: false,
+            device: identity.device,
+            inode: identity.inode,
+            mtime: identity.mtime,
+            children_truncated: false,
+            from_cache: true,
+        }],
+        files: Vec::new(),
     }
 }
 

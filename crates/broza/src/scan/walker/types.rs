@@ -9,7 +9,6 @@ use jiff::Timestamp;
 
 use crate::model::Diagnostic;
 use crate::ports::EntryMetadata;
-use crate::scan::cache::DirRecord;
 use crate::scan::progress::ProgressReporter;
 use crate::scan::walker::parts::Totals;
 
@@ -23,8 +22,21 @@ pub const UNREADABLE_ENTRY_CODE: &str = "unreadable_entry";
 /// changed here?" would answer "no" and report nothing at all.
 pub const MIN_CACHE_DEPTH: usize = 1;
 
-/// A cache lookup: answers with what was measured last time, or nothing.
-pub type SkipHook<'a> = &'a (dyn Fn(&DirIdentity) -> Option<DirRecord> + Sync);
+/// A cache lookup: answers with the whole subtree as it was measured last
+/// time, or nothing.
+pub type SkipHook<'a> = &'a (dyn Fn(&DirIdentity) -> Option<CachedSubtree> + Sync);
+
+/// A subtree the cache answered for: the directory asked about first, then
+/// every directory below it, and every file the cache keeps (those at or above
+/// the cache's own file floor). What a walk of the unchanged subtree would
+/// have reported, without the walk.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CachedSubtree {
+    /// The directories, the one asked about first.
+    pub nodes: Vec<DirNode>,
+    /// The files the cache keeps, anywhere in the subtree.
+    pub files: Vec<FileEntry>,
+}
 
 /// What the scan cache keys a directory by (`docs/implementation-plan.md` §3.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,11 +130,6 @@ impl DirNode {
         }
     }
 
-    /// The same node, marked as having come from the cache.
-    pub(super) fn served_from_cache(self) -> Self {
-        Self { from_cache: true, ..self }
-    }
-
     /// The same node, knowing one of its files has a name outside it.
     pub(super) fn hiding_a_name(self) -> Self {
         Self { has_hard_links: true, ..self }
@@ -196,6 +203,9 @@ pub struct WalkOptions<'a> {
     /// Collect files at least this big into [`WalkResult::files`]; `None`
     /// collects none.
     pub report_files_min_size: Option<u64>,
+    /// Collect every file at least this big into [`WalkResult::cache_files`],
+    /// unbounded, for the scan cache to keep; `None` collects none.
+    pub cache_files_min_size: Option<u64>,
     /// How many files to keep at most, so a walk of a million of them stays
     /// bounded in memory.
     pub report_files_top: usize,
@@ -212,6 +222,7 @@ impl Default for WalkOptions<'_> {
             skip_hook: None,
             cache_from_depth: MIN_CACHE_DEPTH,
             report_files_min_size: None,
+            cache_files_min_size: None,
             report_files_top: 0,
             progress: None,
         }
@@ -233,6 +244,7 @@ impl std::fmt::Debug for WalkOptions<'_> {
             .field("exclude", &self.exclude)
             .field("cache_from_depth", &self.cache_from_depth)
             .field("report_files_min_size", &self.report_files_min_size)
+            .field("cache_files_min_size", &self.cache_files_min_size)
             .field("report_files_top", &self.report_files_top)
             .finish_non_exhaustive()
     }
@@ -248,6 +260,8 @@ pub struct WalkResult {
     /// `true` when more files passed the threshold than `report_files_top`
     /// allowed to keep, so `files` is the biggest of them, not all of them.
     pub files_truncated: bool,
+    /// Every file above the cache's floor, for the scan cache, sorted by path.
+    pub cache_files: Vec<FileEntry>,
     /// Warnings about what could not be read, sorted by path.
     pub errors: Vec<Diagnostic>,
 }

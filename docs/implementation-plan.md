@@ -126,10 +126,14 @@ Manifest written via tmp + rename after each item. Restore per session in revers
 
 ### 3.4 Scan cache
 
-`~/.cache/broza/v1/<volume_uuid>/dirs.bin`, versioned magic header, records keyed by
-`(dev, inode, mtime_ns)` with aggregate bytes. Reuse a subtree when key matches and record age is
-below `cache-ttl`. Any decode error → exit 9 with a `--no-cache` hint. Known imprecision: directory
-mtime does not change on in-place file growth; bounded by TTL and documented.
+`~/.cache/broza/v1/<volume_uuid>/dirs.bin`, versioned magic header (layout version 2), records
+keyed by `(dev, inode, mtime_ns)` with the aggregate bytes, the directory's child directories
+(name, inode, mtime) and its files of at least 1 MB (name, sizes, inode, link count, times). A
+subtree is served whole, rebuilt record by record, when its key matches, every record below is
+fresh and usable, and the cache carries every file the request could list (ADR 0008). `suggest`
+reads the cache; `clean` walks cold. A store from an older layout is replaced; any other decode
+error → exit 9 with a `--no-cache` hint. Known imprecision: directory mtime does not change on
+in-place file growth; bounded by TTL and documented.
 
 ### 3.5 Output
 
@@ -227,9 +231,8 @@ M3 progress:
       (tool-managed trees excluded, idleness from the project's entries), JetBrains `LocalHistory`
       kept out of the green caches, an unreadable `~/Downloads` costs one finding not the category
       (`location_unreadable`), registry tests, walk nodes moved not cloned.
-- [ ] Warm `suggest` (post-0.2): cache records that know whether a subtree holds any name a detector
-      looks for, so the cache may answer for the rest. Today `suggest` walks cold by design
-      (`docs/cli-spec.md` §7).
+- [x] Warm `suggest`: cache records carry their child directories and their big files, so a served
+      subtree brings every node and every file the detectors read (ADR 0008; M4).
 - [x] `broza clean`: detection shared with `suggest` (`commands/detection.rs`), planner → guard →
       confirmation (`TtyPrompter`) → pre-execution expiry (`commands/clean_expiry.rs`) → mover →
       report; `--max-size`, `--exclude`, `--risk`/`--category` mandatory; inform-only findings inside
@@ -338,15 +341,11 @@ M4 progress:
       `token.items()` cannot mistake one for a writable path (review of 9680047, LOW).
 - [x] `quarantined_bytes` is allocated bytes like every other counter (`ApprovedItem::allocated_bytes`,
       `quarantine/attempt.rs::measured_size`); §4.4 pinned.
-- [ ] `suggest` under 15 s on the development machine. Measured 2026-09-22 on the developer's home
-      (release build): full `suggest` 40 s, of which the cold home walk is 36 s (kernel time in
-      `getattrlistbulk`; the warm `scan` of the same home takes 6.5 s) and every detector together
-      about 4 s. The walk is cold on every `suggest` because the detectors need every directory
-      node and every file of at least 1 MB, which the cache does not carry (`docs/cli-spec.md` §7).
-      Reaching 15 s needs a cache that serves the detectors: records that carry the names the
-      detectors look for and the files above the reporting floor, so a subtree can be served from
-      the cache without hiding a candidate. Cache format v2, an ADR, and the `scan`/`suggest`
-      consistency rule to re-state. Decision pending.
+- [x] `suggest` under 15 s on the development machine. Cache layout 2 (ADR 0008): records carry
+      their child directories and their files from 1 MB, so an unchanged subtree is served whole
+      with the nodes and files the detectors read; `suggest` sets its floor to the file report's
+      (1 MB) and trusts the cache, `clean` walks cold. Measured 2026-09-22 on the developer's home
+      (release build): cold 36 s, warm 7.6–8.7 s, findings identical; the store is 30 MB.
 - [ ] Review; release 0.3.
 
 ### M5 — Inform-only, apps, polish (release 1.0)

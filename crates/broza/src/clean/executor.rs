@@ -22,7 +22,7 @@ use crate::quarantine::codes::max_size_exceeded;
 use crate::quarantine::guarded::{io_code, recheck_identity};
 use crate::quarantine::mover::{movable_items, plan_indices};
 use crate::quarantine::{MoveRequest, exceeds_cap, measure_freed_bytes, quarantine_items};
-use crate::safety::guard::{Approved, ApprovedItem, Write, snapshot_deletions};
+use crate::safety::guard::{Approved, ApprovedItem, WritablePath, Write, snapshot_deletions};
 
 /// Warning code: `tmutil` refused a snapshot deletion for lack of privileges.
 pub const SNAPSHOT_NEEDS_ADMIN_CODE: &str = "snapshot_needs_admin";
@@ -126,7 +126,13 @@ fn purge_items(
         if !is_purge {
             continue;
         }
-        let (status, error, bytes) = purge_one(item, fs, running, max_size);
+        let target = item.writable().ok_or_else(|| {
+            BrozaError::Other(format!(
+                "purge: `{}` is a snapshot, not a path to remove",
+                item.path().display()
+            ))
+        })?;
+        let (status, error, bytes) = purge_one(target, fs, running, max_size);
         running = running.saturating_add(bytes);
         freed = freed.saturating_add(bytes);
         plan = plan.with_item_status(index, status, error)?;
@@ -142,7 +148,7 @@ fn purge_items(
 /// A removal that fails half-way is recorded as `failed` with `0` bytes, which
 /// under-reports what was freed rather than guessing.
 fn purge_one(
-    item: &ApprovedItem,
+    item: &WritablePath,
     fs: &dyn FileOps,
     running: u64,
     max_size: Option<u64>,

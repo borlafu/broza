@@ -1,0 +1,40 @@
+---
+source: crates/broza-cli/tests/scan_explain.rs
+expression: envelope
+---
+{
+  "broza_version": "[version]",
+  "command": "clean",
+  "data": {
+    "dry_run": false,
+    "items": [
+      {
+        "action": "quarantine",
+        "finding_id": "user-cache.library-caches",
+        "path": "/System/Volumes/Data/Users/dana/Library/Caches/com.example.app",
+        "size_bytes": 84100001792,
+        "status": "quarantined"
+      },
+      {
+        "action": "quarantine",
+        "finding_id": "user-cache.logs",
+        "path": "/System/Volumes/Data/Users/dana/Library/Logs/App",
+        "size_bytes": 1200001024,
+        "status": "quarantined"
+      }
+    ],
+    "planned_bytes": 85300002816,
+    "quarantine_path": "[quarantine]",
+    "quarantined_bytes": 85300002816,
+    "reclaimed_bytes": 0,
+    "session_id": "[session]"
+  },
+  "errors": [],
+  "generated_at": "[timestamp]",
+  "host": {
+    "arch": "arm64",
+    "macos_version": "26.1"
+  },
+  "schema_version": "1.1",
+  "warnings": []
+}

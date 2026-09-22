@@ -3,7 +3,7 @@
 //! The safety kernel verifies the size of *files* only: `lstat` on a directory
 //! reports the directory entry, not the subtree, and walking trees inside the
 //! guard would double the cost of every run
-//! ([`ApprovedItem::size_verified`](crate::safety::guard::ApprovedItem::size_verified)).
+//! ([`WritablePath::size_verified`](crate::safety::guard::WritablePath::size_verified)).
 //! A directory's planned size therefore comes from the scan and may be stale, so
 //! the store re-measures it here and abandons the item when `--max-size` would be
 //! exceeded (`docs/cli-spec.md` §3.4, check 6).

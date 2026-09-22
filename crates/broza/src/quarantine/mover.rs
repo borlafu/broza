@@ -250,13 +250,18 @@ fn move_one(
 ) -> Result<Progress, BrozaError> {
     let entry = entry_at(&progress.manifest, position)?;
     let destination = context.destination(position, entry.size_bytes)?;
-    let size_bytes = match precheck(item, &destination, progress.moved_bytes, fs) {
+    // Only a path can be moved; a snapshot item here is a plan the guard never
+    // built, so it stops the run rather than being recorded as a failed item.
+    let target = item.writable().ok_or_else(|| {
+        desynchronised(&format!("`{}` is a snapshot, not a path to move", item.path().display()))
+    })?;
+    let size_bytes = match precheck(target, &destination, progress.moved_bytes, fs) {
         Ok(size_bytes) => size_bytes,
         Err(refused) => return record(progress, position, &refused, context, fs),
     };
-    let stored = destination.stored_path(item.path());
+    let stored = destination.stored_path(target.path());
     let announced = announce(progress, position, &in_flight(&entry, &stored, size_bytes), context, fs)?;
-    let attempt = move_into(item, &destination, size_bytes, fs);
+    let attempt = move_into(target, &destination, size_bytes, fs);
     record(announced, position, &attempt, context, fs)
 }
 

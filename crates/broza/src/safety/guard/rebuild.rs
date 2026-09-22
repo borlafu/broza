@@ -69,8 +69,11 @@ fn rebuilt_item(item: &CleanItem, kind: &OutcomeKind) -> CleanItem {
             // A directory's size was aggregated by the scanner; `lstat` only sees
             // the directory entry, so the scanned figure is the useful one. A
             // file takes the allocated size the check saw: the unit of every
-            // byte counter (`docs/cli-spec.md` §4.4).
-            size_bytes: if approved.is_dir() { item.size_bytes } else { approved.allocated_bytes() },
+            // byte counter (`docs/cli-spec.md` §4.4). A snapshot has no size.
+            size_bytes: match approved.writable() {
+                Some(target) if !target.is_dir() => target.allocated_bytes(),
+                _ => item.size_bytes,
+            },
             ..item.clone()
         },
         OutcomeKind::Missing => CleanItem {

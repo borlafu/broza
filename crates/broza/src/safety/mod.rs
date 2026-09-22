@@ -29,7 +29,7 @@
 //! Directory sizes are the scanner's aggregate, not something the kernel
 //! measured: `lstat` on a directory reports the directory entry, and walking
 //! every subtree again would double the cost of a run.
-//! [`ApprovedItem::size_verified`](guard::ApprovedItem::size_verified) marks
+//! [`WritablePath::size_verified`](guard::WritablePath::size_verified) marks
 //! which figure is which, and the executor re-measures a directory immediately
 //! before removing it (`docs/cli-spec.md` §3.4, check 6).
 //!

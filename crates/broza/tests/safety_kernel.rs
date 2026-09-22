@@ -187,7 +187,7 @@ fn the_token_carries_the_checked_path_and_its_identity() {
     assert_eq!(approved.plan().items()[0].path, PathBuf::from(CACHE));
     assert_eq!(approved.items()[0].path(), Path::new(CACHE));
     assert_eq!(approved.items()[0].device(), 2, "the executor re-checks (device, inode)");
-    assert!(approved.items()[0].inode() > 0);
+    assert!(approved.items()[0].writable().is_some_and(|target| target.inode() > 0));
     assert!(!approved.plan().is_dry_run(), "the approved plan is the one about to be applied");
 }
 

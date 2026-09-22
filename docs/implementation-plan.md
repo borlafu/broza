@@ -336,9 +336,10 @@ M4 progress:
       files of at least 1 MB through `ScanRequest.file_report`, and the detector keeps the 1 GB ones).
 - [x] 8. `duplicates` detector (`detect/detectors/duplicates.rs`; `FileOps::read_range` and
       `FileOps::hash_file`, BLAKE3 streamed in the adapter).
-- [ ] `ApprovedItem` carries a mount point with a synthetic identity for snapshot items; make the
-      distinction typed (`enum Target { Path(..), Snapshot {..} }`) so a future consumer of
-      `token.items()` cannot mistake one for a writable path (review of 9680047, LOW).
+- [x] `ApprovedItem` holds a typed `Target`: `Path(WritablePath)` with the identity and sizes to
+      re-check, or `Snapshot { mount_point, device, snapshot }` with none; every write goes through
+      `ApprovedItem::writable()`, so a consumer of `token.items()` cannot mistake a snapshot for a
+      path (review of 9680047, LOW). The applied `clean` envelope has a JSON snapshot test.
 - [x] `quarantined_bytes` is allocated bytes like every other counter (`ApprovedItem::allocated_bytes`,
       `quarantine/attempt.rs::measured_size`); §4.4 pinned.
 - [x] `suggest` under 15 s on the development machine. Cache layout 2 (ADR 0008): records carry

@@ -251,6 +251,20 @@ fn clean_json_dry_run_matches_its_snapshot() {
     });
 }
 
+/// The applied envelope in full: every byte counter in one object, so a change
+/// of unit in any of them shows up here.
+#[test]
+fn clean_apply_json_matches_its_snapshot() {
+    let envelope = json_of(&["clean", "--category", "user-cache", "--apply", "--yes", "--json"]);
+
+    insta::assert_json_snapshot!(envelope, {
+        ".generated_at" => "[timestamp]",
+        ".broza_version" => "[version]",
+        ".data.session_id" => "[session]",
+        ".data.quarantine_path" => "[quarantine]",
+    });
+}
+
 #[test]
 fn clean_apply_with_yes_quarantines_the_recorded_caches_in_the_recording() {
     let envelope = json_of(&["clean", "--category", "user-cache", "--apply", "--yes", "--json"]);

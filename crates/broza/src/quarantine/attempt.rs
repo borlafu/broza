@@ -21,7 +21,7 @@ use crate::quarantine::guarded::recheck_identity;
 use crate::quarantine::layout;
 use crate::quarantine::measure::{exceeds_cap, measure_dir_bytes};
 use crate::quarantine::report::rename_warning;
-use crate::safety::guard::ApprovedItem;
+use crate::safety::guard::WritablePath;
 
 /// What one item turned into.
 pub enum Attempt {
@@ -72,7 +72,7 @@ impl Destination<'_> {
 /// changed, it is on another device, it cannot be measured, or moving it would
 /// pass `--max-size`.
 pub fn precheck(
-    item: &ApprovedItem,
+    item: &WritablePath,
     destination: &Destination<'_>,
     moved_bytes: u64,
     fs: &dyn FileOps,
@@ -95,7 +95,7 @@ pub fn precheck(
 /// path that is somehow taken means another run is using this session, and
 /// overwriting it would destroy a quarantined item.
 pub fn move_into(
-    item: &ApprovedItem,
+    item: &WritablePath,
     destination: &Destination<'_>,
     size_bytes: u64,
     fs: &dyn FileOps,
@@ -118,7 +118,7 @@ pub fn move_into(
 /// re-walking a large tree costs real time, so it is only re-measured when
 /// `--max-size` makes the difference matter (`docs/cli-spec.md` §3.4, check 6).
 fn measured_size(
-    item: &ApprovedItem,
+    item: &WritablePath,
     current: &EntryMetadata,
     destination: &Destination<'_>,
     fs: &dyn FileOps,

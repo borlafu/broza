@@ -15,7 +15,7 @@ use broza::clean::{PlanOutcome, Selection, plan_dry_run};
 use broza::model::{Action, Category, CleanItem, CleanPlan, Finding, ItemStatus};
 use broza::ports::Answer;
 use broza::safety::Exclusions;
-use broza::safety::guard::{Verdict, WriteRequest, approve, approve_quarantine_write};
+use broza::safety::guard::{Verdict, WritablePath, WriteRequest, approve, approve_quarantine_write};
 use broza::safety::rejection::GuardRejection;
 use broza::testing::{FakeFileOps, FakePrompter, mac_mount_table};
 
@@ -156,14 +156,16 @@ fn a_directory_item_is_marked_as_not_measured() {
         Ok(Verdict::NeedsConfirmation(pending)) => pending,
         other => panic!("expected a pending approval, got {other:?}"),
     };
-    assert!(!pending.items()[0].size_verified(), "a directory is never measured here");
+    let target = pending.items()[0].writable().unwrap_or_else(|| panic!("a path item"));
+    assert!(!target.size_verified(), "a directory is never measured here");
     assert_eq!(pending.plan().items()[0].size_bytes, 4096, "the scanned size is kept");
 
     let file = match approve_paths(&[(CACHE, 10)], &applying()) {
         Ok(Verdict::NeedsConfirmation(pending)) => pending,
         other => panic!("expected a pending approval, got {other:?}"),
     };
-    assert!(file.items()[0].size_verified(), "a file is measured by the guard");
+    let measured = file.items()[0].writable().unwrap_or_else(|| panic!("a path item"));
+    assert!(measured.size_verified(), "a file is measured by the guard");
 }
 
 /// Excluding a directory must protect what is inside it, whichever spelling the
@@ -253,7 +255,7 @@ fn an_ordinary_cache_cleanup_is_still_approved() {
     };
     assert_eq!(approved.items().len(), 1);
     assert_eq!(approved.items()[0].path(), Path::new(CACHE));
-    assert!(approved.items()[0].size_verified());
+    assert!(approved.items()[0].writable().is_some_and(WritablePath::size_verified));
 }
 
 /// A plan built behind the planner's back, to probe one guard check directly.

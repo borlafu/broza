@@ -197,7 +197,10 @@ fn a_quarantine_write_stays_inside_the_store() {
         approve_quarantine_write(std::slice::from_ref(&inside), Path::new(STORE), &mounts(), &fs())
             .unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(approved.items()[0].path(), inside);
-    assert!(approved.items()[0].inode() > 0, "the executor re-checks the identity");
+    assert!(
+        approved.items()[0].writable().is_some_and(|target| target.inode() > 0),
+        "the executor re-checks the identity"
+    );
 
     let outside = approve_quarantine_write(&[PathBuf::from(CACHE)], Path::new(STORE), &mounts(), &fs());
     assert_eq!(

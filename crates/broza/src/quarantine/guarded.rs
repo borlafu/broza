@@ -13,7 +13,7 @@ use crate::BrozaError;
 use crate::model::ItemErrorCode;
 use crate::ports::{EntryMetadata, FileOps};
 use crate::quarantine::codes::changed_since_check;
-use crate::safety::guard::ApprovedItem;
+use crate::safety::guard::{ApprovedItem, WritablePath};
 
 /// Re-`lstat` an approved item and compare its identity with the token's.
 ///
@@ -26,7 +26,7 @@ use crate::safety::guard::ApprovedItem;
 /// # Errors
 ///
 /// The item error code to record against the item.
-pub fn recheck_identity(item: &ApprovedItem, fs: &dyn FileOps) -> Result<EntryMetadata, ItemErrorCode> {
+pub fn recheck_identity(item: &WritablePath, fs: &dyn FileOps) -> Result<EntryMetadata, ItemErrorCode> {
     let current = fs.metadata(item.path()).map_err(|error| io_code(&error))?;
     if current.device != item.device() || current.inode != item.inode() {
         return Err(changed_since_check());
@@ -52,12 +52,13 @@ pub enum Recheck {
 /// exactly what the token exists to prevent, so it stops the operation instead
 /// of being recorded as a skipped item.
 pub fn recheck(items: &[ApprovedItem], path: &Path, fs: &dyn FileOps) -> Result<Recheck, BrozaError> {
-    let approved = items.iter().find(|item| item.path() == path).ok_or_else(|| {
-        BrozaError::Other(format!(
-            "quarantine write: `{}` is not one of the paths the guard approved",
-            path.display()
-        ))
-    })?;
+    let approved =
+        items.iter().find(|item| item.path() == path).and_then(ApprovedItem::writable).ok_or_else(|| {
+            BrozaError::Other(format!(
+                "quarantine write: `{}` is not one of the paths the guard approved",
+                path.display()
+            ))
+        })?;
     let current = match fs.metadata(path) {
         Ok(current) => current,
         Err(error) => return Ok(Recheck::Refused(io_code(&error))),

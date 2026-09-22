@@ -30,7 +30,8 @@ pub use checks::approve;
 pub use narrow::{approve_quarantine_write, snapshot_deletions};
 pub use restore::{RestoreRequest, approve_restore_targets};
 pub use token::{
-    Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, RestoreWrite, SnapshotDelete, Write, WriteKind,
+    Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, RestoreWrite, SnapshotDelete, Target,
+    WritablePath, Write, WriteKind,
 };
 
 /// Shared with `clean::planner` so the plan and the guard agree on what
@@ -329,7 +330,7 @@ mod tests {
         let token: Approved<Write> = issue::<Write>(payload());
         assert_eq!(format!("{token:?}"), "Approved<clean plan execution>");
         assert!(token.plan().is_dry_run());
-        assert_eq!(token.items()[0].inode(), 7);
+        assert_eq!(token.items()[0].writable().map(super::token::WritablePath::inode), Some(7));
         assert_eq!(token.into_plan().items().len(), 0);
 
         let entries: Approved<QuarantineWrite> =

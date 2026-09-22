@@ -39,7 +39,8 @@ impl seal::Sealed for QuarantineWrite {}
 impl seal::Sealed for RestoreWrite {}
 impl seal::Sealed for SnapshotDelete {}
 
-/// One path the guard checked, with the identity it had at that moment.
+/// One item the guard approved: a path with the identity it had at that
+/// moment, or a snapshot on a volume.
 ///
 /// # Time of check, time of use
 ///
@@ -51,8 +52,39 @@ impl seal::Sealed for SnapshotDelete {}
 /// longer matches**. That turns a silent "deleted the wrong thing" into a skipped
 /// item. The re-check is the executor's obligation (M3); the guard only supplies
 /// the evidence.
+///
+/// # Two kinds of item
+///
+/// A snapshot item names no path the executor may write: its `path` is the
+/// volume's mount point, kept so the plan item can be found, and the provider
+/// deletes that UUID on that volume and nothing else. The distinction is a
+/// type: only [`ApprovedItem::writable`] yields a [`WritablePath`], and only a
+/// `WritablePath` carries an inode to re-check or a size to report, so a
+/// consumer of `items()` cannot mistake a snapshot for something to move.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovedItem {
+    target: Target,
+}
+
+/// What an approved item points at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// A path the executor may move or remove, with its checked identity.
+    Path(WritablePath),
+    /// A snapshot the provider may delete; no path is written.
+    Snapshot {
+        /// Mount point of the snapshot's volume: the plan item's path.
+        mount_point: PathBuf,
+        /// `st_dev` of that volume.
+        device: u64,
+        /// The snapshot, by name, UUID and volume.
+        snapshot: SnapshotRef,
+    },
+}
+
+/// A path the guard checked, with the identity `lstat` gave it at that moment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WritablePath {
     /// The checked path: absolute, free of `.`/`..`, no symlinked component.
     path: PathBuf,
     /// `st_dev` observed during the check.
@@ -65,44 +97,9 @@ pub struct ApprovedItem {
     allocated_bytes: u64,
     /// `true` when the leaf is a directory.
     is_dir: bool,
-    /// The snapshot, for a `tmutil_delete` item; its `path` is the mount point.
-    snapshot: Option<SnapshotRef>,
 }
 
-impl ApprovedItem {
-    /// Records the identity a path had when the guard checked it.
-    pub(super) fn from_checked(checked: &CanonicalPath) -> Self {
-        Self {
-            path: checked.path.clone(),
-            device: checked.metadata.device,
-            inode: checked.metadata.inode,
-            size_bytes: checked.metadata.size_bytes,
-            allocated_bytes: checked.metadata.allocated_bytes,
-            is_dir: checked.metadata.is_dir,
-            snapshot: None,
-        }
-    }
-
-    /// Records a snapshot deletion the guard approved: the volume's mount point
-    /// and device, and the snapshot itself. There is no inode to re-check; the
-    /// provider deletes that UUID on that volume and nothing else.
-    pub(super) fn for_snapshot(mount_point: &Path, device: u64, snapshot: &SnapshotRef) -> Self {
-        Self {
-            path: mount_point.to_path_buf(),
-            device,
-            inode: 0,
-            size_bytes: 0,
-            allocated_bytes: 0,
-            is_dir: true,
-            snapshot: Some(snapshot.clone()),
-        }
-    }
-
-    /// The snapshot this item deletes, for `tmutil_delete` items.
-    pub fn snapshot(&self) -> Option<&SnapshotRef> {
-        self.snapshot.as_ref()
-    }
-
+impl WritablePath {
     /// The checked path.
     pub fn path(&self) -> &Path {
         &self.path
@@ -144,6 +141,75 @@ impl ApprovedItem {
     /// when the cap would be exceeded (`docs/cli-spec.md` §3.4).
     pub fn size_verified(&self) -> bool {
         !self.is_dir
+    }
+}
+
+impl ApprovedItem {
+    /// Records the identity a path had when the guard checked it.
+    pub(super) fn from_checked(checked: &CanonicalPath) -> Self {
+        Self {
+            target: Target::Path(WritablePath {
+                path: checked.path.clone(),
+                device: checked.metadata.device,
+                inode: checked.metadata.inode,
+                size_bytes: checked.metadata.size_bytes,
+                allocated_bytes: checked.metadata.allocated_bytes,
+                is_dir: checked.metadata.is_dir,
+            }),
+        }
+    }
+
+    /// Records a snapshot deletion the guard approved: the volume's mount point
+    /// and device, and the snapshot itself. There is no inode to re-check; the
+    /// provider deletes that UUID on that volume and nothing else.
+    pub(super) fn for_snapshot(mount_point: &Path, device: u64, snapshot: &SnapshotRef) -> Self {
+        Self {
+            target: Target::Snapshot {
+                mount_point: mount_point.to_path_buf(),
+                device,
+                snapshot: snapshot.clone(),
+            },
+        }
+    }
+
+    /// What this item points at.
+    pub fn target(&self) -> &Target {
+        &self.target
+    }
+
+    /// The path the executor may write, with its identity; `None` for a
+    /// snapshot, which has no such path.
+    pub fn writable(&self) -> Option<&WritablePath> {
+        match &self.target {
+            Target::Path(path) => Some(path),
+            Target::Snapshot { .. } => None,
+        }
+    }
+
+    /// The snapshot this item deletes, for `tmutil_delete` items.
+    pub fn snapshot(&self) -> Option<&SnapshotRef> {
+        match &self.target {
+            Target::Snapshot { snapshot, .. } => Some(snapshot),
+            Target::Path(_) => None,
+        }
+    }
+
+    /// The plan item's path: the checked path, or a snapshot's mount point.
+    /// For matching plan items and naming the item in messages; a write goes
+    /// through [`Self::writable`].
+    pub fn path(&self) -> &Path {
+        match &self.target {
+            Target::Path(path) => path.path(),
+            Target::Snapshot { mount_point, .. } => mount_point,
+        }
+    }
+
+    /// `st_dev` of the path, or of the snapshot's volume.
+    pub fn device(&self) -> u64 {
+        match &self.target {
+            Target::Path(path) => path.device(),
+            Target::Snapshot { device, .. } => *device,
+        }
     }
 }
 

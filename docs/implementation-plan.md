@@ -419,7 +419,10 @@ M5 progress:
       a warning for a symlinked `scan <PATH>` root (today reported as the link's own size);
       leftovers under `~/Library/Caches` are credited to `user-cache` when both run, so
       `clean --category unused-apps` plans items `suggest` showed under `user-cache`.
-- [ ] Review; release 1.0.
+- [ ] Post-1.0 test debt: `assert_cmd` coverage for exit codes `4`, `5`, `6`, `8`, `9` at the CLI
+      level (AGENTS.md §7 asks for every code; today `0`–`3` and `7` are covered end to end).
+- [x] Reviewed (two Opus passes on the M5 commits, findings fixed) and released: version 1.0.0,
+      `CHANGELOG.md`, spec 1.3; tagged `v1.0.0` locally, publish when a remote exists.
 
 ## 5. Testing strategy
 

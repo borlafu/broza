@@ -182,7 +182,7 @@ Every command supports `--json`. Output is a stable envelope:
 ```json
 {
   "schema_version": "1.1",
-  "broza_version": "0.3.0",
+  "broza_version": "1.0.0",
   "generated_at": "2026-09-21T10:36:08Z",
   "command": "suggest",
   "host": { "macos_version": "26.1", "arch": "arm64" },

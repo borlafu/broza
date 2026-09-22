@@ -133,6 +133,27 @@ expression: envelope
         "reclaimable_bytes": 3300003840,
         "risk": "amber",
         "title": "Trash"
+      },
+      {
+        "action": "tmutil_delete",
+        "actionable": true,
+        "category": "snapshots",
+        "description": "APFS copy-on-write snapshots kept locally by Time Machine.",
+        "id": "snapshots.timemachine-local",
+        "item_count": 1,
+        "reasoning": "size not reported by macOS",
+        "reclaimable_bytes": 0,
+        "risk": "amber",
+        "snapshots": [
+          {
+            "mount_point": "/System/Volumes/Data",
+            "name": "com.apple.TimeMachine.2026-09-20-101530.local",
+            "purgeable": true,
+            "uuid": "00000021-1111-4222-8333-000000000021",
+            "volume": "disk3s5"
+          }
+        ],
+        "title": "Time Machine local snapshots"
       }
     ],
     "inform_only_bytes": 38600003584,

@@ -255,7 +255,7 @@ broza suggest [OPTIONS]
 |---|---|---|---|
 | `--category <c>` | string[] | all | Restrict to specific categories. Repeatable or comma-separated. |
 | `--risk <level>` | enum | `all` | `green`, `amber`, `red`, `all`. Filter by risk. |
-| `--min-size <s>` | size | `50MB` | Omit smaller **actionable** findings. Inform-only findings are kept whatever their size: they are facts the user asked for, not reclaimable space, and hiding them by size would make them appear and disappear between runs. |
+| `--min-size <s>` | size | `50MB` | Omit smaller **actionable** findings. Inform-only findings are kept whatever their size: they are facts the user asked for, not reclaimable space, and hiding them by size would make them appear and disappear between runs. So are findings whose size macOS does not report (`snapshots`): their `0` is unknown, not small. |
 | `--unused-after <p>` | duration | `1y` | "Unused app" threshold. Accepts `6m`, `1y`, `2y`. |
 | `--explain` | bool | `false` | Include the reasoning behind each detection. |
 

@@ -34,11 +34,15 @@ impl RiskFilter {
 /// Inform-only findings are kept whatever their size: they are not reclaimable
 /// space but a fact the user asked to know, and hiding them by size would make
 /// the cloud-synced explanation appear and disappear from one run to the next.
+/// So are findings whose size macOS does not report (the snapshots): their `0`
+/// means "unknown", and a size filter has nothing to compare it with.
 pub fn apply(findings: Vec<Finding>, risk: RiskFilter, min_size: u64) -> Vec<Finding> {
     findings
         .into_iter()
         .filter(|finding| risk.keeps(finding.risk()))
-        .filter(|finding| !finding.is_actionable() || finding.reclaimable_bytes() >= min_size)
+        .filter(|finding| {
+            !finding.is_actionable() || finding.size_is_unknown() || finding.reclaimable_bytes() >= min_size
+        })
         .collect()
 }
 
@@ -81,6 +85,23 @@ mod tests {
         assert_eq!(green.iter().map(|f| f.id().to_string()).collect::<Vec<_>>(), vec!["user-cache.a"]);
         assert_eq!(red.iter().map(|f| f.id().to_string()).collect::<Vec<_>>(), vec!["cloud-synced.c"]);
         assert_eq!(everything.len(), 3);
+    }
+
+    #[test]
+    fn a_finding_whose_size_macos_does_not_report_survives_the_size_filter() {
+        let snapshots = Finding::builder(
+            "snapshots.timemachine-local".parse().unwrap_or_else(|e| panic!("{e}")),
+            Category::Snapshots,
+            "t",
+        )
+        .item_count(4)
+        .reasoning("size not reported by macOS")
+        .build()
+        .unwrap_or_else(|e| panic!("{e}"));
+
+        let kept = apply(vec![snapshots], RiskFilter::All, 50_000_000);
+
+        assert_eq!(kept.len(), 1);
     }
 
     #[test]

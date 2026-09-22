@@ -115,8 +115,7 @@ fn render_category(text: &mut String, category: Category, findings: &[&Finding],
 /// `Title (size)`, or `N Title (reason)` for a finding whose size macOS does
 /// not report (the snapshots: `4 Time Machine local snapshots (size not reported by macOS)`).
 fn summary_of(finding: &Finding) -> String {
-    let size_is_unknown = finding.category() == Category::Snapshots;
-    match (size_is_unknown, finding.item_count(), finding.reasoning()) {
+    match (finding.size_is_unknown(), finding.item_count(), finding.reasoning()) {
         (true, Some(count), Some(reason)) => format!("{count} {} ({reason})", finding.title()),
         _ => format!("{} ({})", finding.title(), format_bytes(finding.reclaimable_bytes())),
     }

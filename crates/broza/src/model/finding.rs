@@ -249,6 +249,14 @@ impl Finding {
         self.instructions.as_ref()
     }
 
+    /// `true` when macOS reports no size for what this finding names, so its
+    /// `reclaimable_bytes` of `0` is "unknown", not "nothing": the snapshots
+    /// (`docs/cli-spec.md` §3.3). Such a finding is never dropped by a size
+    /// filter and is summarised by its count.
+    pub fn size_is_unknown(&self) -> bool {
+        self.category == Category::Snapshots
+    }
+
     /// The same finding over `paths`, with `reclaimable_bytes` and `item_count`
     /// recomputed from them.
     ///

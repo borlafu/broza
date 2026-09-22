@@ -4,6 +4,27 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
+## [Unreleased]
+
+### Added
+
+- The amber detectors: `trash` (`~/.Trash` and `.Trashes` on other volumes; `purge` action),
+  `snapshots` (purgeable Time Machine local snapshots, deleted by UUID on their own volume through
+  `diskutil apfs deleteSnapshot`; size reported as unknown, never summed), `old-backups` (iOS
+  device backups older than `--unused-after`), `ios-simulators` (devices with a gone runtime or not
+  booted for `--unused-after`), `large-old-files` (files of 1 GB or more neither opened nor changed
+  for `--unused-after`, Spotlight's last-used date through `mdls`), `duplicates` (identical files of
+  1 MB to 1 GB in the user's own trees, confirmed by BLAKE3; the oldest copy kept).
+- `clean --apply --purge`: irreversible deletion after typing `PURGE`; `--max-size` covers purges.
+- Warnings `snapshot_needs_admin`, `spotlight_unavailable`, `file_report_truncated`.
+
+### Changed
+
+- `--min-size` keeps findings whose size macOS does not report (snapshots).
+- `quarantined_bytes` is allocated bytes, like `reclaimed_bytes` and `reclaimable_bytes`.
+- Snapshot deletion uses `diskutil apfs deleteSnapshot <volume> -uuid <uuid>` instead of
+  `tmutil deletelocalsnapshots <date>`, which is machine-wide (ADR 0007).
+
 ## [0.2.0] — 2026-09-21
 
 First release that writes to the disk, always through the quarantine store.

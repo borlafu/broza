@@ -54,7 +54,7 @@ fn every_item_is_renamed_into_its_own_numbered_directory() {
     assert!(fs.exists(&dir.join("items/0001/app.cache")));
     assert!(!fs.exists(Path::new(CACHE)), "the source is gone, not copied");
     assert_eq!(outcome.session.state, SessionState::Complete);
-    assert_eq!(outcome.session.total_bytes, 30);
+    assert_eq!(outcome.session.total_bytes, 2 * 4096, "allocated: one block per file");
     assert_eq!(outcome.session.item_count, 2);
 }
 
@@ -64,7 +64,7 @@ fn the_plan_counts_quarantined_bytes_and_never_reclaims_them() {
 
     let outcome = moved(&fs, &[(CACHE, 10)], None);
 
-    assert_eq!(outcome.plan.quarantined_bytes(), 10);
+    assert_eq!(outcome.plan.quarantined_bytes(), 4096, "allocated: one block of the fake filesystem");
     assert_eq!(outcome.plan.reclaimed_bytes(), 0, "a quarantined item still occupies the disk");
     assert_eq!(outcome.plan.quarantine_path(), Some(&session_dir()));
     assert_eq!(outcome.plan.items()[0].status, ItemStatus::Quarantined);
@@ -92,7 +92,7 @@ fn an_item_on_another_volume_is_skipped_and_left_alone() {
     assert_eq!(skipped.error, Some(ItemErrorCode::CrossVolume));
     assert!(skipped.stored_path.is_none());
     assert!(fs.exists(Path::new(EXTERNAL)), "a cross-volume item is never touched");
-    assert_eq!(outcome.plan.quarantined_bytes(), 10);
+    assert_eq!(outcome.plan.quarantined_bytes(), 4096, "allocated: one block of the fake filesystem");
 }
 
 #[test]
@@ -159,13 +159,14 @@ fn a_directory_is_not_walked_when_no_cap_depends_on_its_size() {
 fn an_item_that_would_pass_the_cap_is_skipped_and_the_smaller_ones_still_move() {
     let fs = store_fs().with_sized_file(CACHE, 10).with_sized_file(format!("{DERIVED}/a"), 1_000);
 
-    let outcome = moved(&fs, &[(CACHE, 10), (DERIVED, 10)], Some(100));
+    // One 4096-byte block fits under the cap; a second would not.
+    let outcome = moved(&fs, &[(CACHE, 10), (DERIVED, 10)], Some(5000));
 
     assert_eq!(entry_of(&outcome, CACHE).status, ItemStatus::Quarantined);
     assert_eq!(entry_of(&outcome, DERIVED).status, ItemStatus::Skipped);
     assert_eq!(entry_of(&outcome, DERIVED).error, Some(max_size_exceeded()));
     assert!(fs.exists(Path::new(DERIVED)));
-    assert_eq!(outcome.plan.quarantined_bytes(), 10);
+    assert_eq!(outcome.plan.quarantined_bytes(), 4096, "allocated: one block of the fake filesystem");
 }
 
 #[test]

@@ -129,9 +129,9 @@ fn a_mixed_plan_quarantines_the_cache_and_purges_the_trash() {
     let session = executed.session.unwrap_or_else(|| panic!("a session for the cache"));
     assert_eq!(session.entries.len(), 1, "only the quarantine item is in the manifest");
     assert_eq!(session.entries[0].original_path, Path::new(CACHE));
-    // The mover reports the guard-verified apparent size of a file (3000 here);
-    // the purger reports allocated blocks. Both are what the code measured.
-    assert_eq!(executed.plan.quarantined_bytes(), 3000);
+    // Both counters are allocated bytes: the 3000-byte cache file and the
+    // trash item each take one block of the fake filesystem.
+    assert_eq!(executed.plan.quarantined_bytes(), 4096);
     assert_eq!(executed.plan.reclaimed_bytes(), 4096);
     assert!(executed.plan.quarantine_path().is_some());
     assert!(!fs.exists(Path::new(TRASH)) && !fs.exists(Path::new(CACHE)));

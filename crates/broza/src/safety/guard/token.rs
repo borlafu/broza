@@ -61,6 +61,8 @@ pub struct ApprovedItem {
     inode: u64,
     /// `st_size` observed during the check.
     size_bytes: u64,
+    /// Allocated bytes observed during the check: what the disk gives back.
+    allocated_bytes: u64,
     /// `true` when the leaf is a directory.
     is_dir: bool,
     /// The snapshot, for a `tmutil_delete` item; its `path` is the mount point.
@@ -75,6 +77,7 @@ impl ApprovedItem {
             device: checked.metadata.device,
             inode: checked.metadata.inode,
             size_bytes: checked.metadata.size_bytes,
+            allocated_bytes: checked.metadata.allocated_bytes,
             is_dir: checked.metadata.is_dir,
             snapshot: None,
         }
@@ -89,6 +92,7 @@ impl ApprovedItem {
             device,
             inode: 0,
             size_bytes: 0,
+            allocated_bytes: 0,
             is_dir: true,
             snapshot: Some(snapshot.clone()),
         }
@@ -117,6 +121,12 @@ impl ApprovedItem {
     /// Size of the leaf itself, as `lstat` reported it during the check.
     pub fn size_bytes(&self) -> u64 {
         self.size_bytes
+    }
+
+    /// Allocated bytes of the leaf at check time: the figure every byte
+    /// counter Broza prints is in (`docs/cli-spec.md` §4.4).
+    pub fn allocated_bytes(&self) -> u64 {
+        self.allocated_bytes
     }
 
     /// `true` when the leaf is a directory, whose size the scanner aggregated.

@@ -55,7 +55,7 @@ fn a_cleanup_quarantines_what_it_can_and_explains_the_rest() {
     assert_eq!(status_of(&outcome, TREE).0, ItemStatus::Failed);
     assert_eq!(status_of(&outcome, EXTERNAL), (ItemStatus::Skipped, Some(ItemErrorCode::CrossVolume)));
     assert_eq!(outcome.session.state, SessionState::Complete);
-    assert_eq!(outcome.plan.quarantined_bytes(), 12, "only the cache file moved");
+    assert_eq!(outcome.plan.quarantined_bytes(), 4096, "only the cache file moved: one allocated block");
     assert_eq!(outcome.plan.reclaimed_bytes(), 0, "quarantining frees nothing");
     assert!(fs.exists(Path::new(EXTERNAL)) && fs.exists(Path::new(TREE)));
     assert!(!fs.exists(Path::new(CACHE)));
@@ -71,7 +71,7 @@ fn a_cleanup_is_listed_as_one_session_holding_the_bytes_it_moved() {
         list::list_sessions(Path::new(ROOT), &fs, &at, TTL).unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(listed.data.sessions.len(), 1);
-    assert_eq!(listed.data.total_bytes, 12);
+    assert_eq!(listed.data.total_bytes, 4096, "one allocated block");
     assert_eq!(listed.data.expired_bytes, 0);
     assert_eq!(listed.data.sessions[0].state, SessionState::Complete);
     assert!(listed.warnings.is_empty());
@@ -97,7 +97,8 @@ fn restoring_a_session_rebuilds_the_tree_byte_for_byte() {
     .unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(reported.data.sessions[0].status, ItemStatus::Restored);
-    assert_eq!(reported.data.restored_bytes, 12 + 11);
+    // The file counts its allocated block; the directory keeps the planned aggregate.
+    assert_eq!(reported.data.restored_bytes, 4096 + 11);
     assert!(!reported.is_partial());
     assert_eq!(snapshot(&fs, CACHES), before, "every file is back, with its bytes");
     assert!(!fs.exists(&layout::session_dir(Path::new(ROOT), &outcome.session.id)));
@@ -119,7 +120,7 @@ fn a_session_is_reclaimed_once_its_retention_period_is_over() {
     let reported =
         expiry::expire(&token, &due, Path::new(ROOT), &fs).unwrap_or_else(|error| panic!("{error}"));
 
-    assert_eq!(reported.data.reclaimed_bytes, 12, "expiry is where the space is actually freed");
+    assert_eq!(reported.data.reclaimed_bytes, 4096, "expiry is where the space is actually freed");
     assert_eq!(reported.data.sessions[0].status, ItemStatus::Purged);
     assert!(!fs.exists(&layout::session_dir(Path::new(ROOT), &outcome.session.id)));
     assert!(fs.exists(Path::new(ROOT)));
@@ -135,7 +136,7 @@ fn purging_removes_a_session_that_is_nowhere_near_its_expiry() {
     let reported = expiry::purge(&token, std::slice::from_ref(&outcome.session.id), Path::new(ROOT), &fs)
         .unwrap_or_else(|error| panic!("{error}"));
 
-    assert_eq!(reported.data.reclaimed_bytes, 12);
+    assert_eq!(reported.data.reclaimed_bytes, 4096);
     assert!(!fs.exists(Path::new(CACHE)), "a purge is irreversible");
     assert_eq!(
         list::list_sessions(Path::new(ROOT), &fs, &at, TTL).map(|listed| listed.data.sessions.len()).ok(),

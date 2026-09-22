@@ -336,10 +336,18 @@ M4 progress:
 - [ ] `ApprovedItem` carries a mount point with a synthetic identity for snapshot items; make the
       distinction typed (`enum Target { Path(..), Snapshot {..} }`) so a future consumer of
       `token.items()` cannot mistake one for a writable path (review of 9680047, LOW).
-- [ ] `quarantined_bytes` reports the guard-verified *apparent* size for files while every other
-      figure is allocated (`quarantine/attempt.rs::measured_size`); pin the unit in §4.4 and
-      switch to allocated, or record the deviation in an ADR.
-- [ ] `suggest` under 15 s on the development machine; review; release 0.3.
+- [x] `quarantined_bytes` is allocated bytes like every other counter (`ApprovedItem::allocated_bytes`,
+      `quarantine/attempt.rs::measured_size`); §4.4 pinned.
+- [ ] `suggest` under 15 s on the development machine. Measured 2026-09-22 on the developer's home
+      (release build): full `suggest` 40 s, of which the cold home walk is 36 s (kernel time in
+      `getattrlistbulk`; the warm `scan` of the same home takes 6.5 s) and every detector together
+      about 4 s. The walk is cold on every `suggest` because the detectors need every directory
+      node and every file of at least 1 MB, which the cache does not carry (`docs/cli-spec.md` §7).
+      Reaching 15 s needs a cache that serves the detectors: records that carry the names the
+      detectors look for and the files above the reporting floor, so a subtree can be served from
+      the cache without hiding a candidate. Cache format v2, an ADR, and the `scan`/`suggest`
+      consistency rule to re-state. Decision pending.
+- [ ] Review; release 0.3.
 
 ### M5 — Inform-only, apps, polish (release 1.0)
 

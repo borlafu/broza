@@ -780,7 +780,7 @@ the volume.
 | Field | Meaning |
 |---|---|
 | `planned_bytes` | Sum of `size_bytes` of every item in the plan, regardless of outcome. |
-| `quarantined_bytes` | Bytes moved into quarantine in this run. **Pending**: still occupying disk until expiry or purge. |
+| `quarantined_bytes` | Bytes moved into quarantine in this run, **allocated** size like every other byte counter (for a file, what `stat` reported at the safety check; for a directory, the scan's aggregate, re-measured only under `--max-size`). **Pending**: still occupying disk until expiry or purge. |
 | `reclaimed_bytes` | Bytes actually freed in this run: `purge` items, `tmutil_delete` items, and sessions expired in the pre-execution step. For a `purge` item the figure is measured immediately before removal, allocated, counting only files with a single hard link (a file that keeps another name frees nothing). |
 
 | Mode | `quarantined_bytes` | `reclaimed_bytes` | Item `status` |
@@ -1100,6 +1100,7 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §3.5 and §3.8 (M3, unreleased): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.
 - §3.5 (M3, unreleased): `restore` resolves every id before writing (unknown item ids exit `4` too), `--all`/`--session`/`ID…` are mutually exclusive, `--all` reports unreadable sessions in `errors[]`; §5: a zero figure drops only its own part of the parenthesis.
 - §3.4 (M4, unreleased): `purge` items are executed (re-check, remove, allocated bytes to `reclaimed_bytes`); a plan without `quarantine` items creates no session; `clean --apply --purge` works. `trash` detector documented in §3.3.
+- §4.4 (M4, unreleased): `quarantined_bytes` pinned to allocated bytes, like `reclaimed_bytes` and `reclaimable_bytes`.
 - §3.3 and §4.1 (M4, unreleased): `duplicates` detector (`duplicates.home`; scope, size window, kept copy and clone caveat spelled out); `file_report_truncated` warning.
 - §3.3 and §4.1 (M4, unreleased): `large-old-files` detector (`large-old-files.home`, `mdls` through the process port, `spotlight_unavailable` warning).
 - §3.3, §3.4, §4.1, §4.3 and §4.4 (M4, unreleased): `snapshots` detector; snapshot entries carry `volume` and `mount_point`; `tmutil_delete` items are executed through `tmutil deletelocalsnapshots` and carry `items[].snapshot`; `snapshot_needs_admin` warning.

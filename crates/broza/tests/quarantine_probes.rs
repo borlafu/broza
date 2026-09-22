@@ -77,7 +77,7 @@ fn an_item_that_arrived_before_the_crash_is_adopted_as_quarantined() {
         store::read_one(&fs, Path::new(ROOT), &outcome.session.id).unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(found.session().entries[0].status, ItemStatus::Quarantined);
-    assert_eq!(found.session().total_bytes, 12, "it counts again");
+    assert_eq!(found.session().total_bytes, 4096, "it counts again, one allocated block");
     assert!(found.is_accounted_for());
 }
 
@@ -180,7 +180,7 @@ fn two_runs_at_the_same_instant_do_not_share_a_session() {
     let listed =
         list::list_sessions(Path::new(ROOT), &fs, &at, TTL).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(listed.data.sessions.len(), 2);
-    assert_eq!(listed.data.total_bytes, 12 + 19, "neither run overwrote the other");
+    assert_eq!(listed.data.total_bytes, 2 * 4096, "neither run overwrote the other");
 }
 
 /// HIGH 5 — one unreadable session does not hide the store.
@@ -322,7 +322,7 @@ fn a_session_left_in_progress_expires_once_it_is_settled() {
         .unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(due, vec![outcome.session.id.clone()]);
-    assert_eq!(reported.data.reclaimed_bytes, 12);
+    assert_eq!(reported.data.reclaimed_bytes, 4096);
     assert!(!fs.exists(&layout::session_dir(Path::new(ROOT), &outcome.session.id)));
 }
 

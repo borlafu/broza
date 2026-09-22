@@ -44,7 +44,7 @@ fn a_restored_session_puts_every_item_back_and_disappears() {
     let reported = restored(&fs, &session, None);
 
     assert_eq!(reported.data.operation, OperationKind::Restore);
-    assert_eq!(reported.data.restored_bytes, 30);
+    assert_eq!(reported.data.restored_bytes, 2 * 4096, "allocated: one block per file");
     assert_eq!(reported.data.sessions[0].status, ItemStatus::Restored);
     assert!(fs.exists(Path::new(CACHE)) && fs.exists(Path::new(OTHER)));
     assert!(!fs.exists(&session_dir()), "an emptied session is deleted");
@@ -72,13 +72,13 @@ fn an_occupied_original_path_is_skipped_and_its_session_survives() {
     let reported = restored(&fs, &session, None);
 
     assert_eq!(reported.data.sessions[0].status, ItemStatus::Skipped);
-    assert_eq!(reported.data.restored_bytes, 20, "the other item still went back");
+    assert_eq!(reported.data.restored_bytes, 4096, "the other item still went back");
     assert_eq!(reported.errors.len(), 1);
     assert_eq!(reported.errors[0].code, ItemErrorCode::Collision.to_string());
     assert!(reported.is_partial(), "a skipped entry means exit 5");
     let left = store::read_one(&fs, Path::new(ROOT), &session_id()).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(left.session().state, SessionState::Restoring, "a partial restore can be retried");
-    assert_eq!(left.session().total_bytes, 10, "only the skipped item is still held");
+    assert_eq!(left.session().total_bytes, 4096, "only the skipped item is still held");
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn restoring_to_another_directory_never_touches_the_original_paths() {
 
     let reported = restored(&fs, &session, Some(&elsewhere));
 
-    assert_eq!(reported.data.restored_bytes, 30);
+    assert_eq!(reported.data.restored_bytes, 2 * 4096, "allocated: one block per file");
     assert!(fs.exists(&elsewhere.join("0001_app.cache")));
     assert!(fs.exists(&elsewhere.join("0002_other.cache")));
     assert!(!fs.exists(Path::new(CACHE)));
@@ -104,7 +104,7 @@ fn restoring_one_entry_leaves_the_rest_of_the_session_alone() {
         .unwrap_or_else(|error| panic!("{error}"));
 
     assert_eq!(reported.data.sessions[0].items.len(), 1);
-    assert_eq!(reported.data.restored_bytes, 10);
+    assert_eq!(reported.data.restored_bytes, 4096);
     assert!(fs.exists(Path::new(CACHE)) && !fs.exists(Path::new(OTHER)));
     let left = store::read_one(&fs, Path::new(ROOT), &session_id()).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(left.session().state, SessionState::Complete);

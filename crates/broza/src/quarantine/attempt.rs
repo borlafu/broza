@@ -111,17 +111,18 @@ pub fn move_into(
 
 /// What the item is worth, measured only when the answer has to be exact.
 ///
-/// A file keeps the size the guard verified. A directory's planned size is the
-/// scan's aggregate and may be stale, but re-walking a large tree costs real
-/// time, so it is only re-measured when `--max-size` makes the difference
-/// matter (`docs/cli-spec.md` §3.4, check 6).
+/// A file keeps the allocated size the guard saw: the same unit as every other
+/// byte counter, and what the disk gives back when the session is purged. A
+/// directory's planned size is the scan's aggregate and may be stale, but
+/// re-walking a large tree costs real time, so it is only re-measured when
+/// `--max-size` makes the difference matter (`docs/cli-spec.md` §3.4, check 6).
 fn measured_size(
     item: &ApprovedItem,
     destination: &Destination<'_>,
     fs: &dyn FileOps,
 ) -> Result<u64, BrozaError> {
     if item.size_verified() {
-        return Ok(item.size_bytes());
+        return Ok(item.allocated_bytes());
     }
     if destination.max_size.is_none() {
         return Ok(destination.planned_bytes);

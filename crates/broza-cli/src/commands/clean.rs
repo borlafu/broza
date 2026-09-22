@@ -7,12 +7,13 @@
 
 use std::path::{Path, PathBuf};
 
+use broza::clean::execute as execute_plan;
 use broza::clean::planner::{Selection, plan_dry_run};
 use broza::config::Config;
 use broza::model::{Category, CleanPlan, Host, Risk, Warning};
 use broza::ports::Ports;
+use broza::quarantine::MoveRequest;
 use broza::quarantine::layout::generate_session_id;
-use broza::quarantine::{MoveRequest, quarantine_items};
 use broza::safety::Exclusions;
 use broza::safety::guard::{PendingApproval, Verdict, WriteRequest, approve};
 use broza::units::ByteSize;
@@ -67,9 +68,6 @@ pub fn run(context: &CleanContext<'_>) -> Result<Outcome, BrozaError> {
     let max_size = context.args.max_size.as_deref().map(str::parse::<ByteSize>).transpose()?;
     let unused_after =
         detection::duration_or(context.args.unused_after.as_deref(), context.config.unused_after)?;
-    if context.args.apply && context.args.purge {
-        return Err(crate::commands::not_implemented_until("clean --apply --purge", PURGE_MILESTONE));
-    }
     let detected = detection::detect(&DetectionRequest {
         ports: context.ports,
         folders: &context.folders,
@@ -106,9 +104,6 @@ pub fn run(context: &CleanContext<'_>) -> Result<Outcome, BrozaError> {
     warnings.extend(outcome.informed_in_passing.iter().map(inform_only_skipped));
     render(context, executed, warnings, home)
 }
-
-/// When the irreversible path of the mover lands (`docs/cli-spec.md` §3.4).
-const PURGE_MILESTONE: &str = "milestone M4";
 
 /// Warning code: an inform-only finding of a selected category was left out.
 pub const INFORM_ONLY_SKIPPED_CODE: &str = "inform_only_skipped";
@@ -206,13 +201,12 @@ fn execute(
     let Expiry { sessions, freed_bytes, mut errors, mut warnings } =
         expire_due(context.ports, execution.root, ttl, execution.mounts, context.args.yes)?;
     let request = MoveRequest { ttl, max_size: execution.max_size.map(ByteSize::bytes) };
-    let moved =
-        quarantine_items(&approved, &request, context.ports.fs.as_ref(), context.ports.clock.as_ref())?;
-    warnings.extend(moved.warnings);
-    errors.extend(item_errors(&moved.plan));
+    let done = execute_plan(&approved, &request, context.ports.fs.as_ref(), context.ports.clock.as_ref())?;
+    warnings.extend(done.warnings);
+    errors.extend(item_errors(&done.plan));
     let (quarantined, reclaimed) =
-        (moved.plan.quarantined_bytes(), moved.plan.reclaimed_bytes().saturating_add(freed_bytes));
-    let plan = moved.plan.with_expired_sessions(sessions)?.with_bytes(quarantined, reclaimed)?;
+        (done.plan.quarantined_bytes(), done.plan.reclaimed_bytes().saturating_add(freed_bytes));
+    let plan = done.plan.with_expired_sessions(sessions)?.with_bytes(quarantined, reclaimed)?;
     Ok(Executed { plan, errors, warnings, due: Vec::new() })
 }
 

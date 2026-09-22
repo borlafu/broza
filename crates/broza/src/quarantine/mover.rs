@@ -17,14 +17,17 @@
 //!
 //! Nothing is ever removed here. A failed item stays exactly where it was and is
 //! recorded as `failed` or `skipped`, and the run continues
-//! (`docs/cli-spec.md` §3.4).
+//! (`docs/cli-spec.md` §3.4). Only the plan's `quarantine` items are moved; the
+//! `purge` and `tmutil_delete` ones are left `planned` for
+//! [`crate::clean::executor`], which runs after this and owns the irreversible
+//! actions.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::BrozaError;
 use crate::model::{
-    CleanPlan, CleanPlanRepr, ItemStatus, QuarantineSession, SessionId, SessionState, Warning,
+    Action, CleanPlan, CleanPlanRepr, ItemStatus, QuarantineSession, SessionId, SessionState, Warning,
 };
 use crate::ports::{Clock, FileOps, already_exists};
 use crate::quarantine::attempt::{
@@ -98,17 +101,39 @@ pub fn quarantine_items(
             )));
         }
     };
-    let context = Context::new(&plan, dir, token.items(), request, fs)?;
+    let movable = movable_items(&plan, token.items())?;
+    if movable.is_empty() {
+        return Err(desynchronised(
+            "the plan has no quarantine item; the executor should not have called the mover",
+        ));
+    }
+    let indices: Vec<usize> = movable.iter().map(|(index, _)| *index).collect();
+    let context = Context::new(dir, indices, request, fs)?;
     let session = new_session(&plan, &context, clock, request.ttl)?;
     let progress = Progress::new(Manifest::new(session), plan);
     manifest::write(fs, &context.manifest, &progress.manifest)?;
-    let moved =
-        token.items().iter().enumerate().try_fold(progress, |progress, (position, item)| {
-            move_one(progress, position, item, &context, fs)
-        })?;
+    let moved = movable.iter().enumerate().try_fold(progress, |progress, (position, (_, item))| {
+        move_one(progress, position, item, &context, fs)
+    })?;
     let outcome = finish(moved, &context, fs);
     drop(held);
     outcome
+}
+
+/// The approved items whose plan action is `quarantine`, with their plan index.
+///
+/// # Errors
+///
+/// When the token and the plan do not describe the same work.
+pub fn movable_items<'a>(
+    plan: &CleanPlan,
+    approved: &'a [ApprovedItem],
+) -> Result<Vec<(usize, &'a ApprovedItem)>, BrozaError> {
+    Ok(plan_indices(plan, approved)?
+        .into_iter()
+        .zip(approved)
+        .filter(|(index, _)| plan.items().get(*index).is_some_and(|item| item.action == Action::Quarantine))
+        .collect())
 }
 
 /// Take a session directory nobody else has, and the plan that names it.
@@ -170,9 +195,8 @@ struct Context {
 
 impl Context {
     fn new(
-        plan: &CleanPlan,
         dir: PathBuf,
-        approved: &[ApprovedItem],
+        plan_indices: Vec<usize>,
         request: &MoveRequest,
         fs: &dyn FileOps,
     ) -> Result<Self, BrozaError> {
@@ -181,7 +205,7 @@ impl Context {
             root_device: fs.metadata(&dir)?.device,
             dir,
             max_size: request.max_size,
-            plan_indices: plan_indices(plan, approved)?,
+            plan_indices,
         })
     }
 
@@ -330,7 +354,7 @@ fn new_session(
 /// in plan order, so the two lists are matched by walking them together. A path
 /// that cannot be matched is a bug in the caller, not an item failure: pairing
 /// one path's evidence with another path is exactly what the token prevents.
-fn plan_indices(plan: &CleanPlan, approved: &[ApprovedItem]) -> Result<Vec<usize>, BrozaError> {
+pub fn plan_indices(plan: &CleanPlan, approved: &[ApprovedItem]) -> Result<Vec<usize>, BrozaError> {
     let items = plan.items();
     let mut cursor = 0_usize;
     let mut indices = Vec::with_capacity(approved.len());
@@ -348,6 +372,6 @@ fn plan_indices(plan: &CleanPlan, approved: &[ApprovedItem]) -> Result<Vec<usize
 }
 
 /// A plan and a token that do not describe the same work.
-fn desynchronised(reason: &str) -> BrozaError {
+pub(crate) fn desynchronised(reason: &str) -> BrozaError {
     BrozaError::Other(format!("quarantine move: {reason}"))
 }

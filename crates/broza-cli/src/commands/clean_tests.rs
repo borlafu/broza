@@ -254,15 +254,37 @@ fn a_risk_ceiling_selects_without_naming_categories() {
 }
 
 #[test]
-fn apply_with_purge_is_refused_as_not_implemented_before_any_detection() {
+fn apply_with_purge_deletes_for_good_after_the_typed_word_and_creates_no_session() {
+    let (ports, handles) = world();
+    handles.prompter.queue(&[Answer::Yes]);
+    let purge = CleanArgs { apply: true, purge: true, ..args() };
+
+    let outcome = run_with(&ports, &purge, true, OutputFormat::Json).unwrap();
+
+    let value = json(&outcome);
+    assert_eq!(value["data"]["items"][0]["status"], "purged", "{value}");
+    assert_eq!(value["data"]["items"][0]["action"], "purge", "{value}");
+    assert!(value["data"]["reclaimed_bytes"].as_u64().unwrap() > 0, "{value}");
+    assert_eq!(value["data"]["quarantined_bytes"], 0);
+    assert!(value["data"]["quarantine_path"].is_null(), "no session for a purge");
+    assert_eq!(handles.prompter.prompts()[0].expected_literal.as_deref(), Some("PURGE"));
+    assert!(!handles.fs.exists(Path::new(CACHE_FILE)), "gone for good");
+    assert!(
+        !handles.fs.exists(Path::new(STORE))
+            || handles.fs.read_dir(Path::new(STORE)).map_or(true, |d| d.is_empty())
+    );
+    assert_eq!(outcome.code, ExitCode::Ok);
+}
+
+#[test]
+fn apply_with_purge_without_a_terminal_exits_seven_and_deletes_nothing() {
     let (ports, handles) = world();
     let purge = CleanArgs { apply: true, purge: true, ..args() };
 
-    let error = run_with(&ports, &purge, true, OutputFormat::Human).expect_err("not implemented");
+    let error = run_with(&ports, &purge, false, OutputFormat::Human).expect_err("no terminal");
 
-    assert_eq!(ExitCode::from(&error), ExitCode::GenericError);
-    assert!(error.to_string().contains("milestone M4"), "{error}");
-    assert!(handles.prompter.prompts().is_empty(), "no prompt before the refusal");
+    assert_eq!(ExitCode::from(&error), ExitCode::ConfirmationRequired);
+    assert!(handles.fs.exists(Path::new(CACHE_FILE)));
 }
 
 #[test]

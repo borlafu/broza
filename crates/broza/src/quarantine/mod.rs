@@ -41,7 +41,7 @@ pub mod expiry;
 #[cfg(test)]
 mod expiry_tests;
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 pub mod guarded;
 pub mod layout;
 pub mod list;
@@ -65,7 +65,7 @@ pub use expiry::{all_sessions, expire, expired_sessions, purge};
 pub use list::list_sessions;
 pub use manifest::{MANIFEST_VERSION, Manifest};
 pub use measure::measure_dir_bytes;
-pub use mover::{MoveOutcome, MoveRequest, quarantine_items};
+pub use mover::{MoveOutcome, MoveRequest, movable_items, plan_indices, quarantine_items};
 pub use reconcile::{Reconciled, reconcile, stored_items};
 pub use report::Reported;
 pub use restore::{restore_entries, restore_session, restore_wanted};

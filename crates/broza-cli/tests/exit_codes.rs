@@ -73,17 +73,6 @@ fn yes_together_with_purge_exits_two() {
 }
 
 #[test]
-fn clean_apply_with_purge_exits_one_until_the_purge_path_exists() {
-    let home = temp_home();
-    broza(home.path())
-        .args(["clean", "--category", "user-cache", "--apply", "--purge"])
-        .assert()
-        .code(1)
-        .stderr(contains("not implemented").and(contains("milestone M4")))
-        .stdout(predicates::str::is_empty());
-}
-
-#[test]
 fn quarantine_purge_with_yes_exits_two() {
     let home = temp_home();
     broza(home.path())

@@ -33,9 +33,9 @@ pub fn render(
 ) -> String {
     if plan.is_dry_run() {
         render_dry_run(plan, due, home, rerun)
-    } else if plan.quarantine_path().is_none() {
-        // No session was created: every planned path was gone, or there was
-        // nothing to plan. There is nothing to undo either.
+    } else if plan.quarantine_path().is_none() && count(plan, &ItemStatus::Purged) == 0 {
+        // Neither a session nor a deletion: every planned path was gone, or
+        // there was nothing to plan. There is nothing to undo either.
         render_nothing_moved(plan, errors, home)
     } else {
         render_applied(plan, errors, home)
@@ -77,28 +77,30 @@ fn render_dry_run(plan: &CleanPlan, due: &[(SessionId, u64)], home: &Path, rerun
             format_bytes(bytes)
         );
     }
-    if is_purge(plan) {
-        let _ignored = write!(
-            text,
-            "\n\nNote: irreversible deletion lands in milestone M4; `{rerun} --apply` is refused today.\nQuarantine the items instead ({} --apply) and `broza quarantine purge` the session afterwards.",
-            rerun.strip_suffix(" --purge").unwrap_or(rerun)
-        );
-        return text;
-    }
-    let _ignored = write!(
-        text,
-        "\n\nNext step:\n  {rerun} --apply    (moves to quarantine; `broza restore` brings items back until they expire)"
-    );
+    let consequence = if is_purge(plan) {
+        "deletes for good after you type PURGE; nothing can be restored"
+    } else {
+        "moves to quarantine; `broza restore` brings items back until they expire"
+    };
+    let _ignored = write!(text, "\n\nNext step:\n  {rerun} --apply    ({consequence})");
     text
 }
 
 fn render_applied(plan: &CleanPlan, errors: &[Warning], home: &Path) -> String {
-    let moved = plan.items().iter().filter(|item| item.status == ItemStatus::Quarantined).count();
-    let mut text = format!(
-        "Session {}: {moved} item(s) moved to quarantine, {} pending (freed after expiry or purge).",
-        plan.session_id(),
-        format_bytes(plan.quarantined_bytes())
-    );
+    let moved = count(plan, &ItemStatus::Quarantined);
+    let purged = count(plan, &ItemStatus::Purged);
+    let mut text = match plan.quarantine_path() {
+        Some(_) => format!(
+            "Session {}: {moved} item(s) moved to quarantine, {} pending (freed after expiry or purge).",
+            plan.session_id(),
+            format_bytes(plan.quarantined_bytes())
+        ),
+        None => format!("Deleted for good: {purged} item(s), {} freed.", format_bytes(purged_bytes(plan))),
+    };
+    if plan.quarantine_path().is_some() && purged > 0 {
+        let _ignored =
+            write!(text, "\nDeleted for good: {purged} item(s), {} freed.", format_bytes(purged_bytes(plan)));
+    }
     for item in plan.items().iter().filter(|item| item.status.is_unsuccessful()) {
         render_item(&mut text, item, home);
     }
@@ -109,9 +111,20 @@ fn render_applied(plan: &CleanPlan, errors: &[Warning], home: &Path) -> String {
     }
     if let Some(path) = plan.quarantine_path() {
         let _ignored = write!(text, "\nQuarantine: {}", abbreviate(path, Some(home)));
+        let _ignored = write!(text, "\nUndo: broza restore --session {}", plan.session_id());
     }
-    let _ignored = write!(text, "\nUndo: broza restore --session {}", plan.session_id());
     text
+}
+
+/// How many items ended in `status`.
+fn count(plan: &CleanPlan, status: &ItemStatus) -> usize {
+    plan.items().iter().filter(|item| &item.status == status).count()
+}
+
+/// Bytes freed by purged items: everything reclaimed that expiry did not free.
+fn purged_bytes(plan: &CleanPlan) -> u64 {
+    let expired = plan.expired_sessions().iter().map(|s| s.freed_bytes).fold(0, u64::saturating_add);
+    plan.reclaimed_bytes().saturating_sub(expired)
 }
 
 /// `--apply` with nothing to move: no session was created, so nothing to undo.
@@ -230,8 +243,7 @@ mod tests {
         let text = render(&plan, &[], &[], Path::new("/Users/dana"), "broza clean --category trash --purge");
 
         assert!(text.contains("Would delete permanently (no quarantine, no restore) 1 item(s)"), "{text}");
-        assert!(text.contains("irreversible deletion lands in milestone M4"), "{text}");
-        assert!(text.contains("(broza clean --category trash --apply)"), "{text}");
+        assert!(text.contains("--purge --apply    (deletes for good after you type PURGE"), "{text}");
         assert!(!text.contains("restore` brings"), "{text}");
     }
 
@@ -271,6 +283,23 @@ mod tests {
             "{text}"
         );
         assert!(text.ends_with("Undo: broza restore --session cln_20260921103608_a1b2"), "{text}");
+    }
+
+    #[test]
+    fn a_purge_run_reports_what_was_deleted_for_good_and_offers_no_undo() {
+        let plan = CleanPlan::dry_run(session(), vec![item("/Users/dana/.Trash/x", 4096, Action::Purge)])
+            .unwrap()
+            .into_applied(None)
+            .unwrap()
+            .with_item_status(0, ItemStatus::Purged, None)
+            .unwrap()
+            .with_bytes(0, 4096)
+            .unwrap();
+
+        let text = render(&plan, &[], &[], Path::new("/Users/dana"), RERUN);
+
+        assert!(text.starts_with("Deleted for good: 1 item(s), 4.1 KB freed."), "{text}");
+        assert!(!text.contains("Undo") && !text.contains("Session "), "{text}");
     }
 
     #[test]

@@ -319,7 +319,8 @@ The home walk of `suggest` gains a file report (`ScanRequest.files_min_size`, de
 M4 progress:
 
 - [x] 1. `trash` detector (`detect/detectors/trash.rs`).
-- [ ] 2. Irreversible executor (`purge`, `tmutil_delete`); `clean --apply --purge` enabled.
+- [x] 2. Irreversible executor for `purge` (`clean/executor.rs`; the mover moves only `quarantine`
+      items); `clean --apply --purge` enabled. `tmutil_delete` waits for step 3.
 - [ ] 3. Snapshot items in the plan and the guard.
 - [ ] 4. `snapshots` detector.
 - [ ] 5. `old-backups` detector.

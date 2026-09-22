@@ -263,10 +263,12 @@ fn clean_apply_with_yes_quarantines_the_recorded_caches_in_the_recording() {
 }
 
 #[test]
-fn clean_apply_without_a_terminal_exits_seven() {
+fn clean_apply_without_a_terminal_exits_seven_with_and_without_purge() {
     let (code, stderr) = failure_of(&["clean", "--category", "user-cache", "--apply"]);
+    let (purge_code, purge_err) = failure_of(&["clean", "--category", "user-cache", "--apply", "--purge"]);
 
     assert_eq!(code, Some(7), "{stderr}");
+    assert_eq!(purge_code, Some(7), "{purge_err}");
 }
 
 #[test]

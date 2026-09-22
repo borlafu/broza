@@ -20,15 +20,13 @@
 
 use std::path::PathBuf;
 
-use jiff::Timestamp;
-
 use crate::BrozaError;
 use crate::model::{Category, FindingPath};
 use crate::scan::FileEntry;
 
 use super::support::{by_size_then_path, finish, path_with, start};
 use crate::detect::detector::{DetectContext, Detected, Detector};
-use crate::detect::spotlight::Spotlight;
+use crate::detect::spotlight::{Spotlight, later_of};
 
 /// A file is large from 1 GB, counted the way Finder counts.
 pub const LARGE_FILE_MIN_BYTES: u64 = 1_000_000_000;
@@ -106,14 +104,6 @@ fn judge(file: &FileEntry, context: &DetectContext<'_>, spotlight: &mut Spotligh
     })
 }
 
-/// The later of two optional instants; whichever exists when only one does.
-fn later_of(a: Option<Timestamp>, b: Option<Timestamp>) -> Option<Timestamp> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(a.max(b)),
-        (a, b) => a.or(b),
-    }
-}
-
 fn reasoning(low_confidence: usize) -> String {
     const BASE: &str = "Neither you nor any app has opened or changed these files since before the \
                         unused-after threshold; they are your own data, so review the list before \
@@ -130,6 +120,8 @@ fn reasoning(low_confidence: usize) -> String {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+
+    use jiff::Timestamp;
 
     use super::*;
     use crate::detect::spotlight::{MDLS, MDLS_ARGS, SPOTLIGHT_UNAVAILABLE_CODE};

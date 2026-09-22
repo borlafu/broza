@@ -306,6 +306,21 @@ fn clean_of_the_trash_purges_for_good_after_the_detailed_confirmation_that_yes_c
     assert!(applied["data"]["quarantine_path"].is_null(), "a purge creates no session: {applied}");
 }
 
+/// `/Applications` is an allowed root for this category alone (§3.4), and the
+/// bundle sits on the Data volume like the quarantine store, so it moves.
+#[test]
+fn clean_of_unused_apps_quarantines_the_application_nobody_opened() {
+    let dry = json_of(&["clean", "--category", "unused-apps", "--json"]);
+    let applied = json_of(&["clean", "--category", "unused-apps", "--apply", "--yes", "--json"]);
+
+    let items = dry["data"]["items"].as_array().unwrap_or_else(|| panic!("{dry}"));
+    assert!(items.iter().any(|item| item["path"] == "/Applications/OldEditor.app"), "{dry}");
+    assert!(items.iter().all(|item| item["action"] == "quarantine"), "{dry}");
+    let applied_items = applied["data"]["items"].as_array().unwrap_or_else(|| panic!("{applied}"));
+    assert!(applied_items.iter().all(|item| item["status"] == "quarantined"), "{applied}");
+    assert!(applied["data"]["quarantined_bytes"].as_u64().unwrap_or(0) > 3_000_000_000, "{applied}");
+}
+
 #[test]
 fn clean_of_the_snapshots_deletes_the_recorded_purgeable_one_by_uuid() {
     let dry = json_of(&["clean", "--category", "snapshots", "--json"]);

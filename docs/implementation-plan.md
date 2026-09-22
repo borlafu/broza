@@ -408,7 +408,7 @@ M5 progress:
 
 - [x] 1. `cloud-synced` detector (`detect/detectors/cloud_synced.rs`).
 - [x] 2. Shared Spotlight helper (`detect/spotlight.rs`).
-- [ ] 3. `unused-apps` detector (`detect/detectors/unused_apps.rs`).
+- [x] 3. `unused-apps` detector (`detect/detectors/unused_apps.rs`).
 - [ ] 4. Full Disk Access wording and exit `3` for an unreadable scan root.
 - [ ] 5. SBOM in the release job; `--locked` everywhere.
 - [ ] 6. README, PRD §16 traceability, spec 1.3.

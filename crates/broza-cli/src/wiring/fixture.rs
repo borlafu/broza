@@ -92,8 +92,10 @@ const OLD_MOVIE_TOUCHED: &str = "2019-08-10T14:00:00Z";
 /// What Spotlight answers for each big file under the home, as `mdls
 /// -name kMDItemLastUsedDate -raw` prints it: the movie was last opened in
 /// 2020, the thesis this summer, and the orphan module is unknown to it.
-const SPOTLIGHT_ANSWERS: [(&str, &str); 5] = [
+const SPOTLIGHT_ANSWERS: [(&str, &str); 7] = [
     (OLD_MOVIE, "2020-01-05 18:30:00 +0000"),
+    (OLD_APP, "2024-01-10 09:00:00 +0000"),
+    (FRESH_APP, "2026-09-01 09:00:00 +0000"),
     (INSTALLER, "(null)"),
     (INSTALLER_COPY, "(null)"),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", "2026-08-01 09:00:00 +0000"),
@@ -107,6 +109,12 @@ const INSTALLER_COPY: &str = "/System/Volumes/Data/Users/dana/Desktop/Xcode-inst
 /// When the download landed: before the copy's default time, so the download
 /// is the one kept, and within the year, so neither is a large old file.
 const INSTALLER_TOUCHED: &str = "2025-12-01T09:00:00Z";
+/// An application nobody has opened since 2024, and one opened this month.
+const OLD_APP: &str = "/Applications/OldEditor.app";
+const FRESH_APP: &str = "/Applications/Fresh.app";
+/// A leftover of an application no longer installed, untouched since 2023.
+const LEFTOVER: &str = "/System/Volumes/Data/Users/dana/Library/Application Support/com.gone.Tool";
+const LEFTOVER_TOUCHED: &str = "2023-03-01T09:00:00Z";
 /// The home directory of the recorded machine, in the spelling its files use.
 ///
 /// The seam swaps the filesystem for the recording, so the real `$HOME` of the
@@ -147,6 +155,15 @@ fn script_spotlight(runner: &FakeRunner) {
     }
 }
 
+/// The manifest of an application bundle carrying `id`.
+fn info_plist(id: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>{id}</string></dict></plist>"#
+    )
+}
+
 /// An in-memory filesystem shaped like the recorded machine.
 fn filesystem() -> FakeFileOps {
     let fs = FakeFileOps::new();
@@ -154,8 +171,10 @@ fn filesystem() -> FakeFileOps {
         fs.add_root(mount_point, FIRST_DEVICE + index as u64);
     }
     fs.add_file(FIRMLINKS_PATH, FIRMLINKS);
+    // Firmlinked directories live on the Data volume, whatever their spelling.
+    let data_device = FIRST_DEVICE + 1;
     for directory in FIRMLINKED_DIRS {
-        fs.add_dir(directory);
+        fs.add_root(directory, data_device);
     }
     for (path, size_bytes) in RECORDED_FILES {
         fs.add_file(path, &[]);
@@ -166,6 +185,18 @@ fn filesystem() -> FakeFileOps {
     }
     if let Ok(touched) = INSTALLER_TOUCHED.parse::<Timestamp>() {
         fs.set_times(INSTALLER, touched, touched);
+    }
+    for (app, id, size) in
+        [(OLD_APP, "com.old.Editor", 3_000_000_000_u64), (FRESH_APP, "com.fresh.App", 900_000_000)]
+    {
+        fs.add_file(format!("{app}/Contents/Info.plist"), info_plist(id).as_bytes());
+        fs.add_file(format!("{app}/Contents/MacOS/bin"), &[]);
+        fs.set_size(format!("{app}/Contents/MacOS/bin"), size);
+    }
+    fs.add_file(format!("{LEFTOVER}/data.db"), &[]);
+    fs.set_size(format!("{LEFTOVER}/data.db"), 1_100_000_000);
+    if let Ok(touched) = LEFTOVER_TOUCHED.parse::<Timestamp>() {
+        fs.set_times(LEFTOVER, touched, touched);
     }
     // Evicted from this disk: the provider holds it, the walk counts it as nothing.
     fs.add_dataless_file(

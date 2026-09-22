@@ -9,6 +9,7 @@ mod node_modules;
 pub mod old_backups;
 pub mod snapshots;
 pub mod trash;
+pub mod unused_apps;
 pub mod user_cache;
 
 use super::detector::Detector;
@@ -24,6 +25,7 @@ pub fn builtin() -> Vec<Box<dyn Detector>> {
         Box::new(ios_simulators::IosSimulators),
         Box::new(large_old_files::LargeOldFiles),
         Box::new(duplicates::Duplicates),
+        Box::new(unused_apps::UnusedApps),
         Box::new(cloud_synced::CloudSynced),
     ]
 }

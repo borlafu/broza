@@ -7,7 +7,7 @@ expression: envelope
   "command": "suggest",
   "data": {
     "by_risk": {
-      "amber": 35500007424,
+      "amber": 39600013312,
       "green": 297700003840,
       "red": 0
     },
@@ -156,6 +156,44 @@ expression: envelope
         "title": "Time Machine local snapshots"
       },
       {
+        "action": "quarantine",
+        "actionable": true,
+        "category": "unused-apps",
+        "description": "Applications whose last opening, as Spotlight records it, is older than the threshold.",
+        "id": "unused-apps.applications",
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/Applications/OldEditor.app",
+            "size_bytes": 3000004608
+          }
+        ],
+        "reasoning": "Spotlight's \"last opened\" date is what Finder shows; an application you still need is one reinstall away, a licence file inside it may not be, so read the list before applying.",
+        "reclaimable_bytes": 3000004608,
+        "risk": "amber",
+        "title": "Applications not opened in a long time"
+      },
+      {
+        "action": "quarantine",
+        "actionable": true,
+        "category": "unused-apps",
+        "description": "Support files, caches and containers named after applications that are no longer installed.",
+        "id": "unused-apps.leftovers",
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/System/Volumes/Data/Users/dana/Library/Application Support/com.gone.Tool",
+            "size_bytes": 1100001280
+          }
+        ],
+        "reasoning": "No application under /Applications, ~/Applications or /System/Applications carries this bundle identifier, and nothing has touched the directory for the threshold. A helper or a tool installed elsewhere may still own one: read the list before applying.",
+        "reclaimable_bytes": 1100001280,
+        "risk": "amber",
+        "title": "Leftovers of applications no longer installed"
+      },
+      {
         "action": "inform_only",
         "actionable": false,
         "category": "cloud-synced",
@@ -250,7 +288,7 @@ expression: envelope
       }
     ],
     "inform_only_bytes": 51800006656,
-    "total_reclaimable_bytes": 333200011264
+    "total_reclaimable_bytes": 337300017152
   },
   "errors": [],
   "generated_at": "[timestamp]",

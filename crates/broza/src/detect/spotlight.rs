@@ -89,6 +89,14 @@ impl<'a> Spotlight<'a> {
     }
 }
 
+/// The later of two optional instants; whichever exists when only one does.
+pub fn later_of(a: Option<Timestamp>, b: Option<Timestamp>) -> Option<Timestamp> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 /// A date as `mdls -raw` prints it, or nothing for `(null)` and anything else.
 pub fn parse_mdls_date(raw: &str) -> Option<Timestamp> {
     if raw.is_empty() || raw == MDLS_NULL {

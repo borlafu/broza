@@ -324,7 +324,7 @@ M4 progress:
 - [x] 3. Snapshot items in the plan and the guard (`CleanItem.snapshot`, `check_snapshot_item`,
       `snapshot_deletions`, `SnapshotProvider::delete`, `tmutil deletelocalsnapshots`).
 - [x] 4. `snapshots` detector (`detect/detectors/snapshots.rs`).
-- [ ] 5. `old-backups` detector.
+- [x] 5. `old-backups` detector (`detect/detectors/old_backups.rs`).
 - [ ] 6. `ios-simulators` detector.
 - [ ] 7. `large-old-files` detector.
 - [ ] 8. `duplicates` detector.

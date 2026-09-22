@@ -2,6 +2,7 @@
 
 pub mod build_cache;
 mod node_modules;
+pub mod old_backups;
 pub mod snapshots;
 pub mod trash;
 pub mod user_cache;
@@ -15,6 +16,7 @@ pub fn builtin() -> Vec<Box<dyn Detector>> {
         Box::new(build_cache::BuildCache),
         Box::new(trash::Trash),
         Box::new(snapshots::Snapshots),
+        Box::new(old_backups::OldBackups),
     ]
 }
 

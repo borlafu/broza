@@ -237,7 +237,7 @@ M3 progress:
       confirmation (`TtyPrompter`) → pre-execution expiry (`commands/clean_expiry.rs`) → mover →
       report; `--max-size`, `--exclude`, `--risk`/`--category` mandatory; inform-only findings inside
       an actionable category are skipped with a warning; the store is created on first `--apply`.
-- [ ] `clean --apply --purge` execution (needs the irreversible path in the mover; M4 with `trash`).
+- [x] `clean --apply --purge` execution (irreversible path in `clean/executor.rs`; landed in M4 with `trash`).
 - [x] `restore` (`ID…`, `--session`, `--all`, `--to`, `--list` with `--csv`) and
       `quarantine list | expire | purge` (`commands/{restore,quarantine,store}.rs`); every write inside
       the store through `Approved<QuarantineWrite>` from the manifests' own paths; `purge` asks the

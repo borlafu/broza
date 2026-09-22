@@ -27,8 +27,6 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, FindingPath};
 use crate::ports::{ContentHash, FileOps};
@@ -83,12 +81,14 @@ impl Detector for Duplicates {
         for file in context.home_files.iter().filter(|file| is_candidate(file)) {
             by_size.entry(file.size_bytes).or_default().push(file);
         }
-        // Each size group is read on its own; the reads wait on the disk, not
-        // on a core, so they overlap.
-        let same_sized: Vec<Vec<&FileEntry>> =
-            by_size.into_values().filter(|group| group.len() >= 2).collect();
-        let outcomes: Vec<Confirmed<'_>> =
-            same_sized.into_par_iter().map(|group| confirm(&group, context.fs)).collect();
+        // One size group at a time: the detectors already run in parallel with
+        // each other, and after the scope above the comparison costs seconds at
+        // most on a developer's home (`docs/implementation-plan.md`, M4).
+        let outcomes: Vec<Confirmed<'_>> = by_size
+            .into_values()
+            .filter(|group| group.len() >= 2)
+            .map(|group| confirm(&group, context.fs))
+            .collect();
         let mut detected = Detected::default();
         let mut groups = 0_usize;
         let mut paths: Vec<FindingPath> = Vec::new();

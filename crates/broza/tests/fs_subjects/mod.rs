@@ -140,6 +140,20 @@ impl Subject {
         self.fs.read(&self.path(relative)).unwrap_or_else(|e| panic!("{}: read {relative}: {e}", self.name))
     }
 
+    /// `len` bytes of `relative` from `offset`, or the test fails.
+    pub fn read_range(&self, relative: &str, offset: u64, len: usize) -> Vec<u8> {
+        self.fs
+            .read_range(&self.path(relative), offset, len)
+            .unwrap_or_else(|e| panic!("{}: read_range {relative} {offset} {len}: {e}", self.name))
+    }
+
+    /// The content hash of `relative`, or the test fails.
+    pub fn hash_file(&self, relative: &str) -> broza::ports::ContentHash {
+        self.fs
+            .hash_file(&self.path(relative))
+            .unwrap_or_else(|e| panic!("{}: hash {relative}: {e}", self.name))
+    }
+
     /// Sorted names of the direct children of `relative`.
     pub fn child_names(&self, relative: &str) -> Vec<String> {
         let mut names = self

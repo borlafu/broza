@@ -334,6 +334,29 @@ fn a_document_cannot_ride_along_with_a_trash_finding() {
     assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
 }
 
+/// Sizes are allocated bytes everywhere: a compressed or sparse file occupies
+/// less than its `st_size`, and a plan claiming what it occupies is right.
+#[test]
+fn a_plan_claiming_the_allocated_size_of_a_compressed_file_is_approved() {
+    let fs = fs();
+    fs.set_size(CACHE, 5_000_000);
+    fs.set_allocated(CACHE, 4096);
+    let findings = caches(&[(CACHE, 4096)]);
+    let honest = forced_plan(&findings[0], CACHE, 4096, Action::Quarantine);
+    let short = forced_plan(&findings[0], CACHE, 100, Action::Quarantine);
+
+    let approved = approve(&honest, &findings, &applying(), &mounts(), &fs);
+    let refused = approve(&short, &findings, &applying(), &mounts(), &fs);
+
+    match approved {
+        Ok(Verdict::NeedsConfirmation(pending)) => {
+            assert_eq!(pending.plan().items()[0].size_bytes, 4096, "the plan carries allocated bytes");
+        }
+        other => panic!("a claim of the allocated size is honest: {other:?}"),
+    }
+    assert!(matches!(refused, Err(GuardRejection::Inconsistent(_))), "{refused:?}");
+}
+
 /// A plan that under-reports a file would slip past `--max-size`.
 #[test]
 fn an_item_that_claims_less_than_the_file_holds_is_refused() {

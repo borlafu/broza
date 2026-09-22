@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::BrozaError;
 use crate::model::Warning;
 use crate::model::{ItemErrorCode, ItemStatus, QuarantineEntry};
-use crate::ports::{FileOps, RenameMode};
+use crate::ports::{EntryMetadata, FileOps, RenameMode};
 use crate::quarantine::codes::max_size_exceeded;
 use crate::quarantine::guarded::recheck_identity;
 use crate::quarantine::layout;
@@ -82,7 +82,7 @@ pub fn precheck(
     if current.device != destination.root_device {
         return Err(Attempt::Refused { status: ItemStatus::Skipped, error: ItemErrorCode::CrossVolume });
     }
-    let size_bytes = measured_size(item, destination, fs).map_err(|error| failed_io(&error))?;
+    let size_bytes = measured_size(item, &current, destination, fs).map_err(|error| failed_io(&error))?;
     if exceeds_cap(moved_bytes, size_bytes, destination.max_size) {
         return Err(Attempt::Refused { status: ItemStatus::Skipped, error: max_size_exceeded() });
     }
@@ -111,18 +111,20 @@ pub fn move_into(
 
 /// What the item is worth, measured only when the answer has to be exact.
 ///
-/// A file keeps the allocated size the guard saw: the same unit as every other
-/// byte counter, and what the disk gives back when the session is purged. A
+/// A file is worth the allocated bytes the re-check just saw: the same unit as
+/// every other byte counter, what the disk gives back when the session is
+/// purged, and fresher than the guard's figure should the file have grown. A
 /// directory's planned size is the scan's aggregate and may be stale, but
 /// re-walking a large tree costs real time, so it is only re-measured when
 /// `--max-size` makes the difference matter (`docs/cli-spec.md` §3.4, check 6).
 fn measured_size(
     item: &ApprovedItem,
+    current: &EntryMetadata,
     destination: &Destination<'_>,
     fs: &dyn FileOps,
 ) -> Result<u64, BrozaError> {
     if item.size_verified() {
-        return Ok(item.allocated_bytes());
+        return Ok(current.allocated_bytes);
     }
     if destination.max_size.is_none() {
         return Ok(destination.planned_bytes);

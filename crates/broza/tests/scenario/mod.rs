@@ -77,6 +77,8 @@ pub fn applying() -> WriteRequest {
 ///
 /// The roots give each area the device of the volume that owns it in
 /// [`mac_mount_table`], so `(device, inode)` in a token means what it says.
+/// Every file occupies exactly its size, so the sizes the tests claim are the
+/// allocated bytes the guard compares against (`docs/cli-spec.md` §4.4).
 pub fn fs() -> FakeFileOps {
     FakeFileOps::new()
         .with_root("/", 1)
@@ -85,22 +87,22 @@ pub fn fs() -> FakeFileOps {
         .with_root("/System/Volumes/Data", DATA_DEVICE)
         .with_root("/System/Volumes/VM", 3)
         .with_root("/Volumes/External", 6)
-        .with_sized_file(CACHE, 10)
-        .with_sized_file(OTHER, 20)
-        .with_sized_file("/System/Library/Caches/system.cache", 30)
-        .with_sized_file("/System/Volumes/VM/swapfile0", 40)
-        .with_sized_file(TWIN, 10)
-        .with_sized_file("/Users/dana/Documents/report.pdf", 50)
-        .with_sized_file("/Users/other/Documents/secret.txt", 1)
+        .with_exact_file(CACHE, 10)
+        .with_exact_file(OTHER, 20)
+        .with_exact_file("/System/Library/Caches/system.cache", 30)
+        .with_exact_file("/System/Volumes/VM/swapfile0", 40)
+        .with_exact_file(TWIN, 10)
+        .with_exact_file("/Users/dana/Documents/report.pdf", 50)
+        .with_exact_file("/Users/other/Documents/secret.txt", 1)
         .with_symlink("/Users/dana/Library/Caches/linked", CACHE)
         .with_symlink("/Users/dana/Library/evil", "/Users/dana/Library")
-        .with_sized_file("/Volumes/External/.Trashes/501/old.dmg", 60)
-        .with_sized_file("/System/Volumes/Data/private/var/db/.Trashes/victim", 70)
-        .with_sized_file("/Users/dana/Library/Mobile Documents/synced.key", 70)
+        .with_exact_file("/Volumes/External/.Trashes/501/old.dmg", 60)
+        .with_exact_file("/System/Volumes/Data/private/var/db/.Trashes/victim", 70)
+        .with_exact_file("/Users/dana/Library/Mobile Documents/synced.key", 70)
         .with_dir("/Applications/Other.app")
         .with_dir("/Applications/Safari.app")
         .with_dir(STORE)
-        .with_sized_file(format!("{STORE}/cln_20260921103608_a1b2/items/1/a"), 5)
+        .with_exact_file(format!("{STORE}/cln_20260921103608_a1b2/items/1/a"), 5)
 }
 
 /// An `unused-apps` finding that reported one application only.

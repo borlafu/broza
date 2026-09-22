@@ -157,6 +157,16 @@ impl FakeFileOps {
         self
     }
 
+    /// A file that occupies exactly `size_bytes`: apparent and allocated sizes
+    /// agree, so a test can claim the one number without thinking about blocks.
+    #[must_use]
+    pub fn with_exact_file(self, path: impl AsRef<Path>, size_bytes: u64) -> Self {
+        let path = path.as_ref().to_path_buf();
+        let fs = self.with_sized_file(&path, size_bytes);
+        fs.set_allocated(&path, size_bytes);
+        fs
+    }
+
     /// Add a file whose apparent size is `size_bytes` but that stores no contents.
     #[must_use]
     pub fn with_sized_file(self, path: impl AsRef<Path>, size_bytes: u64) -> Self {

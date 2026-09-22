@@ -82,6 +82,10 @@ impl Detector for LargeOldFiles {
 }
 
 /// Big enough, with one name, and not on another detector's ground.
+///
+/// Symlinks and cloud placeholders never reach here: the walk reports a
+/// placeholder as nothing but a count, and a symlink's own `lstat` size is
+/// its target path, nowhere near the threshold.
 fn is_candidate(file: &FileEntry, skipped: &[PathBuf]) -> bool {
     file.size_bytes >= LARGE_FILE_MIN_BYTES
         && file.link_count <= 1

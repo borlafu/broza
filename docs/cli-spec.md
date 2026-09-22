@@ -1,12 +1,12 @@
 # Broza — CLI Specification
 
-**Specification version:** 1.1
+**Specification version:** 1.2
 **Status:** Approved for implementation
 **Scope:** Phase 1 (open source CLI, MIT)
 **Platform:** macOS 26 and 27 (the two latest major versions), Apple Silicon only
 **Date:** 2026-09-21
 
-> This document supersedes draft 1.0 (`broza-cli-spec.md`, Spanish). All changes relative to 1.0 are listed in §9 "Changelog 1.0 → 1.1". Requirement identifiers (`RF-xx`, `RNF-xx`) refer to the Broza PRD. This specification is normative: "MUST", "MUST NOT", "SHOULD" and "MAY" are used in their RFC 2119 sense.
+> This document supersedes draft 1.0 (`broza-cli-spec.md`, Spanish). All changes relative to 1.0 are listed in §9 "Changelog 1.0 → 1.1" and §10 "Changelog 1.1 → 1.2". Requirement identifiers (`RF-xx`, `RNF-xx`) refer to the Broza PRD. This specification is normative: "MUST", "MUST NOT", "SHOULD" and "MAY" are used in their RFC 2119 sense.
 
 ---
 
@@ -779,7 +779,7 @@ the volume.
 
 | Field | Meaning |
 |---|---|
-| `planned_bytes` | Sum of `size_bytes` of every item in the plan, regardless of outcome. |
+| `planned_bytes` | Sum of `size_bytes` of every item in the plan, regardless of outcome; allocated bytes, like every other counter (a file item takes the allocated size the safety check saw). |
 | `quarantined_bytes` | Bytes moved into quarantine in this run, **allocated** size like every other byte counter (for a file, what `stat` reported at the safety check; for a directory, the scan's aggregate, re-measured only under `--max-size`). **Pending**: still occupying disk until expiry or purge. |
 | `reclaimed_bytes` | Bytes actually freed in this run: `purge` items, `tmutil_delete` items, and sessions expired in the pre-execution step. For a `purge` item the figure is measured immediately before removal, allocated, counting only files with a single hard link (a file that keeps another name frees nothing). |
 
@@ -1055,9 +1055,6 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §8: former "open questions" resolved (node_modules, hashing, last_used, Docker, treemap, snapshot sizes, tmutil privileges) and a deferred list added (treemap, schedule/launchd, native DiskArbitration, per-volume quarantine roots, Docker daemon integration).
 - §9: this changelog.
 - §4 (while 1.1 is unreleased, so no bump): documented what the model of `crates/broza/src/model/` already implements — optional `volumes[].mount_point` (unmounted `Preboot` / `Recovery`), optional `snapshots[].uuid`, optional `clean.quarantine_path`, the `entries` array of `manifest.json` and the item fields `stored_path` / `restored_to`; `type` added to the stable-enum table with pass-through of unknown tokens; unknown-value handling made explicit per enum (verbatim pass-through for the persisted ones, collapse to `unknown` for `role`); `instructions` required for every `inform_only` finding; normative consistency rules for `clean`, and its example renumbered so `planned_bytes` is the sum of the items shown.
-- §2 (M1 safety kernel, unreleased): explicit exit-code rows for safety-kernel refusals (`2`), vanished items (`skipped` + `not_found`), OS permission errors on single items (`failed` + `permission_denied`), and dry runs whose selection is entirely `inform_only` (`0` with a warning).
-- §3.4 (M1, unreleased): confirmation row for natively irreversible actions (`trash`, `snapshots`) without `--purge`.
-- §3.1, §3.2, §4.7 (M2 read-only disk, unreleased): the `scan` and `explain` sketches now show the
   output the implementation actually produces — sizes follow the precision of §1.4 (one decimal
   below a terabyte, so `798.2 GB`, not `798.21 GB`), the free line is labelled `Free`, and the
   purgeable line reads `← estimate; macOS shows this as "available"`. §3.1 documents the
@@ -1066,42 +1063,50 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
   (`kind`, optional `volume` / `category` / `path` / `filesystem`, `explanation`, optional `risk` /
   `action`), states that a path target is resolved lexically and must exist, and records that
   `explain` has no `--csv` form.
-- §3.1 (M2, unreleased): **`scan --csv` emits the volume table**, header
   `disk_id,container_id,volume_id,name,role,mount_point,used_bytes,writable_by_broza`, and not the
   flattened `largest_items` table draft 1.1 named. The two tables sit at different levels — one row
   per volume against one row per path — so a single file holding both would have no stable column
   set, and `largest_items` does not exist until the folder walker lands. It stays available through
   `--json`.
-- §3.1 (M2, unreleased): `--volume` accepts a device id, a volume name or a mount point, the same
   three forms `explain` accepts, matched exactly. A blank value is a usage error (`2`); any other
   value that names nothing is `4`. The folder-walking inputs (`PATH`, `--depth`, `--top`,
   `--min-size`, `--tree`) are accepted and raise the warning `folder_scan_pending`, which
   disappears once the walker is wired.
-- §4.1 (M3, unreleased): item error codes `changed_since_check` and `max_size_exceeded` added.
 - §4.2 and §7 (M2 scanner, unreleased, so no bump): APFS clone accounting stated as best-effort and deferred to post-1.0 (PRD RF-02), cloud placeholders (`SF_DATALESS`) documented as 0 bytes and never listed; new optional `volumes[].uuid`, which the scan cache is filed under, with a `cache_keyed_by_bsd_id` warning when it is missing; cloud-provider roots excluded from the walk by default; §7 states that a subtree is only reused from the cache when nothing in it reaches `--min-size`, which `--min-size 0` therefore disables.
-- §7 (M2, unreleased): the cold-scan budget is restated as a throughput — at least 100 000 entries per second, which is the ten seconds the table always named, for a one-million-entry volume ([ADR 0006](adr/0006-scan-performance-budget.md)). The warm and first-result budgets are unchanged.
-- §3.1 (M2, unreleased): the usage bar never rounds a container that is in use down to an empty bar, nor one with room left up to a full one; a 99.8% full container keeps its last free cell.
-- §4.1 (M3, unreleased): item status `moving` added, for the manifest only.
-- §3.4 (M3, unreleased): `--max-size` spelled out as two checks — exit `2` before execution on the
   scanned total, `max_size_exceeded` per item after re-measurement — and directories are only
   re-measured when a cap is given.
-- §3.5 (M3, unreleased): "atomic per session" replaced. A restore moves each item out of the
   manifest as it succeeds, leaves what failed in quarantine with `state: restoring`, and deletes
   the session only when its directory is empty.
-- §4.5 (M3, unreleased): `expires_at` documented as derived from `created_at` plus the current
   `quarantine-ttl`; the stored value is a cache.
-- §4.1 (M3, unreleased): the envelope codes of the quarantine store are listed.
-- §3.5/§3.8 (M3, unreleased): every operation that writes to a session holds `<session>/.lock`
   for its duration; a session another Broza holds is reported `session_busy` and left alone.
-- §4.1 (M3, unreleased): `lock_unreadable` store code; a lock Broza cannot open never aborts a multi-session run.
-- §3.1 and §4.2 (M2-D, unreleased): the folder walker is wired into `scan`. `largest_items` is populated (allocated sizes, drill-down rule), `--tree` draws the folder tree, `PATH` arguments scan from those paths on the volume they live on (exit `4` on a protected or unknown volume, `2` when relative), progress is drawn on stderr on a TTY, `size_exceeds_volume` warns about clone overcount. The `folder_scan_pending` warning is gone.
-- §3.3, §4.1 and §4.3 (M3, unreleased): `suggest` totals count actionable findings only; `inform_only_bytes` added; paths claimed by two findings are credited once; per-finding risk of `build-cache` listed; orphan `node_modules` criterion narrowed (tool-managed trees excluded, idleness judged by the project's entries); `~/Library/Caches` entries holding non-regenerable data (`LocalHistory`) are opened up around it; detection warning codes `detector_failed`, `location_unreadable`, `finding_dropped`; `--min-size` keeps inform-only findings; human sketch corrected (inform-only line format, ordering, footer). §7: why `suggest` walks cold.
-- §2, §3.4 and §4.1 (M3, unreleased): `broza clean` is implemented (dry run, `--apply` with the confirmation matrix, automatic expiry, `--max-size`, `--exclude`). An inform-only finding inside an actionable category is skipped with `inform_only_skipped` instead of rejecting the plan; a dry run reports due sessions as `expiry_pending`; the store need not exist before the first cleanup; `clean --apply --purge` is "not implemented" (exit `1`) until M4. `clean` warning codes listed in §4.1.
-- §3.5 and §3.8 (M3, unreleased): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.
-- §3.5 (M3, unreleased): `restore` resolves every id before writing (unknown item ids exit `4` too), `--all`/`--session`/`ID…` are mutually exclusive, `--all` reports unreadable sessions in `errors[]`; §5: a zero figure drops only its own part of the parenthesis.
-- §3.4 (M4, unreleased): `purge` items are executed (re-check, remove, allocated bytes to `reclaimed_bytes`); a plan without `quarantine` items creates no session; `clean --apply --purge` works. `trash` detector documented in §3.3.
-- §4.4 (M4, unreleased): `quarantined_bytes` pinned to allocated bytes, like `reclaimed_bytes` and `reclaimable_bytes`.
-- §3.3 and §4.1 (M4, unreleased): `duplicates` detector (`duplicates.home`; scope, size window, kept copy and clone caveat spelled out); `file_report_truncated` warning.
-- §3.3 and §4.1 (M4, unreleased): `large-old-files` detector (`large-old-files.home`, `mdls` through the process port, `spotlight_unavailable` warning).
-- §3.3, §3.4, §4.1, §4.3 and §4.4 (M4, unreleased): `snapshots` detector; snapshot entries carry `volume` and `mount_point`; `tmutil_delete` items are executed through `tmutil deletelocalsnapshots` and carry `items[].snapshot`; `snapshot_needs_admin` warning.
-- §3.4, §4.1, §4.3, §4.4 and §6 (M4, unreleased): snapshot deletion goes through `diskutil apfs deleteSnapshot <volume> -uuid <uuid>` (one snapshot, one volume; ADR 0007) instead of `tmutil deletelocalsnapshots <date>`; snapshot entries and `items[].snapshot` carry the `uuid`; a `tmutil_delete` item must claim `size_bytes: 0`; the `backup` role accepts no action.
+
+## 10. Changelog 1.1 → 1.2
+
+Everything below shipped between 0.2.0 and 0.3.0; the milestone that produced each change is in parentheses.
+
+- §2 (M1 safety kernel): explicit exit-code rows for safety-kernel refusals (`2`), vanished items (`skipped` + `not_found`), OS permission errors on single items (`failed` + `permission_denied`), and dry runs whose selection is entirely `inform_only` (`0` with a warning).
+- §3.4 (M1): confirmation row for natively irreversible actions (`trash`, `snapshots`) without `--purge`.
+- §3.1, §3.2, §4.7 (M2 read-only disk): the `scan` and `explain` sketches now show the
+- §3.1 (M2): **`scan --csv` emits the volume table**, header
+- §3.1 (M2): `--volume` accepts a device id, a volume name or a mount point, the same
+- §4.1 (M3): item error codes `changed_since_check` and `max_size_exceeded` added.
+- §7 (M2): the cold-scan budget is restated as a throughput — at least 100 000 entries per second, which is the ten seconds the table always named, for a one-million-entry volume ([ADR 0006](adr/0006-scan-performance-budget.md)). The warm and first-result budgets are unchanged.
+- §3.1 (M2): the usage bar never rounds a container that is in use down to an empty bar, nor one with room left up to a full one; a 99.8% full container keeps its last free cell.
+- §4.1 (M3): item status `moving` added, for the manifest only.
+- §3.4 (M3): `--max-size` spelled out as two checks — exit `2` before execution on the
+- §3.5 (M3): "atomic per session" replaced. A restore moves each item out of the
+- §4.5 (M3): `expires_at` documented as derived from `created_at` plus the current
+- §4.1 (M3): the envelope codes of the quarantine store are listed.
+- §3.5/§3.8 (M3): every operation that writes to a session holds `<session>/.lock`
+- §4.1 (M3): `lock_unreadable` store code; a lock Broza cannot open never aborts a multi-session run.
+- §3.1 and §4.2 (M2-D): the folder walker is wired into `scan`. `largest_items` is populated (allocated sizes, drill-down rule), `--tree` draws the folder tree, `PATH` arguments scan from those paths on the volume they live on (exit `4` on a protected or unknown volume, `2` when relative), progress is drawn on stderr on a TTY, `size_exceeds_volume` warns about clone overcount. The `folder_scan_pending` warning is gone.
+- §3.3, §4.1 and §4.3 (M3): `suggest` totals count actionable findings only; `inform_only_bytes` added; paths claimed by two findings are credited once; per-finding risk of `build-cache` listed; orphan `node_modules` criterion narrowed (tool-managed trees excluded, idleness judged by the project's entries); `~/Library/Caches` entries holding non-regenerable data (`LocalHistory`) are opened up around it; detection warning codes `detector_failed`, `location_unreadable`, `finding_dropped`; `--min-size` keeps inform-only findings; human sketch corrected (inform-only line format, ordering, footer). §7: why `suggest` walks cold.
+- §2, §3.4 and §4.1 (M3): `broza clean` is implemented (dry run, `--apply` with the confirmation matrix, automatic expiry, `--max-size`, `--exclude`). An inform-only finding inside an actionable category is skipped with `inform_only_skipped` instead of rejecting the plan; a dry run reports due sessions as `expiry_pending`; the store need not exist before the first cleanup; `clean --apply --purge` is "not implemented" (exit `1`) until M4. `clean` warning codes listed in §4.1.
+- §3.5 and §3.8 (M3): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.
+- §3.5 (M3): `restore` resolves every id before writing (unknown item ids exit `4` too), `--all`/`--session`/`ID…` are mutually exclusive, `--all` reports unreadable sessions in `errors[]`; §5: a zero figure drops only its own part of the parenthesis.
+- §3.4 (M4): `purge` items are executed (re-check, remove, allocated bytes to `reclaimed_bytes`); a plan without `quarantine` items creates no session; `clean --apply --purge` works. `trash` detector documented in §3.3.
+- §4.4 (M4): `quarantined_bytes` pinned to allocated bytes, like `reclaimed_bytes` and `reclaimable_bytes`.
+- §3.3 and §4.1 (M4): `duplicates` detector (`duplicates.home`; scope, size window, kept copy and clone caveat spelled out); `file_report_truncated` warning.
+- §3.3 and §4.1 (M4): `large-old-files` detector (`large-old-files.home`, `mdls` through the process port, `spotlight_unavailable` warning).
+- §3.3, §3.4, §4.1, §4.3 and §4.4 (M4): `snapshots` detector; snapshot entries carry `volume` and `mount_point`; `tmutil_delete` items are executed through `tmutil deletelocalsnapshots` and carry `items[].snapshot`; `snapshot_needs_admin` warning.
+- §3.4, §4.1, §4.3, §4.4 and §6 (M4): snapshot deletion goes through `diskutil apfs deleteSnapshot <volume> -uuid <uuid>` (one snapshot, one volume; ADR 0007) instead of `tmutil deletelocalsnapshots <date>`; snapshot entries and `items[].snapshot` carry the `uuid`; a `tmutil_delete` item must claim `size_bytes: 0`; the `backup` role accepts no action.

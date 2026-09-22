@@ -77,9 +77,26 @@ pub fn caches(paths: &[(&str, u64)]) -> Vec<Finding> {
     ]
 }
 
+/// The same pairs with each file's size replaced by what it occupies on the
+/// fake filesystem: plans claim allocated bytes (`docs/cli-spec.md` §4.4), and
+/// the guard refuses a claim below that. A directory keeps the size given.
+fn occupied<'a>(fs: &FakeFileOps, paths: &[(&'a str, u64)]) -> Vec<(&'a str, u64)> {
+    paths
+        .iter()
+        .map(|(path, size_bytes)| {
+            let allocated = fs
+                .metadata(Path::new(path))
+                .ok()
+                .filter(|meta| !meta.is_dir)
+                .map(|meta| meta.allocated_bytes);
+            (*path, allocated.unwrap_or(*size_bytes))
+        })
+        .collect()
+}
+
 /// Plan, check and confirm a cleanup of `paths`, exactly as the CLI will.
 pub fn approved(fs: &FakeFileOps, id: &SessionId, paths: &[(&str, u64)]) -> Approved<Write> {
-    let findings = caches(paths);
+    let findings = caches(&occupied(fs, paths));
     let outcome = plan_dry_run(&findings, &Selection::everything(), id.clone(), None)
         .unwrap_or_else(|error| panic!("{error}"));
     let request = WriteRequest {

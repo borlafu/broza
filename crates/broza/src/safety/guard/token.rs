@@ -134,7 +134,8 @@ impl ApprovedItem {
         self.is_dir
     }
 
-    /// `true` when [`Self::size_bytes`] is what the guard measured itself.
+    /// `true` when the sizes of this item are the leaf's own, measured by the
+    /// guard, rather than the scanner's aggregate of a subtree.
     ///
     /// Only files are measured: `lstat` on a directory reports the size of the
     /// directory entry, not of its contents, and the guard does not walk trees.

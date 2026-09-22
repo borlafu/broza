@@ -365,3 +365,23 @@ fn the_fake_refuses_a_rename_across_devices_like_exdev() {
     assert_eq!(source.raw_os_error(), Some(EXDEV));
     assert!(subject.fs.exists(&from), "the source must survive a failed rename");
 }
+
+#[test]
+fn read_range_answers_the_same_slice_everywhere() {
+    let len = FILE_CONTENTS.len();
+    for subject in subjects() {
+        assert_eq!(subject.read_range(FILE, 0, 0), b"", "{}: zero length", subject.name);
+        assert_eq!(subject.read_range(FILE, 0, len + 10), FILE_CONTENTS, "{}: past the end", subject.name);
+        assert_eq!(subject.read_range(FILE, 1, 3), &FILE_CONTENTS[1..4], "{}: a slice", subject.name);
+        assert_eq!(subject.read_range(FILE, len as u64, 4), b"", "{}: at the end", subject.name);
+        assert_eq!(subject.read_range(FILE, len as u64 + 7, 4), b"", "{}: beyond the end", subject.name);
+    }
+}
+
+#[test]
+fn hash_file_is_the_blake3_of_the_contents_everywhere() {
+    let expected = broza::ports::ContentHash(*blake3::hash(FILE_CONTENTS).as_bytes());
+    for subject in subjects() {
+        assert_eq!(subject.hash_file(FILE), expected, "{}", subject.name);
+    }
+}

@@ -13,6 +13,7 @@ use crate::model::{
     Category, Finding, FindingPath, ItemStatus, QuarantineEntry, QuarantineSession, SessionId, SessionState,
 };
 use crate::ports::Answer;
+use crate::ports::FileOps;
 use crate::quarantine::layout;
 use crate::quarantine::mover::{MoveRequest, quarantine_items};
 use crate::safety::guard::{
@@ -114,6 +115,24 @@ pub fn caches(paths: &[(&str, u64)]) -> Vec<Finding> {
     vec![finding]
 }
 
+/// The same pairs with each file's size replaced by what it occupies on the
+/// fake filesystem: plans claim allocated bytes (`docs/cli-spec.md` §4.4), and
+/// the guard refuses a claim below that. A directory keeps the size given, as
+/// the scanner's aggregate would be.
+fn occupied<'a>(fs: &FakeFileOps, paths: &[(&'a str, u64)]) -> Vec<(&'a str, u64)> {
+    paths
+        .iter()
+        .map(|(path, size_bytes)| {
+            let allocated = fs
+                .metadata(Path::new(path))
+                .ok()
+                .filter(|meta| !meta.is_dir)
+                .map(|meta| meta.allocated_bytes);
+            (*path, allocated.unwrap_or(*size_bytes))
+        })
+        .collect()
+}
+
 /// A token for quarantining `paths`, produced by the real safety kernel.
 ///
 /// Going through [`approve`] rather than forging a token is the point: the unit
@@ -134,7 +153,7 @@ fn approved_write_for(
     paths: &[(&str, u64)],
     quarantine_root: Option<PathBuf>,
 ) -> Approved<Write> {
-    let findings = caches(paths);
+    let findings = caches(&occupied(fs, paths));
     let outcome = plan_dry_run(&findings, &Selection::everything(), session_id(), None)
         .unwrap_or_else(|error| panic!("{error}"));
     let request = WriteRequest { apply: true, tty: true, quarantine_root, ..WriteRequest::new(HOME) };

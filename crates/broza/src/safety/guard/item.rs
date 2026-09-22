@@ -232,14 +232,15 @@ fn check_under_an_allowed_root(
     })
 }
 
-/// A plan may not claim less than the file on disk actually holds.
+/// A plan may not claim less than the file on disk actually occupies.
 ///
-/// `--max-size` and the summary are computed from the observed size, so a plan
-/// that under-reports would slip past the cap. Directories keep the size the
-/// scanner aggregated for their whole subtree: `lstat` only sees the directory
-/// entry itself.
+/// `--max-size` and every byte counter are allocated bytes (`docs/cli-spec.md`
+/// §4.4), so the claim is compared with the allocated size `lstat` reports: a
+/// plan that under-reports would slip past the cap. Directories keep the size
+/// the scanner aggregated for their whole subtree: `lstat` only sees the
+/// directory entry itself.
 fn check_size_not_understated(item: &CleanItem, checked: &CanonicalPath) -> Result<(), GuardRejection> {
-    let observed = checked.metadata.size_bytes;
+    let observed = checked.metadata.allocated_bytes;
     if checked.metadata.is_dir || item.size_bytes >= observed {
         return Ok(());
     }

@@ -67,8 +67,10 @@ fn rebuilt_item(item: &CleanItem, kind: &OutcomeKind) -> CleanItem {
         OutcomeKind::Approved(approved) => CleanItem {
             path: approved.path().to_path_buf(),
             // A directory's size was aggregated by the scanner; `lstat` only sees
-            // the directory entry, so the scanned figure is the useful one.
-            size_bytes: if approved.is_dir() { item.size_bytes } else { approved.size_bytes() },
+            // the directory entry, so the scanned figure is the useful one. A
+            // file takes the allocated size the check saw: the unit of every
+            // byte counter (`docs/cli-spec.md` §4.4).
+            size_bytes: if approved.is_dir() { item.size_bytes } else { approved.allocated_bytes() },
             ..item.clone()
         },
         OutcomeKind::Missing => CleanItem {

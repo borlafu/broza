@@ -26,7 +26,7 @@ pub(super) fn file_report_warning(
             "{} holds more files above the reporting threshold than the {} kept; duplicates and large \
              old files were looked for among the biggest ones only",
             entry.volume.name,
-            walked.files.len()
+            request.file_report().top
         ),
         path: Some(entry.mount_point.clone()),
     })

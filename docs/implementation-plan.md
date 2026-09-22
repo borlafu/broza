@@ -340,7 +340,7 @@ M4 progress:
       re-check, or `Snapshot { mount_point, device, snapshot }` with none; every write goes through
       `ApprovedItem::writable()`, so a consumer of `token.items()` cannot mistake a snapshot for a
       path (review of 9680047, LOW). The applied `clean` envelope has a JSON snapshot test.
-- [x] `quarantined_bytes` is allocated bytes like every other counter (`ApprovedItem::allocated_bytes`,
+- [x] `quarantined_bytes` is allocated bytes like every other counter (`WritablePath::allocated_bytes`,
       `quarantine/attempt.rs::measured_size`); §4.4 pinned.
 - [x] `suggest` under 15 s on the development machine. Cache layout 2 (ADR 0008): records carry
       their child directories and their files from 1 MB, so an unchanged subtree is served whole

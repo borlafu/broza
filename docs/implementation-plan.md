@@ -414,6 +414,11 @@ M5 progress:
       dist 0.32 writes `steps.cargo-cyclonedx.output.paths`, which uploads nothing; `allow-dirty =
       ["ci"]` keeps the fix); CI builds `--locked`; signing and notarization stay Phase 2.
 - [x] 6. README, PRD §16 traceability ("Covered by" column), spec 1.3.
+- [ ] Open after review, post-1.0: a time budget for the cloud-root walks (a slow File Provider can
+      stall `suggest`; bounded today only by the provider not descending into evicted directories);
+      a warning for a symlinked `scan <PATH>` root (today reported as the link's own size);
+      leftovers under `~/Library/Caches` are credited to `user-cache` when both run, so
+      `clean --category unused-apps` plans items `suggest` showed under `user-cache`.
 - [ ] Review; release 1.0.
 
 ## 5. Testing strategy

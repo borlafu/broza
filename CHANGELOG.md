@@ -4,6 +4,32 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
+## [Unreleased]
+
+The last two categories, the safety kernel closing the cloud-root gap, and the supply-chain
+pieces a 1.0 needs.
+
+### Added
+
+- `cloud-synced`: one inform-only finding per provider present (iCloud Drive, Dropbox, OneDrive,
+  Google Drive, other File Provider roots) with the local bytes the provider could release and
+  its official steps. Broza never deletes a synced file.
+- `unused-apps`: applications not opened for `--unused-after` by Spotlight's record (amber),
+  applications Spotlight has no record of (red, inform only, with steps to check them by hand),
+  and leftovers of uninstalled applications under `~/Library` caches, logs, HTTP storage and saved
+  state, matched by bundle identifier (amber).
+- A CycloneDX SBOM in every release; the PRD traceability table names the tests behind each
+  requirement.
+
+### Changed
+
+- The safety kernel refuses any plan item under a cloud-provider root, whatever detector named it
+  and however the path is spelled (`InsideCloudRoot`, exit `2`). The five roots are excluded from
+  the home walk as well.
+- `scan <PATH>` exits `3` when macOS refuses to list the named path itself; a refusal inside stays
+  a warning, and the hint names the setting to change. `suggest` and `clean` keep going.
+- `large-old-files` and `unused-apps` share one Spotlight (`mdls`) helper.
+
 ## [0.3.0] — 2026-09-22
 
 The amber detectors, irreversible deletion behind a typed `PURGE`, and a scan cache that lets

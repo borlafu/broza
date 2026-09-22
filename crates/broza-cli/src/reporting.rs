@@ -73,6 +73,11 @@ pub fn report_error(error: &BrozaError, global: &GlobalArgs) -> ExitCode {
             source = cause.source();
         }
     }
+    // A refusal that ended the command gets the same hint a skipped path does
+    // (§6): the fix is the same setting.
+    if matches!(error, BrozaError::PermissionDenied { .. }) {
+        let _ignored = writeln!(stderr, "{FULL_DISK_ACCESS_HINT}");
+    }
     ExitCode::from(error)
 }
 

@@ -93,13 +93,18 @@ pub fn walk(
     if settings.show_progress {
         clear_progress();
     }
-    let scans = scans?;
-    // A path the user named that macOS would not let Broza read at all: the
-    // scan was impossible without the permission, exit `3` (§6).
-    if let Some(refused) = refused_root(&scans) {
-        return Err(BrozaError::PermissionDenied { path: refused.to_path_buf() });
-    }
+    let scans = refused_named_root(scans?, !args.paths.is_empty())?;
     Ok(results_of(scans, &selected, request.top))
+}
+
+/// A path the user named that macOS would not let Broza read at all makes the
+/// scan impossible without the permission: exit `3` (§6). A volume-wide scan
+/// whose mount point cannot be listed is an empty volume with a warning.
+fn refused_named_root(scans: Vec<VolumeScan>, named: bool) -> Result<Vec<VolumeScan>, BrozaError> {
+    match refused_root(&scans).filter(|_| named) {
+        Some(refused) => Err(BrozaError::PermissionDenied { path: refused.to_path_buf() }),
+        None => Ok(scans),
+    }
 }
 
 /// The request `suggest` walks the home with: every directory measured, nothing
@@ -245,6 +250,45 @@ mod tests {
         }
     }
 
+    /// A volume scan with nothing in it, for tests about the flags around it.
+    fn sample_scan() -> VolumeScan {
+        let root = broza::scan::DirNode {
+            path: PathBuf::from("/System/Volumes/Data"),
+            size_bytes: 0,
+            allocated_bytes: 0,
+            file_count: 0,
+            dir_count: 0,
+            dataless_count: 0,
+            largest_item_bytes: 0,
+            has_hard_links: false,
+            has_truncation: true,
+            device: 2,
+            inode: 1,
+            mtime: None,
+            children_truncated: true,
+            from_cache: false,
+        };
+        VolumeScan {
+            volume_id: "disk3s5".parse().unwrap(),
+            root,
+            largest: Vec::new(),
+            tree: TreeView {
+                root: broza::scan::TreeNode {
+                    name: "Data".into(),
+                    path: PathBuf::from("/System/Volumes/Data"),
+                    size_bytes: 0,
+                    percent_of_parent: 100.0,
+                    other_bytes: 0,
+                    children: Vec::new(),
+                },
+            },
+            warnings: Vec::new(),
+            nodes: Vec::new(),
+            files: Vec::new(),
+            root_refused: false,
+        }
+    }
+
     fn settings() -> FolderSettings {
         FolderSettings {
             home: Some(PathBuf::from("/Users/dana")),
@@ -346,6 +390,17 @@ mod tests {
 
         assert_eq!(good.min_size, 2_000_000_000);
         assert!(matches!(bad, Some(BrozaError::Usage(_))), "{bad:?}");
+    }
+
+    #[test]
+    fn only_a_named_root_macos_refused_ends_the_scan() {
+        let refused = VolumeScan { root_refused: true, ..sample_scan() };
+
+        let named = refused_named_root(vec![refused.clone()], true);
+        let whole_volume = refused_named_root(vec![refused], false);
+
+        assert!(matches!(named, Err(BrozaError::PermissionDenied { .. })), "{named:?}");
+        assert!(whole_volume.is_ok(), "an unreadable mount point is a warning, not an error");
     }
 
     #[test]

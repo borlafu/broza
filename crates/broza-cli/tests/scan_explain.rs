@@ -204,6 +204,21 @@ fn scan_of_a_path_walks_only_that_path() {
     assert!(!text.contains("DerivedData"), "{text}");
 }
 
+/// §6: a path the user names that macOS refuses to list is exit `3`; the same
+/// folder inside a volume-wide scan is a warning and the scan goes on.
+#[test]
+fn a_named_path_macos_refuses_exits_three_while_the_volume_scan_only_warns() {
+    let (code, stderr) = failure_of(&["scan", "/System/Volumes/Data/Users/dana/Library/Accounts"]);
+    let whole = json_of(&["scan", "--json", "--volume", "disk3s5"]);
+
+    assert_eq!(code, Some(3), "{stderr}");
+    assert!(stderr.contains("Full Disk Access"), "{stderr}");
+    assert!(
+        whole["warnings"].as_array().is_some_and(|w| w.iter().any(|w| w["code"] == "permission_denied")),
+        "{whole}"
+    );
+}
+
 #[test]
 fn suggest_lists_the_green_categories_of_the_recorded_home() {
     let text = stdout_of(&["suggest"]);

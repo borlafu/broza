@@ -55,12 +55,19 @@ fn is_installed(id: &str, installed: &BTreeSet<String>) -> bool {
         })
 }
 
-/// The latest modification time of the directory and of the directories one
-/// level inside it. A directory's own mtime moves only when a direct entry is
-/// added or removed; a file rewritten deeper down changes its parent's, so the
-/// children are consulted too. `None` when nothing has a time.
+/// The latest modification time of the directory and of everything directly
+/// inside it, files included. A directory's own mtime moves only when a direct
+/// entry is added or removed, not when a file in it is rewritten, so the
+/// entries are read once. `None` when the directory cannot be listed or nothing
+/// has a time: an unknown age is never "untouched".
 fn newest_change(context: &DetectContext<'_>, node: &DirNode) -> Option<jiff::Timestamp> {
-    context.children_of(&node.path).filter_map(|child| child.mtime).chain(node.mtime).max()
+    let entries = context.fs.read_dir_with_metadata(&node.path).ok()?;
+    entries
+        .into_iter()
+        .filter_map(|(_, meta)| meta.ok().and_then(|meta| meta.modified))
+        .chain(context.children_of(&node.path).filter_map(|child| child.mtime))
+        .chain(node.mtime)
+        .max()
 }
 
 /// The bundle identifier a leftover directory is named after, when it is one.
@@ -103,10 +110,12 @@ mod tests {
     use super::super::tests::{H, LATELY, LONG_AGO, at, detect, everything_recent, finding, fs, paths};
     use super::*;
 
+    /// A leftover directory holding one file, both last touched at `touched`.
     fn leftover(fs: &crate::testing::FakeFileOps, dir: &str, size: u64, touched: &str) {
         let file = format!("{H}/{dir}/data.bin");
         fs.add_file(&file, &[]);
         fs.set_size(&file, size);
+        fs.set_times(&file, at(touched), at(touched));
         fs.set_times(format!("{H}/{dir}"), at(touched), at(touched));
     }
 
@@ -125,6 +134,9 @@ mod tests {
         leftover(&fs, "Library/Logs/org.busy.Daemon", 400_000_000, LONG_AGO);
         fs.add_file(format!("{H}/Library/Logs/org.busy.Daemon/today/log.txt"), b"x");
         fs.set_times(format!("{H}/Library/Logs/org.busy.Daemon/today"), at(LATELY), at(LATELY));
+        // Old directory whose one log file is rewritten in place: still in use too.
+        leftover(&fs, "Library/Logs/org.chatty.Agent", 400_000_000, LONG_AGO);
+        fs.set_times(format!("{H}/Library/Logs/org.chatty.Agent/data.bin"), at(LATELY), at(LATELY));
 
         let detected = detect(&fs, everything_recent());
 
@@ -135,8 +147,8 @@ mod tests {
                 format!("{H}/Library/Caches/com.gone.Tool"),
                 format!("{H}/Library/Saved Application State/net.gone.Viewer.savedState"),
             ],
-            "installed, helpers of installed, Apple's, plain-named, recently touched, busy inside and \
-             Application Support entries stay: {detected:?}"
+            "installed, helpers of installed, Apple's, plain-named, recently touched, busy inside, \
+             rewritten in place and Application Support entries stay: {detected:?}"
         );
     }
 

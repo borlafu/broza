@@ -381,6 +381,11 @@ expression: "json_of(&[\"scan\", \"--json\"])"
   "schema_version": "1.1",
   "warnings": [
     {
+      "code": "permission_denied",
+      "message": "permission denied: /System/Volumes/Data/Users/dana/Library/Accounts",
+      "path": "/System/Volumes/Data/Users/dana/Library/Accounts"
+    },
+    {
       "code": "size_exceeds_volume",
       "message": "Data measures 435400019968 bytes but macOS reports 409422745600 in use on the volume. Each APFS clone is counted separately, so the sizes listed are upper bounds until clone accounting lands; the volume figure also includes snapshots and metadata a walk never sees.",
       "path": "/System/Volumes/Data"

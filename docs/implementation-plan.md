@@ -363,6 +363,57 @@ is impossible); SBOM in releases; `--locked` reproducible build; README complete
 Exit criteria: `clean --apply` on any `cloud-synced` finding → exit 2; traceability table (§6)
 fully covered by tests; coverage ≥ 80%; tag `v1.0.0`.
 
+Design decisions (M5, 2026-09-22):
+
+1. **`cloud-synced`**: one finding per provider present, `cloud-synced.<provider>` with
+   `provider` ∈ `icloud`, `dropbox`, `onedrive`, `google-drive`, `other`. Roots: iCloud Drive at
+   `~/Library/Mobile Documents`; File Provider roots at `~/Library/CloudStorage/<Provider>-<account>`
+   grouped by the name's prefix (`Dropbox`, `OneDrive`, `GoogleDrive`; anything else is `other`);
+   the legacy `~/Dropbox`, `~/OneDrive`, `~/Google Drive` when present. The home walk keeps
+   excluding these roots; the detector walks each root itself with the walker (no cache), which
+   never descends into a dataless directory and counts a dataless file as 0 bytes, so it measures
+   the disk and not the network. `reclaimable_bytes` is the local **allocated** bytes of the roots
+   (what the provider could evict), `item_count` the local files, `paths[]` the roots. Always red,
+   `inform_only`, with the provider's official steps in `instructions` (RF-19, D3). A root that
+   cannot be read is `location_unreadable`.
+2. **`unused-apps`**: three findings. `unused-apps.applications` (amber, quarantine): `*.app`
+   directly under `/Applications` and `~/Applications` whose Spotlight `kMDItemLastUsedDate`
+   (`mdls`, the shared helper) is older than `--unused-after`; sized with `measure_dir_bytes`
+   for the candidates only. `unused-apps.unverified` (red, quarantine): the same for apps
+   Spotlight has no date for, judged by the bundle's own times, and stated as low confidence;
+   red means Broza will not act on them (`clean --apply --risk red` is refused), the list is for
+   the user. `unused-apps.leftovers` (amber, quarantine): entries directly under
+   `~/Library/{Application Support, Caches, Containers, Preferences, Saved Application State,
+   Logs, HTTPStorages, WebKit}` whose name is a reverse-DNS bundle identifier (three or more
+   dot-separated labels, not `com.apple.*`) that no installed application carries
+   (`CFBundleIdentifier` of every `*.app` under `/Applications`, `~/Applications`,
+   `/System/Applications`), older than `--unused-after` by the node's mtime, sized from the home
+   walk. Bundle identifiers are read from `Contents/Info.plist` with `plist` through `FileOps`.
+3. **Shared Spotlight helper**: the `mdls` wrapper of `large-old-files` moves to
+   `detect/spotlight.rs` (one question per path, none after the first failure, one
+   `spotlight_unavailable` warning) and both detectors use it.
+4. **Full Disk Access path**: the `permission_denied_summary` warning names the setting
+   (System Settings → Privacy & Security → Full Disk Access; add the terminal or the `broza`
+   binary). A `scan <PATH>` whose root itself cannot be read for lack of permission is
+   `BrozaError::PermissionDenied` (exit `3`): the operation was impossible. Everything else stays a
+   warning (§6).
+5. **Supply chain (RNF-05)**: `dist` generates a CycloneDX SBOM in the release job
+   (`cargo-cyclonedx = true` in `dist-workspace.toml`, `dist generate` regenerates the workflow);
+   CI and the release job build with `--locked`; signing and notarization stay Phase 2 (they need
+   the Developer ID the GUI needs anyway) and the README says so.
+6. **Docs**: README roadmap and category table updated for 1.0; PRD §16 traceability gains the
+   test that covers each row; spec version 1.3 with the M5 changes in §11.
+
+M5 progress:
+
+- [ ] 1. `cloud-synced` detector (`detect/detectors/cloud_synced.rs`).
+- [ ] 2. Shared Spotlight helper (`detect/spotlight.rs`).
+- [ ] 3. `unused-apps` detector (`detect/detectors/unused_apps.rs`).
+- [ ] 4. Full Disk Access wording and exit `3` for an unreadable scan root.
+- [ ] 5. SBOM in the release job; `--locked` everywhere.
+- [ ] 6. README, PRD §16 traceability, spec 1.3.
+- [ ] Review; release 1.0.
+
 ## 5. Testing strategy
 
 - TDD for every module: failing test, implementation, refactor.

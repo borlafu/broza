@@ -7,7 +7,7 @@ expression: envelope
   "command": "suggest",
   "data": {
     "by_risk": {
-      "amber": 34700005376,
+      "amber": 36200005632,
       "green": 297700003840,
       "red": 0
     },
@@ -158,6 +158,25 @@ expression: envelope
       {
         "action": "quarantine",
         "actionable": true,
+        "category": "duplicates",
+        "description": "Identical copies of the same file under your home; the oldest copy of each is kept.",
+        "id": "duplicates.home",
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/System/Volumes/Data/Users/dana/Desktop/Xcode-installer copy.dmg",
+            "size_bytes": 1500000256
+          }
+        ],
+        "reasoning": "1 group(s) of files with identical contents; the copy modified first is kept and the others are proposed. An APFS clone reads as a duplicate but shares its blocks with the original, so removing it frees nothing.",
+        "reclaimable_bytes": 1500000256,
+        "risk": "amber",
+        "title": "Duplicate files"
+      },
+      {
+        "action": "quarantine",
+        "actionable": true,
         "category": "large-old-files",
         "description": "Files of 1 GB or more under your home, outside ~/Library, that nothing has opened or changed for longer than the unused-after threshold.",
         "id": "large-old-files.home",
@@ -176,7 +195,7 @@ expression: envelope
       }
     ],
     "inform_only_bytes": 38600003584,
-    "total_reclaimable_bytes": 332400009216
+    "total_reclaimable_bytes": 333900009472
   },
   "errors": [],
   "generated_at": "[timestamp]",

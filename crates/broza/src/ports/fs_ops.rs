@@ -69,6 +69,13 @@ pub struct EntryMetadata {
     pub accessed: Option<Timestamp>,
 }
 
+/// The BLAKE3 hash of a file's whole contents.
+///
+/// Two files with the same hash hold the same bytes, for every purpose Broza
+/// has: the duplicates detector compares these, never the files again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContentHash(pub [u8; 32]);
+
 /// Filesystem reads and writes.
 ///
 /// # Every answer is already out of date
@@ -124,6 +131,22 @@ pub trait FileOps: Send + Sync {
     fn write_atomic(&self, path: &Path, contents: &[u8]) -> Result<(), BrozaError>;
     /// Read a whole file.
     fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError>;
+    /// The first `len` bytes of a file; fewer when the file is shorter.
+    ///
+    /// The default reads the whole file and keeps the front, which is what a
+    /// fake can afford; the real adapter reads only that much.
+    fn read_prefix(&self, path: &Path, len: usize) -> Result<Vec<u8>, BrozaError> {
+        let mut bytes = self.read(path)?;
+        bytes.truncate(len);
+        Ok(bytes)
+    }
+    /// The [`ContentHash`] of a whole file.
+    ///
+    /// The default hashes what [`FileOps::read`] returns; the real adapter
+    /// streams the file through the hasher instead of holding it in memory.
+    fn hash_file(&self, path: &Path) -> Result<ContentHash, BrozaError> {
+        Ok(ContentHash(*blake3::hash(&self.read(path)?).as_bytes()))
+    }
     /// Create one directory, failing when something is already at `path`.
     ///
     /// `mkdir(2)`: the parent must exist, and an existing `path` is refused with

@@ -65,7 +65,7 @@ const FIRMLINKS: &[u8] = b"/Applications\tApplications\n\
 /// A handful of sized files on the Data volume, so a replayed `scan` has
 /// consumers to list. Sizes are round on purpose: they are a fixture, not a
 /// recording, and the snapshot should read as one.
-const RECORDED_FILES: [(&str, u64); 8] = [
+const RECORDED_FILES: [(&str, u64); 10] = [
     ("/System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o", 212_400_000_000),
     ("/System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db", 84_100_000_000),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", 61_700_000_000),
@@ -73,6 +73,8 @@ const RECORDED_FILES: [(&str, u64); 8] = [
     ("/System/Volumes/Data/Users/dana/Library/Logs/App/app.log", 1_200_000_000),
     ("/System/Volumes/Data/Users/dana/.Trash/old-disk-image.dmg", 3_300_000_000),
     (OLD_MOVIE, 4_200_000_000),
+    (INSTALLER, 1_500_000_000),
+    (INSTALLER_COPY, 1_500_000_000),
     (
         "/System/Volumes/Data/Users/dana/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
         38_600_000_000,
@@ -85,11 +87,21 @@ const OLD_MOVIE_TOUCHED: &str = "2019-08-10T14:00:00Z";
 /// What Spotlight answers for each big file under the home, as `mdls
 /// -name kMDItemLastUsedDate -raw` prints it: the movie was last opened in
 /// 2020, the thesis this summer, and the orphan module is unknown to it.
-const SPOTLIGHT_ANSWERS: [(&str, &str); 3] = [
+const SPOTLIGHT_ANSWERS: [(&str, &str); 5] = [
     (OLD_MOVIE, "2020-01-05 18:30:00 +0000"),
+    (INSTALLER, "(null)"),
+    (INSTALLER_COPY, "(null)"),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", "2026-08-01 09:00:00 +0000"),
     ("/System/Volumes/Data/Users/dana/code/old-site/node_modules/left-pad/index.js", "(null)"),
 ];
+/// An installer downloaded once and copied to the desktop: a duplicate pair.
+/// The recording has no file contents, so equal sizes hash equal, as two real
+/// copies would.
+const INSTALLER: &str = "/System/Volumes/Data/Users/dana/Downloads/Xcode-installer.dmg";
+const INSTALLER_COPY: &str = "/System/Volumes/Data/Users/dana/Desktop/Xcode-installer copy.dmg";
+/// When the download landed: before the copy's default time, so the download
+/// is the one kept, and within the year, so neither is a large old file.
+const INSTALLER_TOUCHED: &str = "2025-12-01T09:00:00Z";
 /// The home directory of the recorded machine, in the spelling its files use.
 ///
 /// The seam swaps the filesystem for the recording, so the real `$HOME` of the
@@ -146,6 +158,9 @@ fn filesystem() -> FakeFileOps {
     }
     if let Ok(touched) = OLD_MOVIE_TOUCHED.parse::<Timestamp>() {
         fs.set_times(OLD_MOVIE, touched, touched);
+    }
+    if let Ok(touched) = INSTALLER_TOUCHED.parse::<Timestamp>() {
+        fs.set_times(INSTALLER, touched, touched);
     }
     fs
 }

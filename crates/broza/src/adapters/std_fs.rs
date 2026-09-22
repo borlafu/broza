@@ -19,7 +19,7 @@
 //! against the documented errno rather than against hardware.
 
 use std::fs::{self, Permissions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::BrozaError;
 use crate::adapters::io_error::from_io;
 use crate::adapters::std_fs_exclusive as exclusive;
-use crate::ports::{DirListing, EntryMetadata, FileOps, FsLock, RenameMode};
+use crate::ports::{ContentHash, DirListing, EntryMetadata, FileOps, FsLock, RenameMode};
 
 /// Size of the blocks `st_blocks` counts, fixed at 512 bytes by POSIX.
 const STAT_BLOCK_BYTES: u64 = 512;
@@ -131,6 +131,22 @@ impl FileOps for StdFileOps {
 
     fn read(&self, path: &Path) -> Result<Vec<u8>, BrozaError> {
         fs::read(path).map_err(|source| from_io(format!("read {}", path.display()), path, source))
+    }
+
+    fn read_prefix(&self, path: &Path, len: usize) -> Result<Vec<u8>, BrozaError> {
+        let context = || format!("read the start of {}", path.display());
+        let file = fs::File::open(path).map_err(|source| from_io(context(), path, source))?;
+        let mut bytes = Vec::with_capacity(len);
+        file.take(len as u64).read_to_end(&mut bytes).map_err(|source| from_io(context(), path, source))?;
+        Ok(bytes)
+    }
+
+    fn hash_file(&self, path: &Path) -> Result<ContentHash, BrozaError> {
+        let context = || format!("hash {}", path.display());
+        let mut file = fs::File::open(path).map_err(|source| from_io(context(), path, source))?;
+        let mut hasher = blake3::Hasher::new();
+        std::io::copy(&mut file, &mut hasher).map_err(|source| from_io(context(), path, source))?;
+        Ok(ContentHash(*hasher.finalize().as_bytes()))
     }
 
     fn create_dir_exclusive(&self, path: &Path) -> Result<(), BrozaError> {

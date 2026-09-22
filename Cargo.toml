@@ -39,6 +39,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSValue",
 ] }
 rayon = "1"
+blake3 = "1"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
 
 [workspace.lints.rust]

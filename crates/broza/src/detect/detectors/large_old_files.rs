@@ -2,7 +2,7 @@
 //! (`docs/cli-spec.md` §3.3).
 //!
 //! One finding, `large-old-files.home`, amber and `quarantine`. The candidates
-//! are the files of at least [`DETECTOR_FILES_MIN_BYTES`] the home walk
+//! are the files of at least [`LARGE_FILE_MIN_BYTES`] among those the home walk
 //! reported, outside `~/Library` (application-managed, other detectors' ground)
 //! and `~/.Trash` (the trash detector's). For each, `last_used` is
 //! `max(atime, kMDItemLastUsedDate)`, Spotlight asked through `mdls` on the
@@ -22,11 +22,13 @@ use jiff::Timestamp;
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, FindingPath};
 use crate::ports::{EntryMetadata, ProcessRunner};
-use crate::scan::{DETECTOR_FILES_MIN_BYTES, FileEntry};
+use crate::scan::FileEntry;
 
 use super::support::{by_size_then_path, finish, path_with, start};
 use crate::detect::detector::{DetectContext, Detected, Detector, first_line};
 
+/// A file is large from 1 GB, counted the way Finder counts.
+pub const LARGE_FILE_MIN_BYTES: u64 = 1_000_000_000;
 /// Spotlight's metadata query tool.
 pub const MDLS: &str = "/usr/bin/mdls";
 /// The one attribute Broza asks for, raw: one line, or `(null)`. The path
@@ -84,7 +86,7 @@ impl Detector for LargeOldFiles {
 
 /// Big enough, and not on another detector's ground.
 fn is_candidate(file: &FileEntry, skipped: &[PathBuf]) -> bool {
-    file.size_bytes >= DETECTOR_FILES_MIN_BYTES && !skipped.iter().any(|dir| file.path.starts_with(dir))
+    file.size_bytes >= LARGE_FILE_MIN_BYTES && !skipped.iter().any(|dir| file.path.starts_with(dir))
 }
 
 /// One proposed file, and whether Spotlight had a say in it.

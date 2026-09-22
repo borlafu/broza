@@ -26,11 +26,12 @@ pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// the provider's copy to the provider, which is also what invariant §2.5 asks.
 pub const CLOUD_ROOTS: [&str; 2] = ["Library/Mobile Documents", "Library/CloudStorage"];
 /// Smallest file the home walk of `suggest` reports one by one: the
-/// `large-old-files` threshold, 1 GB counted the way Finder counts.
-pub const DETECTOR_FILES_MIN_BYTES: u64 = 1_000_000_000;
-/// Most files that walk keeps, the biggest first; a home with more of them
-/// this big is not one the detectors need to see in full.
-pub const DETECTOR_FILES_TOP: usize = 10_000;
+/// `duplicates` threshold, 1 MB counted the way Finder counts. The
+/// `large-old-files` detector keeps only the 1 GB ones of those.
+pub const DETECTOR_FILES_MIN_BYTES: u64 = 1_000_000;
+/// Most files that walk keeps, the biggest first: a bound on memory, not a
+/// promise to see every last one on a home with more.
+pub const DETECTOR_FILES_TOP: usize = 200_000;
 
 /// Which files a walk reports one by one ([`crate::scan::WalkResult::files`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

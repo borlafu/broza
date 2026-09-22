@@ -330,8 +330,12 @@ M4 progress:
 - [x] 6. `ios-simulators` detector (`detect/detectors/ios_simulators.rs`; recorded
       `simctl_devices.json` beside the plist recordings).
 - [x] 7. `large-old-files` detector (`detect/detectors/large_old_files.rs`; the home walk reports
-      files of at least 1 GB through `ScanRequest.file_report`).
-- [ ] 8. `duplicates` detector.
+      files of at least 1 MB through `ScanRequest.file_report`, and the detector keeps the 1 GB ones).
+- [x] 8. `duplicates` detector (`detect/detectors/duplicates.rs`; `FileOps::read_prefix` and
+      `FileOps::hash_file`, BLAKE3 streamed in the adapter).
+- [ ] `ApprovedItem` carries a mount point with a synthetic identity for snapshot items; make the
+      distinction typed (`enum Target { Path(..), Snapshot {..} }`) so a future consumer of
+      `token.items()` cannot mistake one for a writable path (review of 9680047, LOW).
 - [ ] `quarantined_bytes` reports the guard-verified *apparent* size for files while every other
       figure is allocated (`quarantine/attempt.rs::measured_size`); pin the unit in §4.4 and
       switch to allocated, or record the deviation in an ADR.

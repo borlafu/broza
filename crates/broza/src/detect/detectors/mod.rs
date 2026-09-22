@@ -1,6 +1,7 @@
 //! The detectors Broza ships, one file per category.
 
 pub mod build_cache;
+pub mod duplicates;
 pub mod ios_simulators;
 pub mod large_old_files;
 mod node_modules;
@@ -21,6 +22,7 @@ pub fn builtin() -> Vec<Box<dyn Detector>> {
         Box::new(old_backups::OldBackups),
         Box::new(ios_simulators::IosSimulators),
         Box::new(large_old_files::LargeOldFiles),
+        Box::new(duplicates::Duplicates),
     ]
 }
 

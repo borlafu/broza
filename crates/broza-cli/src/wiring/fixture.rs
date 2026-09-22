@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use broza::BrozaError;
 use broza::adapters::{DiskutilEnumerator, DiskutilSnapshots, FIRMLINKS_PATH};
-use broza::detect::detectors::large_old_files::{MDLS, MDLS_ARGS};
+use broza::detect::spotlight::{MDLS, MDLS_ARGS};
 use broza::ports::{FileOps, ProcessOutput, ProcessRunner, SpaceProvider};
 use broza::testing::{FakeFileOps, FakeRunner, FakeSpace, fixture_runner};
 use jiff::Timestamp;
@@ -65,7 +65,7 @@ const FIRMLINKS: &[u8] = b"/Applications\tApplications\n\
 /// A handful of sized files on the Data volume, so a replayed `scan` has
 /// consumers to list. Sizes are round on purpose: they are a fixture, not a
 /// recording, and the snapshot should read as one.
-const RECORDED_FILES: [(&str, u64); 10] = [
+const RECORDED_FILES: [(&str, u64); 12] = [
     ("/System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o", 212_400_000_000),
     ("/System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db", 84_100_000_000),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", 61_700_000_000),
@@ -75,6 +75,11 @@ const RECORDED_FILES: [(&str, u64); 10] = [
     (OLD_MOVIE, 4_200_000_000),
     (INSTALLER, 800_000_000),
     (INSTALLER_COPY, 800_000_000),
+    (
+        "/System/Volumes/Data/Users/dana/Library/Mobile Documents/com~apple~CloudDocs/Photos/trip.heic",
+        12_500_000_000,
+    ),
+    ("/System/Volumes/Data/Users/dana/Library/CloudStorage/Dropbox-Personal/work.pdf", 700_000_000),
     (
         "/System/Volumes/Data/Users/dana/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
         38_600_000_000,
@@ -162,6 +167,11 @@ fn filesystem() -> FakeFileOps {
     if let Ok(touched) = INSTALLER_TOUCHED.parse::<Timestamp>() {
         fs.set_times(INSTALLER, touched, touched);
     }
+    // Evicted from this disk: the provider holds it, the walk counts it as nothing.
+    fs.add_dataless_file(
+        "/System/Volumes/Data/Users/dana/Library/Mobile Documents/com~apple~CloudDocs/archive.zip",
+        40_000_000_000,
+    );
     fs
 }
 

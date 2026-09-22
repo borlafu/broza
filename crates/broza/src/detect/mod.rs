@@ -15,6 +15,7 @@ pub mod explain;
 pub mod filter;
 mod overlap;
 pub mod registry;
+pub mod spotlight;
 #[cfg(test)]
 pub(crate) mod test_support;
 

@@ -18,34 +18,20 @@
 //! specification requires. Every date comes from the walk, taken before any
 //! detector read a file.
 
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
 use jiff::Timestamp;
 
 use crate::BrozaError;
-use crate::model::{Category, Diagnostic, FindingPath};
-use crate::ports::ProcessRunner;
+use crate::model::{Category, FindingPath};
 use crate::scan::FileEntry;
 
 use super::support::{by_size_then_path, finish, path_with, start};
-use crate::detect::detector::{DetectContext, Detected, Detector, first_line};
+use crate::detect::detector::{DetectContext, Detected, Detector};
+use crate::detect::spotlight::Spotlight;
 
 /// A file is large from 1 GB, counted the way Finder counts.
 pub const LARGE_FILE_MIN_BYTES: u64 = 1_000_000_000;
-/// Spotlight's metadata query tool.
-pub const MDLS: &str = "/usr/bin/mdls";
-/// The one attribute Broza asks for, raw: one line, or `(null)`. The path
-/// comes last; it is absolute, so it can never be read as an option.
-pub const MDLS_ARGS: [&str; 3] = ["-name", "kMDItemLastUsedDate", "-raw"];
-/// Warning code when Spotlight could not be asked at all.
-pub const SPOTLIGHT_UNAVAILABLE_CODE: &str = "spotlight_unavailable";
-/// `mdls` answers in milliseconds; a stuck Spotlight must not stall `suggest`.
-const MDLS_TIMEOUT: Duration = Duration::from_secs(5);
-/// What `mdls -raw` prints when the attribute is unset.
-const MDLS_NULL: &str = "(null)";
-/// How `mdls -raw` prints a date: `2026-09-21 10:48:47 +0000`.
-const MDLS_DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S %z";
 /// Directories under the home whose files belong to other detectors.
 const SKIPPED_UNDER_HOME: [&str; 2] = ["Library", ".Trash"];
 
@@ -60,7 +46,7 @@ impl Detector for LargeOldFiles {
     fn detect(&self, context: &DetectContext<'_>) -> Result<Detected, BrozaError> {
         let skipped: Vec<PathBuf> = SKIPPED_UNDER_HOME.iter().map(|dir| context.under_home(dir)).collect();
         let mut detected = Detected::default();
-        let mut spotlight = Spotlight::new(context.process);
+        let mut spotlight = Spotlight::new(context.process, "files");
         let judged: Vec<Judged> = context
             .home_files
             .iter()
@@ -141,75 +127,12 @@ fn reasoning(low_confidence: usize) -> String {
     )
 }
 
-/// Spotlight, asked once per candidate until it fails once; after that no
-/// more, so a stuck or missing `mdls` costs one timeout and one warning.
-struct Spotlight<'a> {
-    process: &'a dyn ProcessRunner,
-    /// Why `mdls` could not answer, the first time it failed.
-    failure: Option<String>,
-}
-
-impl<'a> Spotlight<'a> {
-    fn new(process: &'a dyn ProcessRunner) -> Self {
-        Self { process, failure: None }
-    }
-
-    /// `kMDItemLastUsedDate` of `path`, when Spotlight has one.
-    ///
-    /// The path goes last and must be absolute: `mdls` has no `--`, and a
-    /// relative name starting with `-` would read as an option.
-    fn last_used(&mut self, path: &Path) -> Option<Timestamp> {
-        if self.failure.is_some() || !path.is_absolute() {
-            return None;
-        }
-        let path_text = path.to_str()?;
-        let args: Vec<&str> = MDLS_ARGS.iter().copied().chain([path_text]).collect();
-        let output = match self.process.run(MDLS, &args, MDLS_TIMEOUT) {
-            Ok(output) if output.success => output,
-            Ok(output) => {
-                self.note_failure(&output.stderr_text());
-                return None;
-            }
-            Err(error) => {
-                self.note_failure(&error.to_string());
-                return None;
-            }
-        };
-        parse_mdls_date(output.stdout_text().trim())
-    }
-
-    fn note_failure(&mut self, reason: &str) {
-        if self.failure.is_none() {
-            self.failure = Some(first_line(reason));
-        }
-    }
-
-    /// One warning for the whole run, when `mdls` failed at least once.
-    fn warning(&self) -> Option<Diagnostic> {
-        self.failure.as_ref().map(|reason| Diagnostic {
-            code: SPOTLIGHT_UNAVAILABLE_CODE.to_owned(),
-            message: format!(
-                "Spotlight could not be asked when files were last opened ({reason}); large old files \
-                 were judged by access time alone"
-            ),
-            path: None,
-        })
-    }
-}
-
-/// A date as `mdls -raw` prints it, or nothing for `(null)` and anything else.
-fn parse_mdls_date(raw: &str) -> Option<Timestamp> {
-    if raw.is_empty() || raw == MDLS_NULL {
-        return None;
-    }
-    Timestamp::strptime(MDLS_DATE_FORMAT, raw).ok()
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use crate::detect::spotlight::{MDLS, MDLS_ARGS, SPOTLIGHT_UNAVAILABLE_CODE};
     use crate::detect::test_support::{context_over, home};
     use crate::model::{Action, Finding, Risk};
     use crate::testing::{FakeFileOps, FakeRunner};
@@ -351,13 +274,5 @@ mod tests {
         let detected = detect(&fs, runner);
 
         assert!(detected.findings.is_empty() && detected.warnings.is_empty(), "{detected:?}");
-    }
-
-    #[test]
-    fn mdls_dates_parse_and_null_does_not() {
-        assert_eq!(parse_mdls_date("2026-09-21 10:48:47 +0000"), Some(at("2026-09-21T10:48:47Z")));
-        assert_eq!(parse_mdls_date("(null)"), None);
-        assert_eq!(parse_mdls_date(""), None);
-        assert_eq!(parse_mdls_date("yesterday"), None);
     }
 }

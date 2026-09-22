@@ -217,7 +217,15 @@ fn suggest_lists_the_green_categories_of_the_recorded_home() {
         text.contains("Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache"),
         "{text}"
     );
-    assert!(text.contains("Reported, not reclaimable by Broza: 38.6 GB"), "{text}");
+    // Docker's disk image plus the two cloud roots of the recording.
+    assert!(text.contains("Reported, not reclaimable by Broza: 51.8 GB"), "{text}");
+    assert!(text.contains("INFO ONLY (red)"), "{text}");
+    assert!(
+        text.contains(
+            "Already backed up in iCloud Drive: 12.5 GB — inform only, see: broza explain cloud-synced"
+        ),
+        "{text}"
+    );
 }
 
 #[test]

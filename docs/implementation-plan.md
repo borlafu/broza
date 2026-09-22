@@ -406,8 +406,8 @@ Design decisions (M5, 2026-09-22):
 
 M5 progress:
 
-- [ ] 1. `cloud-synced` detector (`detect/detectors/cloud_synced.rs`).
-- [ ] 2. Shared Spotlight helper (`detect/spotlight.rs`).
+- [x] 1. `cloud-synced` detector (`detect/detectors/cloud_synced.rs`).
+- [x] 2. Shared Spotlight helper (`detect/spotlight.rs`).
 - [ ] 3. `unused-apps` detector (`detect/detectors/unused_apps.rs`).
 - [ ] 4. Full Disk Access wording and exit `3` for an unreadable scan root.
 - [ ] 5. SBOM in the release job; `--locked` everywhere.

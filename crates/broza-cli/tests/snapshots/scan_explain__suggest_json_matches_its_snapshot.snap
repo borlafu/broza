@@ -156,6 +156,61 @@ expression: envelope
         "title": "Time Machine local snapshots"
       },
       {
+        "action": "inform_only",
+        "actionable": false,
+        "category": "cloud-synced",
+        "description": "Local copies of files Dropbox already holds; the provider can release them on request.",
+        "id": "cloud-synced.dropbox",
+        "instructions": {
+          "provider": "Dropbox",
+          "steps": [
+            "Right-click the file or folder in Finder → \"Make Available Online Only\"",
+            "Dropbox → Preferences → Sync → set new files to \"Online-only\""
+          ],
+          "summary": "Ask Dropbox to keep the files online-only."
+        },
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/System/Volumes/Data/Users/dana/Library/CloudStorage/Dropbox-Personal",
+            "size_bytes": 700002304
+          }
+        ],
+        "reasoning": "Deleting a synced file locally deletes it from the cloud and from every other device, so Broza only reports these and shows the provider's own steps.",
+        "reclaimable_bytes": 700002304,
+        "risk": "red",
+        "title": "Already backed up in Dropbox"
+      },
+      {
+        "action": "inform_only",
+        "actionable": false,
+        "category": "cloud-synced",
+        "description": "Local copies of files iCloud Drive already holds; the provider can release them on request.",
+        "id": "cloud-synced.icloud",
+        "instructions": {
+          "provider": "iCloud Drive",
+          "steps": [
+            "System Settings → [your name] → iCloud → iCloud Drive",
+            "Turn on \"Optimize Mac Storage\"",
+            "For one file or folder: right-click it in Finder → \"Remove Download\""
+          ],
+          "summary": "Use Apple's official feature to release local copies."
+        },
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/System/Volumes/Data/Users/dana/Library/Mobile Documents",
+            "size_bytes": 12500000768
+          }
+        ],
+        "reasoning": "Deleting a synced file locally deletes it from the cloud and from every other device, so Broza only reports these and shows the provider's own steps.",
+        "reclaimable_bytes": 12500000768,
+        "risk": "red",
+        "title": "Already backed up in iCloud Drive"
+      },
+      {
         "action": "quarantine",
         "actionable": true,
         "category": "duplicates",
@@ -194,7 +249,7 @@ expression: envelope
         "title": "Large files not opened in a long time"
       }
     ],
-    "inform_only_bytes": 38600003584,
+    "inform_only_bytes": 51800006656,
     "total_reclaimable_bytes": 333200011264
   },
   "errors": [],

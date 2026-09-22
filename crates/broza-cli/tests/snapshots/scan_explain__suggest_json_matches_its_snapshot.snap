@@ -7,7 +7,7 @@ expression: envelope
   "command": "suggest",
   "data": {
     "by_risk": {
-      "amber": 30500003840,
+      "amber": 34700005376,
       "green": 297700003840,
       "red": 0
     },
@@ -154,10 +154,29 @@ expression: envelope
           }
         ],
         "title": "Time Machine local snapshots"
+      },
+      {
+        "action": "quarantine",
+        "actionable": true,
+        "category": "large-old-files",
+        "description": "Files of 1 GB or more under your home, outside ~/Library, that nothing has opened or changed for longer than the unused-after threshold.",
+        "id": "large-old-files.home",
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/System/Volumes/Data/Users/dana/Movies/holiday-2019.mov",
+            "size_bytes": 4200001536
+          }
+        ],
+        "reasoning": "Neither you nor any app has opened or changed these files since before the unused-after threshold; they are your own data, so review the list before applying.",
+        "reclaimable_bytes": 4200001536,
+        "risk": "amber",
+        "title": "Large files not opened in a long time"
       }
     ],
     "inform_only_bytes": 38600003584,
-    "total_reclaimable_bytes": 328200007680
+    "total_reclaimable_bytes": 332400009216
   },
   "errors": [],
   "generated_at": "[timestamp]",

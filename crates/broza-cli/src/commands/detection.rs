@@ -11,7 +11,7 @@ use broza::BrozaError;
 use broza::detect::{DetectContext, DetectPorts, Registry};
 use broza::model::{Category, Finding, Warning};
 use broza::ports::Ports;
-use broza::scan::{MountTable, scan_paths};
+use broza::scan::{MountTable, VolumeScan, scan_paths};
 use broza::units::{ByteSize, DurationSpec};
 use jiff::Timestamp;
 
@@ -52,7 +52,7 @@ pub struct Detection {
 pub fn detect(request: &DetectionRequest<'_>) -> Result<Detection, BrozaError> {
     let enumeration = request.ports.disks.enumerate()?;
     let mount = mount_table(request.ports, &enumeration.disks)?;
-    let (nodes, walk_warnings) = walk_home(request, &mount.table)?;
+    let walked = walk_home(request, &mount.table)?;
     let context = DetectContext::new(
         request.home,
         DetectPorts {
@@ -63,22 +63,20 @@ pub fn detect(request: &DetectionRequest<'_>) -> Result<Detection, BrozaError> {
         &mount.table,
         request.now,
         request.unused_after,
-        &nodes,
+        &walked.nodes,
+        &walked.files,
     );
     let report = Registry::builtin().restricted_to(request.categories).run(&context);
-    let warnings = [enumeration.warnings, mount.warnings, walk_warnings, report.warnings].concat();
+    let warnings = [enumeration.warnings, mount.warnings, walked.warnings, report.warnings].concat();
     Ok(Detection { findings: report.findings, warnings, mounts: mount.table })
 }
 
-/// The home walk detectors read; it refreshes `scan`'s cache on the way.
-fn walk_home(
-    request: &DetectionRequest<'_>,
-    mounts: &MountTable,
-) -> Result<(Vec<broza::scan::DirNode>, Vec<Warning>), BrozaError> {
+/// The home walk detectors read — its directories, its big files and its
+/// warnings; it refreshes `scan`'s cache on the way.
+fn walk_home(request: &DetectionRequest<'_>, mounts: &MountTable) -> Result<VolumeScan, BrozaError> {
     let scan_request = request_for_home(request.folders)?;
     let mut scans = scan_paths(&[request.home.to_path_buf()], &scan_request, request.ports, mounts, None)?;
-    let scan = scans.pop().ok_or_else(|| BrozaError::Other("the home walk produced nothing".into()))?;
-    Ok((scan.nodes, scan.warnings))
+    scans.pop().ok_or_else(|| BrozaError::Other("the home walk produced nothing".into()))
 }
 
 /// The home directory, or the usage error a command without one reports.

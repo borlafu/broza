@@ -9,7 +9,7 @@ use std::time::Duration;
 use jiff::Timestamp;
 
 use crate::detect::detector::{DetectContext, DetectPorts};
-use crate::scan::{DirNode, MountTable, WalkOptions, default_excludes, walk};
+use crate::scan::{DirNode, FileEntry, FileReport, MountTable, WalkOptions, default_excludes, walk};
 use crate::testing::{FakeFileOps, FakeRunner, FakeSnapshots, mac_mount_table};
 
 /// The home every detector test uses, in the Data-volume spelling the walk sees.
@@ -23,6 +23,7 @@ pub struct World<'a> {
     home: PathBuf,
     mounts: MountTable,
     nodes: Vec<DirNode>,
+    files: Vec<FileEntry>,
     snapshots: FakeSnapshots,
     process: FakeRunner,
 }
@@ -37,6 +38,7 @@ impl World<'_> {
             "2026-09-21T10:00:00Z".parse::<Timestamp>().unwrap_or_default(),
             Duration::from_secs(365 * 24 * 60 * 60),
             &self.nodes,
+            &self.files,
         )
     }
 
@@ -63,13 +65,20 @@ pub fn context_over(fs: &FakeFileOps, home: PathBuf) -> World<'_> {
     let mut exclude = default_excludes(&home);
     exclude.push(home.join(".cache/broza"));
     exclude.push(home.join(".local/share/broza"));
-    let options = WalkOptions { exclude, report_files_min_size: None, ..WalkOptions::default() };
-    let nodes = walk(Path::new(&home), &options, fs).nodes;
+    let report = FileReport::for_detectors();
+    let options = WalkOptions {
+        exclude,
+        report_files_min_size: Some(report.min_size),
+        report_files_top: report.top,
+        ..WalkOptions::default()
+    };
+    let walked = walk(Path::new(&home), &options, fs);
     World {
         fs,
         home,
         mounts: mac_mount_table(),
-        nodes,
+        nodes: walked.nodes,
+        files: walked.files,
         snapshots: FakeSnapshots::new(),
         process: FakeRunner::new(),
     }

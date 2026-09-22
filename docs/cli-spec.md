@@ -291,6 +291,7 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 - `old-backups`: one finding, `old-backups.ios-devices`, over `~/Library/Application Support/MobileSync/Backup/<udid>`; a backup is proposed when the `Last Backup Date` of its `Info.plist` is older than `unused-after`, sized from the walk, with that date as `paths[].last_used` and the device and product names in the reasoning. A backup whose `Info.plist` cannot be read or parsed is a `location_unreadable` warning and is never proposed.
 - `duplicates`: candidates are grouped by size, then by the first 4 KiB, then confirmed by a full BLAKE3 hash. Only confirmed groups are reported.
 - `large-old-files` / `unused-apps`: `last_used` is `max(atime, kMDItemLastUsedDate)`. When Spotlight returns no value (typical for system apps) the finding's `reasoning` MUST state low confidence.
+- `large-old-files`: one finding, `large-old-files.home`, over the regular files of at least 1 GB the home walk reported, outside `~/Library` (application-managed; other detectors' ground) and `~/.Trash` (the `trash` detector's). Spotlight is asked through `mdls -name kMDItemLastUsedDate -raw` (5 s timeout, through the process port) for the candidates only. A file is proposed when both its `last_used` and its modification time are older than `unused-after`; a file with neither an access time nor a Spotlight date, a symlink, a cloud placeholder, or a file with more than one hard link (quarantining one name frees nothing) is never proposed. When Spotlight has no date for some of the proposed files, the `reasoning` counts them and states low confidence. An `mdls` that fails or is missing is one `spotlight_unavailable` warning; the files are then judged by access time alone.
 - `cloud-synced`: always `risk: red`, `actionable: false`, `action: inform_only`. No flag changes this.
 
 **Human output (sketch):**
@@ -591,6 +592,7 @@ Every `--json` output shares this structure:
 | Code | Where | Meaning |
 |---|---|---|
 | `detector_failed` | `warnings[]` | One detector could not run at all; its category is missing from `findings[]`. The other detectors' findings are complete. |
+| `spotlight_unavailable` | `warnings[]` | `mdls` failed or is missing, so `large-old-files` judged its candidates by access time alone; the message quotes the first line of the failure. |
 | `location_unreadable` | `warnings[]` | One detector could not read one location it wanted (`path` names it), typically `~/Downloads` without Full Disk Access. The finding that needed it is missing; the detector's other findings stand. |
 | `finding_dropped` | `warnings[]` | A finding could not be rebuilt after a path it shared with another finding was credited to that one. Should not happen; reported rather than hidden. |
 
@@ -1096,5 +1098,6 @@ Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`) ar
 - §3.5 and §3.8 (M3, unreleased): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.
 - §3.5 (M3, unreleased): `restore` resolves every id before writing (unknown item ids exit `4` too), `--all`/`--session`/`ID…` are mutually exclusive, `--all` reports unreadable sessions in `errors[]`; §5: a zero figure drops only its own part of the parenthesis.
 - §3.4 (M4, unreleased): `purge` items are executed (re-check, remove, allocated bytes to `reclaimed_bytes`); a plan without `quarantine` items creates no session; `clean --apply --purge` works. `trash` detector documented in §3.3.
+- §3.3 and §4.1 (M4, unreleased): `large-old-files` detector (`large-old-files.home`, `mdls` through the process port, `spotlight_unavailable` warning).
 - §3.3, §3.4, §4.1, §4.3 and §4.4 (M4, unreleased): `snapshots` detector; snapshot entries carry `volume` and `mount_point`; `tmutil_delete` items are executed through `tmutil deletelocalsnapshots` and carry `items[].snapshot`; `snapshot_needs_admin` warning.
 - §3.4, §4.1, §4.3, §4.4 and §6 (M4, unreleased): snapshot deletion goes through `diskutil apfs deleteSnapshot <volume> -uuid <uuid>` (one snapshot, one volume; ADR 0007) instead of `tmutil deletelocalsnapshots <date>`; snapshot entries and `items[].snapshot` carry the `uuid`; a `tmutil_delete` item must claim `size_bytes: 0`; the `backup` role accepts no action.

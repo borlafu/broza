@@ -15,7 +15,9 @@ use broza::BrozaError;
 use broza::model::{Disk, LargestItem, VolumeId, Warning};
 use broza::ports::Ports;
 use broza::safety::firmlink::firmlink_spellings;
-use broza::scan::{MountTable, ScanProgress, ScanRequest, TreeView, VolumeScan, scan_all, scan_paths};
+use broza::scan::{
+    FileReport, MountTable, ScanProgress, ScanRequest, TreeView, VolumeScan, scan_all, scan_paths,
+};
 use broza::units::ByteSize;
 
 use crate::args::ScanArgs;
@@ -116,7 +118,8 @@ pub fn request_for_home(settings: &FolderSettings) -> Result<ScanRequest, BrozaE
         no_external: false,
         tree: false,
     };
-    request_for(&args, settings)
+    let request = request_for(&args, settings)?;
+    Ok(ScanRequest { file_report: Some(FileReport::for_detectors()), ..request })
 }
 
 /// The core request the flags and the settings add up to.
@@ -146,6 +149,7 @@ fn request_for(args: &ScanArgs, settings: &FolderSettings) -> Result<ScanRequest
         cache_root: settings.home.as_deref().map(|home| home.join(CACHE_DIR)),
         cache_ttl: settings.cache_ttl,
         verbose_warnings: settings.verbose,
+        file_report: None,
     })
 }
 
@@ -295,6 +299,7 @@ mod tests {
             tree: tree.clone(),
             warnings: Vec::new(),
             nodes: Vec::new(),
+            files: Vec::new(),
         };
         let scans = vec![scan(vec![item("/a", 5), item("/b", 4)]), scan(vec![item("/c", 3), item("/d", 2)])];
 

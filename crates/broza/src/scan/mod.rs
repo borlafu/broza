@@ -25,7 +25,9 @@ pub use aggregate::{TreeNode, TreeView, largest_items, tree};
 pub use cache::{CacheKey, CacheStore, DirRecord};
 pub use mount::{MountEntry, MountTable};
 pub use progress::{ProgressReporter, ScanProgress};
-pub use request::{ScanRequest, VolumeScan, default_excludes};
+pub use request::{
+    DETECTOR_FILES_MIN_BYTES, DETECTOR_FILES_TOP, FileReport, ScanRequest, VolumeScan, default_excludes,
+};
 pub use walker::{DirIdentity, DirNode, FileEntry, SkipHook, WalkOptions, WalkResult, walk};
 
 use std::path::{Path, PathBuf};
@@ -230,7 +232,7 @@ fn assemble(entry: &MountEntry, root_path: &Path, walked: WalkResult, request: &
     warnings.extend(overcount_warning(&root, entry));
     let largest = aggregate::largest_items(&walked, request.top, request.min_size, &volume_id);
     let tree = aggregate::tree(&root, &walked.nodes, request.depth, request.min_size);
-    VolumeScan { largest, tree, root, warnings, volume_id, nodes: walked.nodes }
+    VolumeScan { largest, tree, root, warnings, volume_id, nodes: walked.nodes, files: walked.files }
 }
 
 /// Where this volume's cache lives: under its UUID, or under its BSD name.
@@ -367,9 +369,10 @@ fn walk_volume(
     // a cold scan shows, and the two would disagree about the same disk.
     let hook = |identity: &DirIdentity| {
         let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
-        let reportable_inside = record.largest_item_bytes >= request.min_size;
+        let reportable_inside = record.largest_item_bytes >= request.reporting_floor();
         (record.is_usable() && !reportable_inside).then(|| record.clone())
     };
+    let files = request.file_report();
     let options = WalkOptions {
         // The whole tree is reported: `--depth` shapes the tree view, and the
         // largest consumer of a disk is regularly deeper than two levels.
@@ -381,8 +384,8 @@ fn walk_volume(
         cache_from_depth: request.depth.saturating_add(1),
         // With nothing to list, collecting file entries only to drop them
         // would allocate one per file of the volume.
-        report_files_min_size: (request.top > 0).then_some(request.min_size),
-        report_files_top: request.top,
+        report_files_min_size: (files.top > 0).then_some(files.min_size),
+        report_files_top: files.top,
         progress: reporter,
     };
     walk(root, &options, ports.fs.as_ref())

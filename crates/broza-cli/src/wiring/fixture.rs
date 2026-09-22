@@ -20,8 +20,10 @@ use std::sync::Arc;
 
 use broza::BrozaError;
 use broza::adapters::{DiskutilEnumerator, DiskutilSnapshots, FIRMLINKS_PATH};
-use broza::ports::{FileOps, ProcessRunner, SpaceProvider};
-use broza::testing::{FakeFileOps, FakeSpace, fixture_runner};
+use broza::detect::detectors::large_old_files::{MDLS, MDLS_ARGS};
+use broza::ports::{FileOps, ProcessOutput, ProcessRunner, SpaceProvider};
+use broza::testing::{FakeFileOps, FakeRunner, FakeSpace, fixture_runner};
+use jiff::Timestamp;
 
 use super::Machine;
 
@@ -63,17 +65,30 @@ const FIRMLINKS: &[u8] = b"/Applications\tApplications\n\
 /// A handful of sized files on the Data volume, so a replayed `scan` has
 /// consumers to list. Sizes are round on purpose: they are a fixture, not a
 /// recording, and the snapshot should read as one.
-const RECORDED_FILES: [(&str, u64); 7] = [
+const RECORDED_FILES: [(&str, u64); 8] = [
     ("/System/Volumes/Data/Users/dana/Library/Developer/Xcode/DerivedData/App/Build/app.o", 212_400_000_000),
     ("/System/Volumes/Data/Users/dana/Library/Caches/com.example.app/cache.db", 84_100_000_000),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", 61_700_000_000),
     ("/System/Volumes/Data/Users/dana/code/old-site/node_modules/left-pad/index.js", 27_200_000_000),
     ("/System/Volumes/Data/Users/dana/Library/Logs/App/app.log", 1_200_000_000),
     ("/System/Volumes/Data/Users/dana/.Trash/old-disk-image.dmg", 3_300_000_000),
+    (OLD_MOVIE, 4_200_000_000),
     (
         "/System/Volumes/Data/Users/dana/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",
         38_600_000_000,
     ),
+];
+/// A big file nobody has opened in years, for `large-old-files`.
+const OLD_MOVIE: &str = "/System/Volumes/Data/Users/dana/Movies/holiday-2019.mov";
+/// When [`OLD_MOVIE`] was last written and read, according to the filesystem.
+const OLD_MOVIE_TOUCHED: &str = "2019-08-10T14:00:00Z";
+/// What Spotlight answers for each big file under the home, as `mdls
+/// -name kMDItemLastUsedDate -raw` prints it: the movie was last opened in
+/// 2020, the thesis this summer, and the orphan module is unknown to it.
+const SPOTLIGHT_ANSWERS: [(&str, &str); 3] = [
+    (OLD_MOVIE, "2020-01-05 18:30:00 +0000"),
+    ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", "2026-08-01 09:00:00 +0000"),
+    ("/System/Volumes/Data/Users/dana/code/old-site/node_modules/left-pad/index.js", "(null)"),
 ];
 /// The home directory of the recorded machine, in the spelling its files use.
 ///
@@ -89,13 +104,30 @@ const FIRMLINKED_DIRS: [&str; 5] = ["/Applications", "/Library", "/Users", "/opt
 ///
 /// [`BrozaError::Io`] when the directory or one of its recordings cannot be read.
 pub fn machine(dir: &Path) -> Result<Machine, BrozaError> {
-    let process: Arc<dyn ProcessRunner> = Arc::new(fixture_runner(dir)?);
+    let runner = fixture_runner(dir)?;
+    script_spotlight(&runner);
+    let process: Arc<dyn ProcessRunner> = Arc::new(runner);
     let space: Arc<dyn SpaceProvider> =
         Arc::new(FakeSpace::new().with_purgeable(PURGEABLE_MOUNT, PURGEABLE_BYTES));
     let fs: Arc<dyn FileOps> = Arc::new(filesystem());
     let disks = Arc::new(DiskutilEnumerator::new(Arc::clone(&process), Arc::clone(&space), Arc::clone(&fs)));
     let snapshots = Arc::new(DiskutilSnapshots::new(Arc::clone(&process)));
     Ok(Machine { process, disks, space, snapshots, fs })
+}
+
+/// Answer `mdls` for every big file of the recording, so `suggest` never asks
+/// this Mac's Spotlight about a file that exists only in the fixture.
+fn script_spotlight(runner: &FakeRunner) {
+    for (path, answer) in SPOTLIGHT_ANSWERS {
+        let args: Vec<&str> = MDLS_ARGS.iter().copied().chain([path]).collect();
+        let output = ProcessOutput {
+            success: true,
+            code: Some(0),
+            stdout: format!("{answer}\n").into_bytes(),
+            stderr: Vec::new(),
+        };
+        runner.script_output(MDLS, &args, output);
+    }
 }
 
 /// An in-memory filesystem shaped like the recorded machine.
@@ -111,6 +143,9 @@ fn filesystem() -> FakeFileOps {
     for (path, size_bytes) in RECORDED_FILES {
         fs.add_file(path, &[]);
         fs.set_size(path, size_bytes);
+    }
+    if let Ok(touched) = OLD_MOVIE_TOUCHED.parse::<Timestamp>() {
+        fs.set_times(OLD_MOVIE, touched, touched);
     }
     fs
 }

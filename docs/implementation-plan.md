@@ -329,7 +329,8 @@ M4 progress:
 - [x] 5. `old-backups` detector (`detect/detectors/old_backups.rs`).
 - [x] 6. `ios-simulators` detector (`detect/detectors/ios_simulators.rs`; recorded
       `simctl_devices.json` beside the plist recordings).
-- [ ] 7. `large-old-files` detector.
+- [x] 7. `large-old-files` detector (`detect/detectors/large_old_files.rs`; the home walk reports
+      files of at least 1 GB through `ScanRequest.file_report`).
 - [ ] 8. `duplicates` detector.
 - [ ] `quarantined_bytes` reports the guard-verified *apparent* size for files while every other
       figure is allocated (`quarantine/attempt.rs::measured_size`); pin the unit in §4.4 and

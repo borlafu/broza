@@ -16,7 +16,7 @@ use jiff::Timestamp;
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, Finding};
 use crate::ports::{FileOps, ProcessRunner, SnapshotProvider};
-use crate::scan::{DirNode, MountTable};
+use crate::scan::{DirNode, FileEntry, MountTable};
 
 /// Warning code for a location one detector wanted and could not read.
 ///
@@ -100,6 +100,9 @@ pub struct DetectContext<'a> {
     pub unused_after: Duration,
     /// Every directory under the home, as the scanner measured it.
     pub home_nodes: &'a [DirNode],
+    /// The big files under the home the walk reported one by one
+    /// ([`crate::scan::FileReport::for_detectors`]), sorted by path.
+    pub home_files: &'a [FileEntry],
     /// APFS local snapshots, for the `snapshots` detector.
     pub snapshots: &'a dyn SnapshotProvider,
     /// External commands (`xcrun simctl`, `mdls`), always with a timeout.
@@ -152,6 +155,7 @@ impl<'a> DetectContext<'a> {
         now: Timestamp,
         unused_after: Duration,
         home_nodes: &'a [DirNode],
+        home_files: &'a [FileEntry],
     ) -> Self {
         Self {
             home,
@@ -160,6 +164,7 @@ impl<'a> DetectContext<'a> {
             now,
             unused_after,
             home_nodes,
+            home_files,
             snapshots: ports.snapshots,
             process: ports.process,
             index: NodeIndex::of(home_nodes),
@@ -205,7 +210,7 @@ const REASON_MAX_CHARS: usize = 200;
 
 /// The first line of an error, cut to [`REASON_MAX_CHARS`]: a warning quotes
 /// the reason, it does not reproduce a dump.
-fn first_line(text: &str) -> String {
+pub(crate) fn first_line(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default();
     if line.chars().count() <= REASON_MAX_CHARS {
         return line.to_owned();

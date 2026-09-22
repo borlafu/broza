@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::model::{Diagnostic, LargestItem, VolumeId};
 use crate::safety::firmlink::firmlink_spellings;
 use crate::scan::aggregate::TreeView;
-use crate::scan::walker::DirNode;
+use crate::scan::walker::{DirNode, FileEntry};
 
 /// Default `--depth` (`docs/cli-spec.md` §3.1).
 pub const DEFAULT_DEPTH: usize = 2;
@@ -25,6 +25,29 @@ pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// (`docs/cli-spec.md` §7). Broza reports what is really on the disk and leaves
 /// the provider's copy to the provider, which is also what invariant §2.5 asks.
 pub const CLOUD_ROOTS: [&str; 2] = ["Library/Mobile Documents", "Library/CloudStorage"];
+/// Smallest file the home walk of `suggest` reports one by one: the
+/// `large-old-files` threshold, 1 GB counted the way Finder counts.
+pub const DETECTOR_FILES_MIN_BYTES: u64 = 1_000_000_000;
+/// Most files that walk keeps, the biggest first; a home with more of them
+/// this big is not one the detectors need to see in full.
+pub const DETECTOR_FILES_TOP: usize = 10_000;
+
+/// Which files a walk reports one by one ([`crate::scan::WalkResult::files`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileReport {
+    /// Files below this many bytes are not reported.
+    pub min_size: u64,
+    /// At most this many files, the biggest.
+    pub top: usize,
+}
+
+impl FileReport {
+    /// The report the detectors of `suggest` read (`docs/cli-spec.md` §3.3).
+    #[must_use]
+    pub fn for_detectors() -> Self {
+        Self { min_size: DETECTOR_FILES_MIN_BYTES, top: DETECTOR_FILES_TOP }
+    }
+}
 
 /// The prefixes a scan of `home` stays out of by default.
 ///
@@ -66,6 +89,9 @@ pub struct ScanRequest {
     pub cache_ttl: Duration,
     /// Keep every `permission_denied` warning instead of one counted summary (`-v`).
     pub verbose_warnings: bool,
+    /// Which files to report one by one. `None` reports the `--top` largest
+    /// above `--min-size`, which is what `scan` lists.
+    pub file_report: Option<FileReport>,
 }
 
 impl Default for ScanRequest {
@@ -81,6 +107,7 @@ impl Default for ScanRequest {
             cache_root: None,
             cache_ttl: DEFAULT_CACHE_TTL,
             verbose_warnings: false,
+            file_report: None,
         }
     }
 }
@@ -97,6 +124,21 @@ impl ScanRequest {
     #[must_use]
     pub fn for_volume(&self, volume: impl Into<String>) -> Self {
         Self { volume: Some(volume.into()), ..self.clone() }
+    }
+
+    /// The files this request wants one by one: its own report, or the
+    /// `--top` largest above `--min-size`.
+    #[must_use]
+    pub fn file_report(&self) -> FileReport {
+        self.file_report.unwrap_or(FileReport { min_size: self.min_size, top: self.top })
+    }
+
+    /// The smallest thing this request lists on its own. A cached subtree that
+    /// hides something this big is walked again, so a warm scan lists what a
+    /// cold one does.
+    #[must_use]
+    pub fn reporting_floor(&self) -> u64 {
+        self.min_size.min(self.file_report().min_size)
     }
 }
 
@@ -119,6 +161,8 @@ pub struct VolumeScan {
     pub warnings: Vec<Diagnostic>,
     /// Every directory the walk measured, for detectors that read the tree.
     pub nodes: Vec<DirNode>,
+    /// The files the request asked to see one by one, sorted by path.
+    pub files: Vec<FileEntry>,
 }
 
 impl PartialEq for VolumeScan {

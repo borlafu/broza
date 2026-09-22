@@ -2,6 +2,7 @@
 
 pub mod build_cache;
 pub mod ios_simulators;
+pub mod large_old_files;
 mod node_modules;
 pub mod old_backups;
 pub mod snapshots;
@@ -19,6 +20,7 @@ pub fn builtin() -> Vec<Box<dyn Detector>> {
         Box::new(snapshots::Snapshots),
         Box::new(old_backups::OldBackups),
         Box::new(ios_simulators::IosSimulators),
+        Box::new(large_old_files::LargeOldFiles),
     ]
 }
 

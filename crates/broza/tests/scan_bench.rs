@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use broza::adapters::{StdFileOps, SystemClock};
 use broza::ports::Clock;
-use broza::scan::cache::store::Denied;
-use broza::scan::cache::{CACHE_FILE_FLOOR_BYTES, CacheKey, CacheStore, records_of, store_path};
+use broza::scan::cache::store::Verdicts;
+use broza::scan::cache::{CACHE_FILE_FLOOR_BYTES, CacheStore, records_of, store_path};
 use broza::scan::walker::{DirIdentity, WalkOptions, WalkResult, walk};
 
 /// Cache lifetime used by the benchmark, long enough that nothing expires.
@@ -68,13 +68,9 @@ fn timed_walk(root: &Path, store: &CacheStore) -> (WalkResult, Duration) {
     // the product does: a subtree is served when the store can rebuild it
     // whole, it holds no hard link and no hole, and the cache carries every
     // file the report could list.
-    let denied = Denied::new();
-    let hook = |identity: &DirIdentity| {
-        let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
-        let complete = BENCH_MIN_FILE_BYTES >= CACHE_FILE_FLOOR_BYTES
-            || record.largest_item_bytes < BENCH_MIN_FILE_BYTES;
-        (record.is_usable() && complete).then(|| store.subtree(identity, &denied)).flatten()
-    };
+    let verdicts = Verdicts::new();
+    let complete = BENCH_MIN_FILE_BYTES >= CACHE_FILE_FLOOR_BYTES;
+    let hook = |identity: &DirIdentity| complete.then(|| store.subtree(identity, &verdicts)).flatten();
     let options = WalkOptions {
         skip_hook: Some(&hook),
         cache_from_depth: BENCH_DEPTH + 1,

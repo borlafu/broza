@@ -11,7 +11,7 @@ use broza::BrozaError;
 use broza::detect::{DetectContext, DetectPorts, Registry};
 use broza::model::{Category, Finding, Warning};
 use broza::ports::Ports;
-use broza::scan::{MountTable, ScanRequest, VolumeScan, scan_paths};
+use broza::scan::{CacheUse, MountTable, ScanRequest, VolumeScan, scan_paths};
 use broza::units::{ByteSize, DurationSpec};
 use jiff::Timestamp;
 
@@ -83,7 +83,12 @@ pub fn detect(request: &DetectionRequest<'_>) -> Result<Detection, BrozaError> {
 /// warnings; it refreshes `scan`'s cache on the way.
 fn walk_home(request: &DetectionRequest<'_>, mounts: &MountTable) -> Result<VolumeScan, BrozaError> {
     let for_home = request_for_home(request.folders)?;
-    let scan_request = ScanRequest { serve_from_cache: request.trust_cache, ..for_home };
+    // `--no-cache` still wins for `clean`; otherwise it refreshes without serving.
+    let cache = match for_home.cache {
+        CacheUse::Serve if !request.trust_cache => CacheUse::Refresh,
+        other => other,
+    };
+    let scan_request = ScanRequest { cache, ..for_home };
     let mut scans = scan_paths(&[request.home.to_path_buf()], &scan_request, request.ports, mounts, None)?;
     scans.pop().ok_or_else(|| BrozaError::Other("the home walk produced nothing".into()))
 }

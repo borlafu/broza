@@ -64,15 +64,24 @@ pub fn default_excludes(home: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// How a scan uses the per-volume store (`docs/cli-spec.md` §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheUse {
+    /// Load the store and serve unchanged subtrees from it; refresh it after.
+    #[default]
+    Serve,
+    /// Load the store but walk everything; refresh it after. What `clean`
+    /// does: no cached size reaches the guard, and the records for the rest
+    /// of the volume survive. A store that cannot be read is replaced.
+    Refresh,
+    /// `--no-cache`: do not read the store at all; a fresh one is written.
+    Bypass,
+}
+
 /// A `scan` as the caller asked for it.
 ///
 /// The core never reads the environment, so the cache location arrives here
 /// rather than being derived from `$HOME` (`AGENTS.md` §4).
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "four independent flags of one request, each a CLI switch or a caller's choice: external \
-              volumes, bypassing the cache read, serving from the loaded cache, verbose warnings"
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanRequest {
     /// `--volume`: a volume id, name, or mount point. `None` means every volume.
@@ -87,13 +96,8 @@ pub struct ScanRequest {
     pub min_size: u64,
     /// Path prefixes the walk never enters.
     pub exclude: Vec<PathBuf>,
-    /// `--no-cache`: ignore what is cached. A fresh cache is still written.
-    pub no_cache: bool,
-    /// Whether unchanged subtrees may be served from the loaded store. `false`
-    /// walks everything and keeps the store: what `clean` does, so a size the
-    /// cache remembered never reaches the guard while `scan`'s records for the
-    /// rest of the volume survive (`docs/cli-spec.md` §7).
-    pub serve_from_cache: bool,
+    /// How the per-volume store is used.
+    pub cache: CacheUse,
     /// Where the cache lives (`~/.cache/broza`); `None` disables it entirely.
     pub cache_root: Option<PathBuf>,
     /// How long a cached record stays usable.
@@ -114,8 +118,7 @@ impl Default for ScanRequest {
             top: DEFAULT_TOP,
             min_size: DEFAULT_MIN_SIZE_BYTES,
             exclude: Vec::new(),
-            no_cache: false,
-            serve_from_cache: true,
+            cache: CacheUse::Serve,
             cache_root: None,
             cache_ttl: DEFAULT_CACHE_TTL,
             verbose_warnings: false,
@@ -192,7 +195,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        CLOUD_ROOTS, DEFAULT_DEPTH, DEFAULT_MIN_SIZE_BYTES, DEFAULT_TOP, ScanRequest, default_excludes,
+        CLOUD_ROOTS, CacheUse, DEFAULT_DEPTH, DEFAULT_MIN_SIZE_BYTES, DEFAULT_TOP, ScanRequest,
+        default_excludes,
     };
 
     #[test]
@@ -203,7 +207,7 @@ mod tests {
         assert_eq!(request.top, DEFAULT_TOP);
         assert_eq!(request.min_size, DEFAULT_MIN_SIZE_BYTES);
         assert!(request.include_external, "externals are included unless --no-external");
-        assert!(!request.no_cache);
+        assert_eq!(request.cache, CacheUse::Serve);
     }
 
     #[test]

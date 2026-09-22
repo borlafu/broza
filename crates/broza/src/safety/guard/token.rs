@@ -66,10 +66,10 @@ pub struct ApprovedItem {
     target: Target,
 }
 
-/// What an approved item points at.
+/// What an approved item points at. Reached only through
+/// [`ApprovedItem::writable`] and [`ApprovedItem::snapshot`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Target {
+pub(crate) enum Target {
     /// A path the executor may move or remove, with its checked identity.
     Path(WritablePath),
     /// A snapshot the provider may delete; no path is written.

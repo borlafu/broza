@@ -26,7 +26,7 @@ fn one_volume_is_walked_aggregated_and_reported() {
 
     assert_eq!(scan.volume_id.as_str(), "disk3s5");
     assert_eq!(scan.root.path, Path::new(DATA));
-    assert_eq!(scan.root.size_bytes, 8000);
+    assert_eq!(scan.root.size_bytes, 8_000_000);
     assert_eq!(scan.root.file_count, 3);
     assert!(scan.warnings.is_empty(), "{:?}", scan.warnings);
     assert!(
@@ -61,7 +61,7 @@ fn a_path_is_scanned_from_itself_down_on_the_volume_it_lives_on() {
     assert_eq!(scans.len(), 1);
     assert_eq!(scans[0].volume_id.as_str(), "disk3s5");
     assert_eq!(scans[0].root.path, roots[0]);
-    assert_eq!(scans[0].root.size_bytes, 3000, "only what is under the path");
+    assert_eq!(scans[0].root.size_bytes, 3_000_000, "only what is under the path");
     assert_eq!(scans[0].tree.root.name, roots[0].display().to_string());
 }
 
@@ -87,7 +87,7 @@ fn the_cloud_roots_are_excluded_in_the_data_volume_spelling_too() {
     let scan = scan_data(&ports, &request);
 
     assert!(!item_paths(&scan).iter().any(|p| p.contains("CloudStorage")), "{:?}", item_paths(&scan));
-    assert_eq!(scan.root.size_bytes, 8000, "the placeholder never entered the totals");
+    assert_eq!(scan.root.size_bytes, 8_000_000, "the placeholder never entered the totals");
 }
 
 #[test]

@@ -168,15 +168,55 @@ mod tests {
         assert!(message.contains(NO_CACHE_HINT), "{message}");
     }
 
+    /// The layout-2 record, as that version wrote it: a child without a device.
+    #[derive(serde::Serialize)]
+    struct LegacyChild {
+        name: Vec<u8>,
+        inode: u64,
+        mtime_ns: Option<i128>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct LegacyRecord {
+        key: CacheKey,
+        size_bytes: u64,
+        allocated_bytes: u64,
+        file_count: u64,
+        dir_count: u64,
+        dataless_count: u64,
+        largest_item_bytes: u64,
+        has_hard_links: bool,
+        has_truncation: bool,
+        recorded_at: Timestamp,
+        child_dirs: Vec<LegacyChild>,
+        files: Vec<()>,
+    }
+
     #[test]
     fn a_store_from_an_older_broza_is_replaced_not_refused() {
-        let mut bytes = ok(encode(&[&record(1)]));
-        bytes[MAGIC.len()] = STORE_VERSION - 1;
+        let legacy = LegacyRecord {
+            key: CacheKey { device: 1, inode: 1, mtime_ns: 1 },
+            size_bytes: 1,
+            allocated_bytes: 1,
+            file_count: 1,
+            dir_count: 1,
+            dataless_count: 0,
+            largest_item_bytes: 1,
+            has_hard_links: false,
+            has_truncation: false,
+            recorded_at: Timestamp::UNIX_EPOCH,
+            child_dirs: vec![LegacyChild { name: b"x".to_vec(), inode: 2, mtime_ns: Some(1) }],
+            files: Vec::new(),
+        };
+        let body = postcard::to_stdvec(&vec![legacy]).unwrap_or_else(|e| panic!("{e}"));
+        let mut bytes = MAGIC.to_vec();
+        bytes.push(STORE_VERSION - 1);
+        bytes.extend_from_slice(&body);
 
         let decoded = ok(decode(&bytes));
 
         assert!(decoded.outdated);
-        assert!(decoded.records.is_empty(), "nothing of the old layout is trusted");
+        assert!(decoded.records.is_empty(), "nothing of the old layout is read, let alone misread");
     }
 
     #[test]

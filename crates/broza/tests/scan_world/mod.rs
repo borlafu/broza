@@ -52,9 +52,9 @@ pub fn ports() -> (Ports, Handles) {
     let fs: &FakeFileOps = handles.fs.as_ref();
     fs.add_root(DATA, DATA_DEVICE);
     for (path, size) in [
-        ("/System/Volumes/Data/Users/dana/Movies/film.mov", 5000_u64),
-        ("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1000),
-        ("/System/Volumes/Data/Users/dana/Documents/deep/archive.zip", 2000),
+        ("/System/Volumes/Data/Users/dana/Movies/film.mov", 5_000_000_u64),
+        ("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1_000_000),
+        ("/System/Volumes/Data/Users/dana/Documents/deep/archive.zip", 2_000_000),
     ] {
         fs.add_file(path, &[]);
         fs.set_size(path, size);

@@ -16,7 +16,7 @@ use broza::model::{Disk, LargestItem, VolumeId, Warning};
 use broza::ports::Ports;
 use broza::safety::firmlink::firmlink_spellings;
 use broza::scan::{
-    FileReport, MountTable, ScanProgress, ScanRequest, TreeView, VolumeScan, scan_all, scan_paths,
+    CacheUse, FileReport, MountTable, ScanProgress, ScanRequest, TreeView, VolumeScan, scan_all, scan_paths,
 };
 use broza::units::ByteSize;
 
@@ -150,8 +150,7 @@ fn request_for(args: &ScanArgs, settings: &FolderSettings) -> Result<ScanRequest
         top: args.top as usize,
         min_size: min_size.bytes(),
         exclude,
-        no_cache: settings.no_cache,
-        serve_from_cache: true,
+        cache: if settings.no_cache { CacheUse::Bypass } else { CacheUse::Serve },
         cache_root: settings.home.as_deref().map(|home| home.join(CACHE_DIR)),
         cache_ttl: settings.cache_ttl,
         verbose_warnings: settings.verbose,

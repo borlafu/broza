@@ -238,7 +238,7 @@ fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u
         if !node.from_cache {
             let own = direct.get(node.path.as_path()).copied().unwrap_or(0);
             let below = from_children.get(node.path.as_path()).copied().unwrap_or(0);
-            node.largest_item_bytes = own.max(below).min(node.allocated_bytes.max(node.size_bytes));
+            node.largest_item_bytes = own.max(below).min(node.allocated_bytes);
         }
         if let Some(parent) = node.path.parent() {
             let as_item = node.largest_item_bytes.max(node.allocated_bytes);

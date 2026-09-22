@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 
-use super::{CacheStore, Denied, STORE_FILE_NAME, store_path};
+use super::{CacheStore, STORE_FILE_NAME, Verdicts, store_path};
 use crate::BrozaError;
 use crate::ExitCode;
 use crate::ports::{Clock, FileOps};
@@ -111,7 +111,7 @@ fn a_subtree_is_rebuilt_whole_with_its_files_or_not_at_all() {
     ]);
     let half = CacheStore::empty(&clock, TTL).with_records([record_with(1, &[("sub", 2)], &[], now)]);
 
-    let served = whole.subtree(&identity_of(1), &Denied::new()).unwrap_or_else(|| panic!("servable"));
+    let served = whole.subtree(&identity_of(1), &Verdicts::new()).unwrap_or_else(|| panic!("servable"));
     let paths: Vec<PathBuf> = served.nodes.iter().map(|node| node.path.clone()).collect();
     let files: Vec<PathBuf> = served.files.iter().map(|file| file.path.clone()).collect();
 
@@ -120,7 +120,7 @@ fn a_subtree_is_rebuilt_whole_with_its_files_or_not_at_all() {
     assert!(served.nodes.iter().all(|node| node.from_cache));
     assert_eq!(served.files[0].size_bytes, 5_000_000);
     assert!(
-        half.subtree(&identity_of(1), &Denied::new()).is_none(),
+        half.subtree(&identity_of(1), &Verdicts::new()).is_none(),
         "a child without a record makes the parent unservable"
     );
 }
@@ -133,8 +133,8 @@ fn a_store_that_loops_or_hides_a_hard_link_is_not_served() {
     let linked = CacheStore::empty(&clock, TTL)
         .with_records([DirRecord { has_hard_links: true, ..record_with(1, &[], &[], now) }]);
 
-    assert!(looping.subtree(&identity_of(1), &Denied::new()).is_none());
-    assert!(linked.subtree(&identity_of(1), &Denied::new()).is_none());
+    assert!(looping.subtree(&identity_of(1), &Verdicts::new()).is_none());
+    assert!(linked.subtree(&identity_of(1), &Verdicts::new()).is_none());
 }
 
 #[test]
@@ -364,11 +364,11 @@ fn a_record_naming_a_path_component_that_is_not_plain_is_not_served() {
     for bad in ["", ".", "..", "a/b"] {
         let store =
             CacheStore::empty(&clock, TTL).with_records([record_with(1, &[], &[(bad, 5_000_000)], now)]);
-        assert!(store.subtree(&identity_of(1), &Denied::new()).is_none(), "{bad:?} must not be served");
+        assert!(store.subtree(&identity_of(1), &Verdicts::new()).is_none(), "{bad:?} must not be served");
     }
     let escaping = CacheStore::empty(&clock, TTL)
         .with_records([record_with(1, &[("..", 2)], &[], now), record_with(2, &[], &[], now)]);
-    assert!(escaping.subtree(&identity_of(1), &Denied::new()).is_none());
+    assert!(escaping.subtree(&identity_of(1), &Verdicts::new()).is_none());
 }
 
 #[test]
@@ -378,12 +378,63 @@ fn a_refused_subtree_is_remembered_so_its_ancestors_are_not_rebuilt_again() {
     // root(1) -> mid(2) -> leaf(3), and leaf has no record.
     let store = CacheStore::empty(&clock, TTL)
         .with_records([record_with(1, &[("mid", 2)], &[], now), record_with(2, &[("leaf", 3)], &[], now)]);
-    let denied = Denied::new();
+    let verdicts = Verdicts::new();
 
-    assert!(store.subtree(&identity_of(1), &denied).is_none());
+    assert!(store.subtree(&identity_of(1), &verdicts).is_none());
 
     let mid = CacheKey { device: 1, inode: 2, mtime_ns: 42 };
-    assert!(denied.contains(&CacheKey { device: 1, inode: 1, mtime_ns: 42 }), "the root was refused");
-    assert!(denied.contains(&mid), "and so was the directory the walker asks about next");
-    assert!(denied.contains(&CacheKey { device: 1, inode: 3, mtime_ns: 42 }));
+    assert!(verdicts.refused(&CacheKey { device: 1, inode: 1, mtime_ns: 42 }), "the root was refused");
+    assert!(verdicts.refused(&mid), "and so was the directory the walker asks about next");
+    assert!(verdicts.refused(&CacheKey { device: 1, inode: 3, mtime_ns: 42 }));
+}
+
+#[test]
+fn a_store_in_which_two_directories_share_a_child_is_not_served_and_does_not_hang() {
+    let clock = FixedClock::default();
+    let now = clock.now();
+    // Each level has two children that are the same record: 2^40 paths for a
+    // check that visits each key once.
+    let mut records = Vec::new();
+    for level in 1..=40_u64 {
+        records.push(record_with(level, &[("x", level + 1), ("y", level + 1)], &[], now));
+    }
+    records.push(record_with(41, &[], &[], now));
+    let store = CacheStore::empty(&clock, TTL).with_records(records);
+
+    assert!(store.subtree(&identity_of(1), &Verdicts::new()).is_none());
+}
+
+#[test]
+fn a_chain_deeper_than_any_real_tree_is_not_served_and_a_shorter_one_below_it_still_is() {
+    let clock = FixedClock::default();
+    let now = clock.now();
+    let depth = u64::try_from(super::MAX_SUBTREE_DEPTH).unwrap_or(u64::MAX) + 10;
+    let records = (1..=depth).map(|inode| {
+        let children: Vec<(&str, u64)> = if inode < depth { vec![("d", inode + 1)] } else { Vec::new() };
+        record_with(inode, &children, &[], now)
+    });
+    let store = CacheStore::empty(&clock, TTL).with_records(records);
+    let verdicts = Verdicts::new();
+
+    assert!(store.subtree(&identity_of(1), &verdicts).is_none(), "too deep from the top");
+    let lower = DirIdentity { inode: depth - 5, ..identity_of(1) };
+    let served = store.subtree(&lower, &verdicts).unwrap_or_else(|| panic!("servable from lower down"));
+    assert_eq!(served.nodes.len(), 6, "a depth refusal is not remembered against the chain");
+}
+
+#[test]
+fn a_child_on_another_device_is_looked_up_under_its_own_device() {
+    use crate::scan::cache::key::ChildDir;
+    let clock = FixedClock::default();
+    let now = clock.now();
+    let child_on_other_device = ChildDir { name: b"mnt".to_vec(), device: 7, inode: 2, mtime_ns: Some(42) };
+    let root = DirRecord { child_dirs: vec![child_on_other_device], ..record(1, now) };
+    let child = DirRecord { key: CacheKey { device: 7, inode: 2, mtime_ns: 42 }, ..record(2, now) };
+    let store = CacheStore::empty(&clock, TTL).with_records([root, child]);
+
+    let served = store.subtree(&identity_of(1), &Verdicts::new()).unwrap_or_else(|| panic!("servable"));
+
+    assert_eq!(served.nodes.len(), 2);
+    assert_eq!(served.nodes[1].device, 7);
+    assert_eq!(served.nodes[1].path, PathBuf::from("/vol/a/mnt"));
 }

@@ -27,28 +27,49 @@ const LAYOUT_DIR: &str = "v1";
 /// store that lies, and is walked instead.
 const MAX_SUBTREE_DEPTH: usize = 512;
 
-/// Directories a store already refused to serve during one walk.
+/// What one walk has already learnt about the directories it asked about.
 ///
-/// Shared by every lookup of the walk: when a subtree fails deep down, every
-/// ancestor the walker goes on to ask about is refused without a second
-/// descent. Interior mutability because the walker's hook is a shared `Fn`.
+/// Shared by every lookup of the walk: a subtree that passed is not validated
+/// again when the walker asks about it directly, and one that failed refuses
+/// every ancestor without a second descent. Interior mutability because the
+/// walker's hook is a shared `Fn`. Read only to answer faster, never to serve
+/// what a fresh check would refuse.
 #[derive(Debug, Default)]
-pub struct Denied(Mutex<HashSet<CacheKey>>);
+pub struct Verdicts(Mutex<HashMap<CacheKey, bool>>);
 
-impl Denied {
-    /// Nothing refused yet.
+impl Verdicts {
+    /// Nothing decided yet.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    fn contains(&self, key: &CacheKey) -> bool {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).contains(key)
+    fn get(&self, key: &CacheKey) -> Option<bool> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).get(key).copied()
     }
 
-    fn insert(&self, key: CacheKey) {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).insert(key);
+    fn record(&self, key: CacheKey, servable: bool) {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).insert(key, servable);
     }
+
+    /// `true` when the walk already refused `key`.
+    #[cfg(test)]
+    fn refused(&self, key: &CacheKey) -> bool {
+        self.get(key) == Some(false)
+    }
+}
+
+/// What checking one record concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Check {
+    /// The record and everything below it can be served.
+    Servable,
+    /// Something below is missing, stale, unusable or misnamed: a property of
+    /// the record itself, remembered for the walk.
+    Refused,
+    /// The check ran out of depth or met a key twice: a property of where the
+    /// check started, not of the record, so nothing is remembered.
+    Bounded,
 }
 
 /// Warning code for a cache filed under a BSD name for want of a UUID.
@@ -144,15 +165,14 @@ impl CacheStore {
     /// Nothing when the directory has no fresh usable record, or when any
     /// directory below it has none: a subtree is served whole or not at all,
     /// so a warm scan never reports a directory whose contents it half knows.
-    /// The check runs first over keys alone and remembers every directory it
-    /// refused in `denied`, so a change deep in a tree costs one descent, not
-    /// one per ancestor the walker then asks about; only a subtree that passed
-    /// is materialised. The directory asked about comes first, then its
+    /// The check runs first over keys alone, remembering each verdict in
+    /// `verdicts` for the rest of the walk; only a subtree that passed is
+    /// materialised. The directory asked about comes first, then its
     /// descendants, each with the big files the record kept.
-    pub fn subtree(&self, identity: &DirIdentity, denied: &Denied) -> Option<CachedSubtree> {
+    pub fn subtree(&self, identity: &DirIdentity, verdicts: &Verdicts) -> Option<CachedSubtree> {
         let key = CacheKey::of(identity)?;
-        let mut stack = Vec::new();
-        if !self.servable(key, &mut stack, denied) {
+        let mut seen = HashSet::new();
+        if self.check(key, &mut Vec::new(), &mut seen, verdicts) != Check::Servable {
             return None;
         }
         let record = self.lookup(&key)?;
@@ -161,33 +181,58 @@ impl CacheStore {
         Some(subtree)
     }
 
-    /// `true` when `key` and everything below it can be served: fresh, usable,
-    /// plainly named, acyclic and no deeper than [`MAX_SUBTREE_DEPTH`]. A
-    /// refusal is remembered for the key and every ancestor on the stack.
-    fn servable(&self, key: CacheKey, stack: &mut Vec<CacheKey>, denied: &Denied) -> bool {
-        if denied.contains(&key) || stack.contains(&key) || stack.len() >= MAX_SUBTREE_DEPTH {
-            return false;
+    /// Whether `key` and everything below it can be served: fresh, usable,
+    /// plainly named, each key met once, and no deeper than
+    /// [`MAX_SUBTREE_DEPTH`]. A store in which two directories share a child
+    /// (`seen`) or a chain runs deeper than any real tree describes no
+    /// filesystem, and is walked instead.
+    fn check(
+        &self,
+        key: CacheKey,
+        stack: &mut Vec<CacheKey>,
+        seen: &mut HashSet<CacheKey>,
+        verdicts: &Verdicts,
+    ) -> Check {
+        if let Some(servable) = verdicts.get(&key) {
+            return if servable && seen.insert(key) { Check::Servable } else { Check::Refused };
+        }
+        if stack.len() >= MAX_SUBTREE_DEPTH || !seen.insert(key) {
+            return Check::Bounded;
         }
         let Some(record) = self.lookup(&key).filter(|record| record.is_usable()) else {
-            denied.insert(key);
-            return false;
+            verdicts.record(key, false);
+            return Check::Refused;
         };
-        stack.push(key);
         let names_are_plain = record.child_dirs.iter().map(|child| child.name.as_slice()).all(is_plain_name)
             && record.files.iter().map(|file| file.name.as_slice()).all(is_plain_name);
-        let children_servable = names_are_plain
-            && record.child_dirs.iter().all(|child| {
-                child_key(child).is_some_and(|child_key| self.servable(child_key, stack, denied))
-            });
-        stack.pop();
-        if !children_servable {
-            denied.insert(key);
+        if !names_are_plain {
+            verdicts.record(key, false);
+            return Check::Refused;
         }
-        children_servable
+        stack.push(key);
+        let mut verdict = Check::Servable;
+        for child in &record.child_dirs {
+            verdict = match child_key(child) {
+                Some(child_key) => self.check(child_key, stack, seen, verdicts),
+                None => Check::Refused,
+            };
+            if verdict != Check::Servable {
+                break;
+            }
+        }
+        stack.pop();
+        match verdict {
+            Check::Servable => verdicts.record(key, true),
+            Check::Refused => verdicts.record(key, false),
+            Check::Bounded => {}
+        }
+        verdict
     }
 
-    /// Add `record` at `path` and everything below it, after [`Self::servable`]
-    /// said yes; a child that vanished in between simply ends the branch.
+    /// Add `record` at `path` and everything below it, after [`Self::check`]
+    /// said yes. The store is immutable and both passes run over `&self`, so
+    /// nothing can change between them; a key that still fails to resolve
+    /// simply ends its branch.
     fn rebuild(&self, path: &Path, record: &DirRecord, subtree: &mut CachedSubtree) {
         subtree.nodes.push(node_of(path, record));
         subtree.files.extend(record.files.iter().map(|file| file_of(path, record.key.device, file)));

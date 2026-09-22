@@ -52,17 +52,17 @@ pub enum Recheck {
 /// exactly what the token exists to prevent, so it stops the operation instead
 /// of being recorded as a skipped item.
 pub fn recheck(items: &[ApprovedItem], path: &Path, fs: &dyn FileOps) -> Result<Recheck, BrozaError> {
-    let approved =
-        items.iter().filter(|item| item.path() == path).find_map(ApprovedItem::writable).ok_or_else(
-            || {
-                let what = if items.iter().any(|item| item.path() == path) {
-                    "names a snapshot, not a path the guard approved for writing"
-                } else {
-                    "is not one of the paths the guard approved"
-                };
-                BrozaError::Other(format!("quarantine write: `{}` {what}", path.display()))
-            },
-        )?;
+    // The first item at this path decides, and only a path can be written:
+    // a snapshot there is refused, whatever else the token holds.
+    let found = items.iter().find(|item| item.path() == path);
+    let approved = found.and_then(ApprovedItem::writable).ok_or_else(|| {
+        let what = if found.is_some() {
+            "names a snapshot, not a path the guard approved for writing"
+        } else {
+            "is not one of the paths the guard approved"
+        };
+        BrozaError::Other(format!("quarantine write: `{}` {what}", path.display()))
+    })?;
     let current = match fs.metadata(path) {
         Ok(current) => current,
         Err(error) => return Ok(Recheck::Refused(io_code(&error))),

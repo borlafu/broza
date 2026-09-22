@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use broza::model::Volume;
 use broza::ports::FileOps;
-use broza::scan::{FileReport, ScanRequest, scan_paths, scan_volume};
+use broza::scan::{CacheUse, FileReport, ScanRequest, scan_paths, scan_volume};
 use broza::scan::{MountEntry, MountTable};
 use broza::testing::mac_mount_table;
 use broza::{BrozaError, ExitCode};
@@ -36,7 +36,7 @@ fn a_warm_scan_reports_exactly_what_the_cold_one_did() {
     // With this threshold, `Documents` holds nothing that could be listed on
     // its own, so a warm scan may take it from the cache; `Movies` holds a file
     // that could be, so it is walked again.
-    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+    let request = ScanRequest { min_size: 2_500_000, depth: 1, ..request() };
 
     let cold = scan_data(&ports, &request);
     let warm = scan_data(&ports, &request);
@@ -51,19 +51,19 @@ fn a_warm_scan_reports_exactly_what_the_cold_one_did() {
 #[test]
 fn a_subtree_the_cache_answered_for_is_not_walked_again() {
     let (ports, handles) = ports();
-    // Thresholds are allocated bytes (4 KiB units in the fake): at 5000 only
-    // `Movies` holds something listable, so `Documents` may come from the cache.
-    let request = ScanRequest { min_size: 5000, depth: 1, ..request() };
+    // At this threshold only `Movies` holds something listable; `Documents`
+    // is served from the cache whole, files and all.
+    let request = ScanRequest { min_size: 5_000_000, depth: 1, ..request() };
 
     let cold = scan_data(&ports, &request);
     // The file grows in place: its directory's mtime does not change, which is
     // the staleness the TTL bounds (`docs/implementation-plan.md` §3.4).
-    handles.fs.set_size("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1500);
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1_500_000);
     let warm = scan_data(&ports, &request);
-    let forced = scan_data(&ports, &ScanRequest { no_cache: true, ..request });
+    let forced = scan_data(&ports, &ScanRequest { cache: CacheUse::Bypass, ..request });
 
     assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "the cached subtree was reused");
-    assert_eq!(forced.root.size_bytes, cold.root.size_bytes + 500, "--no-cache measures again");
+    assert_eq!(forced.root.size_bytes, cold.root.size_bytes + 500_000, "--no-cache measures again");
 }
 
 #[test]
@@ -71,10 +71,10 @@ fn a_cached_subtree_expires_on_the_ttl_it_was_first_recorded_with() {
     let (ports, handles) = ports();
     // `Documents` holds nothing large enough to be listed, so a warm scan
     // takes it from the cache — which must not renew it.
-    let request = ScanRequest { min_size: 5000, depth: 1, cache_ttl: AN_HOUR, ..request() };
+    let request = ScanRequest { min_size: 5_000_000, depth: 1, cache_ttl: AN_HOUR, ..request() };
 
     let cold = scan_data(&ports, &request);
-    handles.fs.set_size("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1500);
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/Documents/notes.txt", 1_500_000);
     // Half an hour later, and half an hour after that: both inside the hour.
     handles.clock.advance(HALF_AN_HOUR);
     let warm = scan_data(&ports, &request);
@@ -85,7 +85,7 @@ fn a_cached_subtree_expires_on_the_ttl_it_was_first_recorded_with() {
     assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "inside the hour, the cache answers");
     assert_eq!(
         expired.root.size_bytes,
-        cold.root.size_bytes + 500,
+        cold.root.size_bytes + 500_000,
         "past the hour the subtree is measured again: a served record must not be re-stamped, \
          or a stale subtree would be served for ever"
     );
@@ -119,22 +119,22 @@ fn a_subtree_holding_every_name_of_its_files_is_still_served_from_the_cache() {
     // count that file, so skipping the subtree loses nothing.
     let original = "/System/Volumes/Data/Users/dana/copies/original.bin";
     handles.fs.add_file(original, &[]);
-    handles.fs.set_size(original, 1000);
+    handles.fs.set_size(original, 1_000_000);
     for index in 0..LINKS_IN_THE_PROBE {
         handles.fs.add_hard_link(original, format!("/System/Volumes/Data/Users/dana/copies/n{index}"));
     }
     handles.fs.add_file("/System/Volumes/Data/Users/dana/copies/extra.bin", &[]);
-    handles.fs.set_size("/System/Volumes/Data/Users/dana/copies/extra.bin", 300);
-    // Allocated threshold: 4 KiB files stay below 5000, so `copies` is cacheable.
-    let request = ScanRequest { min_size: 5000, depth: 1, ..request() };
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/copies/extra.bin", 300_000);
+    // Nothing in `copies` reaches the threshold, so it is cacheable.
+    let request = ScanRequest { min_size: 5_000_000, depth: 1, ..request() };
 
     let cold = scan_data(&ports, &request);
     // Growing a file leaves the directory's mtime alone, so a cached subtree
     // reports the old number — which is how this test knows it was cached.
-    handles.fs.set_size("/System/Volumes/Data/Users/dana/copies/extra.bin", 900);
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/copies/extra.bin", 900_000);
     let warm = scan_data(&ports, &request);
 
-    assert_eq!(cold.root.size_bytes, 8000 + 1000 + 300, "the forty names are one file");
+    assert_eq!(cold.root.size_bytes, 8_000_000 + 1_000_000 + 300_000, "the forty names are one file");
     assert_eq!(warm.root.size_bytes, cold.root.size_bytes, "`copies` came from the cache");
     assert_eq!(warm, cold);
 }
@@ -146,9 +146,9 @@ fn a_subtree_with_a_hole_in_it_is_measured_again_and_warned_about_again() {
     // happily answer for it — but one directory *below* it cannot be read, and
     // the warning that says so only exists while somebody is walking.
     handles.fs.add_file("/System/Volumes/Data/Users/dana/quiet/sub/secret/hidden.bin", &[]);
-    handles.fs.set_size("/System/Volumes/Data/Users/dana/quiet/sub/secret/hidden.bin", 100);
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/quiet/sub/secret/hidden.bin", 100_000);
     handles.fs.add_denied("/System/Volumes/Data/Users/dana/quiet/sub/secret");
-    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+    let request = ScanRequest { min_size: 2_500_000, depth: 1, ..request() };
 
     let cold = scan_data(&ports, &request);
     let warm = scan_data(&ports, &request);
@@ -161,7 +161,7 @@ fn a_subtree_with_a_hole_in_it_is_measured_again_and_warned_about_again() {
 #[test]
 fn a_warm_scan_that_measured_nothing_new_leaves_the_store_alone() {
     let (ports, handles) = ports();
-    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+    let request = ScanRequest { min_size: 2_500_000, depth: 1, ..request() };
 
     let _ = scan_data(&ports, &request);
     let written = handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|e| panic!("{e}"));
@@ -175,17 +175,20 @@ fn a_warm_scan_that_measured_nothing_new_leaves_the_store_alone() {
 }
 
 #[test]
-fn a_subtree_holding_something_reportable_is_never_taken_from_the_cache() {
+fn a_subtree_holding_something_reportable_is_served_with_the_file_its_record_kept() {
     let (ports, handles) = ports();
-    let request = ScanRequest { min_size: 2500, depth: 1, ..request() };
+    let request = ScanRequest { min_size: 2_500_000, depth: 1, ..request() };
 
     let cold = scan_data(&ports, &request);
-    // `film.mov` is above the threshold, so `Movies` must be walked again and
-    // the growth must show up.
-    handles.fs.set_size("/System/Volumes/Data/Users/dana/Movies/film.mov", 6000);
+    // `film.mov` is above the threshold; the record kept it, so `Movies` is
+    // served with the film as it was, and only a bypass sees the growth.
+    handles.fs.set_size("/System/Volumes/Data/Users/dana/Movies/film.mov", 6_000_000);
     let warm = scan_data(&ports, &request);
+    let bypassed = scan_data(&ports, &ScanRequest { cache: CacheUse::Bypass, ..request });
 
-    assert_eq!(warm.root.size_bytes, cold.root.size_bytes + 1000);
+    assert_eq!(warm, cold, "the served subtree lists the film at its recorded size");
+    assert!(item_paths(&warm).iter().any(|path| path.ends_with("film.mov")), "{:?}", item_paths(&warm));
+    assert_eq!(bypassed.root.size_bytes, cold.root.size_bytes + 1_000_000);
 }
 
 #[test]
@@ -201,7 +204,7 @@ fn the_cache_is_written_under_the_volume_of_the_layout_version() {
 fn no_cache_skips_reading_the_store_but_still_writes_one() {
     let (ports, handles) = ports();
 
-    let _ = scan_data(&ports, &ScanRequest { no_cache: true, ..request() });
+    let _ = scan_data(&ports, &ScanRequest { cache: CacheUse::Bypass, ..request() });
 
     assert!(handles.fs.exists(Path::new(DATA_STORE)));
 }
@@ -213,7 +216,7 @@ fn a_scan_without_a_cache_root_writes_nothing_and_still_reports() {
 
     let scan = scan_data(&ports, &ScanRequest { cache_root: None, ..request() });
 
-    assert_eq!(scan.root.size_bytes, 8000);
+    assert_eq!(scan.root.size_bytes, 8_000_000);
     assert_eq!(handles.fs.paths(), before, "no cache root, no file written");
 }
 
@@ -265,7 +268,7 @@ fn an_unreadable_subtree_becomes_a_warning_and_the_volume_is_still_reported() {
 
     let scan = scan_data(&ports, &request());
 
-    assert_eq!(scan.root.size_bytes, 5000);
+    assert_eq!(scan.root.size_bytes, 5_000_000);
     assert_eq!(scan.warnings.len(), 1, "{:?}", scan.warnings);
     assert_eq!(scan.warnings[0].code, "permission_denied");
 }
@@ -332,7 +335,7 @@ fn a_served_subtree_keeps_the_sizes_it_was_recorded_with_until_the_cache_is_bypa
     // Grown in place: the directory's mtime is unchanged, so the cache answers.
     handles.fs.set_size(BIG, 6 * A_MEGABYTE);
     let warm = scan_data(&ports, &for_detectors());
-    let forced = scan_data(&ports, &ScanRequest { no_cache: true, ..for_detectors() });
+    let forced = scan_data(&ports, &ScanRequest { cache: CacheUse::Bypass, ..for_detectors() });
 
     let big = |scan: &broza::scan::VolumeScan| {
         scan.files.iter().find(|file| file.path == Path::new(BIG)).map(|file| file.size_bytes)
@@ -371,7 +374,7 @@ fn a_walk_that_does_not_serve_from_the_cache_reads_the_disk_and_keeps_the_store(
     // What `clean` does: the home walked cold, the store loaded and refreshed.
     handles.fs.set_size(BIG, 6 * A_MEGABYTE);
     let home = PathBuf::from("/System/Volumes/Data/Users/dana/Documents");
-    let request = ScanRequest { serve_from_cache: false, ..for_detectors() };
+    let request = ScanRequest { cache: CacheUse::Refresh, ..for_detectors() };
     let mut scans =
         scan_paths(&[home], &request, &ports, &mac_mount_table(), None).unwrap_or_else(|e| panic!("{e}"));
     let cold_again = scans.pop().unwrap_or_else(|| panic!("a scan"));
@@ -386,4 +389,17 @@ fn a_walk_that_does_not_serve_from_the_cache_reads_the_disk_and_keeps_the_store(
     )
     .unwrap_or_else(|e| panic!("{e}"));
     assert!(store.lookup(&outside_key).is_some(), "the records of the rest of the volume survived the save");
+}
+
+#[test]
+fn a_refreshing_walk_replaces_a_store_it_cannot_read_instead_of_failing() {
+    let (ports, handles) = ports();
+    handles.fs.add_dir(Path::new(DATA_STORE).parent().unwrap_or_else(|| panic!("parent")));
+    handles.fs.add_file(DATA_STORE, b"BRZC\x03not records at all");
+
+    let refreshing = scan_data(&ports, &ScanRequest { cache: CacheUse::Refresh, ..request() });
+    let serving = scan_volume(&request().for_volume("disk3s5"), &ports, &mac_mount_table(), None);
+
+    assert!(!refreshing.nodes.is_empty(), "clean's walk went ahead and rewrote the store");
+    assert!(serving.is_ok(), "the rewritten store reads back: {serving:?}");
 }

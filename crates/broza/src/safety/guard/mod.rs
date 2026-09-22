@@ -30,8 +30,8 @@ pub use checks::approve;
 pub use narrow::{approve_quarantine_write, snapshot_deletions};
 pub use restore::{RestoreRequest, approve_restore_targets};
 pub use token::{
-    Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, RestoreWrite, SnapshotDelete, Target,
-    WritablePath, Write, WriteKind,
+    Approved, ApprovedItem, ApprovedPlan, QuarantineWrite, RestoreWrite, SnapshotDelete, WritablePath, Write,
+    WriteKind,
 };
 
 /// Shared with `clean::planner` so the plan and the guard agree on what

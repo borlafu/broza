@@ -92,11 +92,11 @@ pub struct DirRecord {
     /// Cloud placeholders in the subtree.
     pub dataless_count: u64,
     /// Biggest single reportable thing inside: the largest file, or the largest
-    /// descendant directory's subtree.
+    /// descendant directory's subtree, in allocated bytes.
     ///
-    /// This is what lets a warm scan stay honest. A subtree may only be served
-    /// from the cache when nothing inside it could have been *listed* on its
-    /// own, and that is decided by comparing this against `--min-size`.
+    /// Kept for the node the record turns back into. Since layout 3 it is not
+    /// what decides whether a subtree may be served: the request's floor
+    /// against [`CACHE_FILE_FLOOR_BYTES`] is.
     pub largest_item_bytes: u64,
     /// `true` when a file with more than one name lives inside the subtree.
     /// Such a record is written but never served: see [`DirRecord::is_usable`].

@@ -28,9 +28,11 @@ files.
   (hard link to a name outside, unreadable hole) means the subtree is walked.
 - The walker collects the files above the cache floor on every cached walk (`cache_files`,
   unbounded) and `records_of` writes them; the report's own bounded file list is unchanged.
-- The reuse rule of §7 becomes: serve when the request's floor is at least the cache floor, or
-  when nothing inside reaches the request's floor. A warm scan still reports exactly what a cold
-  one would, up to the TTL-bounded staleness the cache always had.
+- The reuse rule of §7 becomes: serve only when the request's floor is at least the cache floor
+  (1 MB); below that the store is not read. The record's `largest_item_bytes` is allocated-only
+  and stays the drill-down's figure, not a gate: an apparent-size gate would have let a
+  compressed file slip past. A warm scan still reports exactly what a cold one would, up to the
+  TTL-bounded staleness the cache always had.
 - `suggest` sets its `--min-size` to the file report's floor and reads the cache. `clean` does
   not read it: its plan is checked item by item against the disk (§3.4), and a size remembered
   from before a file grew would be refused there and abort the run. Both refresh the store.
@@ -46,11 +48,14 @@ files.
 - New with this layout: a directory whose mtime was set back after its contents changed (`rsync -t`,
   `tar -p`, a restore) is served with the names its record kept, so a warm report can list
   entries that are gone or miss new ones until the TTL. Layout 1 could only report a stale size.
-- A refused subtree is remembered for the walk (`Denied`), so a change deep in a tree costs one
-  key-only descent, not one per ancestor the walker asks about; a subtree is materialised only
+- Every verdict is remembered for the walk (`Verdicts`): a subtree that passed is not validated
+  again when the walker asks about it directly, and one that failed refuses its ancestors
+  without a second descent. A change deep in a tree costs about one descent along its path
+  plus the siblings validated before the failure was met. A store in which two directories share
+  a child, or a chain deeper than 512, is refused, not walked into. A subtree is materialised only
   after it passed.
-- `clean` walks with `serve_from_cache: false`: the store is loaded and refreshed, never replaced
-  by the home walk alone.
+- `clean` walks with `CacheUse::Refresh`: the store is loaded and refreshed, never replaced by the
+  home walk alone; a store it cannot read is replaced rather than reported.
 - Still open: one cloud placeholder file makes every directory above it unservable
   (`has_truncation`), which predates this layout; splitting "counted placeholder" from "hole"
   would let those subtrees be served.

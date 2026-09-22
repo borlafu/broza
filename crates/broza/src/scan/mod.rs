@@ -27,7 +27,8 @@ pub use cache::{CACHE_FILE_FLOOR_BYTES, CacheKey, CacheStore, DirRecord};
 pub use mount::{MountEntry, MountTable};
 pub use progress::{ProgressReporter, ScanProgress};
 pub use request::{
-    DETECTOR_FILES_MIN_BYTES, DETECTOR_FILES_TOP, FileReport, ScanRequest, VolumeScan, default_excludes,
+    CacheUse, DETECTOR_FILES_MIN_BYTES, DETECTOR_FILES_TOP, FileReport, ScanRequest, VolumeScan,
+    default_excludes,
 };
 pub use walker::{DirIdentity, DirNode, FileEntry, SkipHook, WalkOptions, WalkResult, walk};
 pub use warnings::{FILE_REPORT_TRUNCATED_CODE, OVERCOUNT_CODE, PERMISSION_SUMMARY_CODE};
@@ -247,13 +248,19 @@ fn cache_path_for(cache_root: &Path, volume: &Volume) -> PathBuf {
 }
 
 /// The store for this volume, or an empty one when it is disabled or bypassed.
+///
+/// A store that cannot be read stops a scan that would have served from it
+/// (exit `9`); a walk that only refreshes it (`clean`) replaces it instead,
+/// since nothing it reports depends on what the file held.
 fn load_store(path: Option<&Path>, request: &ScanRequest, ports: &Ports) -> Result<CacheStore, BrozaError> {
     let clock = ports.clock.as_ref();
-    match path {
-        Some(path) if !request.no_cache => {
-            CacheStore::load(path, ports.fs.as_ref(), clock, request.cache_ttl)
+    let empty = CacheStore::empty(clock, request.cache_ttl);
+    match (path, request.cache) {
+        (Some(path), CacheUse::Serve) => CacheStore::load(path, ports.fs.as_ref(), clock, request.cache_ttl),
+        (Some(path), CacheUse::Refresh) => {
+            Ok(CacheStore::load(path, ports.fs.as_ref(), clock, request.cache_ttl).unwrap_or(empty))
         }
-        _ => Ok(CacheStore::empty(clock, request.cache_ttl)),
+        (None, _) | (_, CacheUse::Bypass) => Ok(empty),
     }
 }
 
@@ -293,20 +300,16 @@ fn walk_volume(
     // A cached subtree is reused only when the store can give back everything
     // the request would list: every directory, and every file above the
     // request's floor. Records keep files from `CACHE_FILE_FLOOR_BYTES` up, so
-    // a request with a lower floor is served only for subtrees holding nothing
-    // it could list; otherwise a warm scan would quietly drop an entry that a
-    // cold scan shows, and the two would disagree about the same disk.
-    let floor = request.reporting_floor();
-    let denied = cache::store::Denied::new();
-    let hook = |identity: &DirIdentity| {
-        let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
-        let complete = floor >= CACHE_FILE_FLOOR_BYTES || record.largest_item_bytes < floor;
-        (record.is_usable() && complete).then(|| store.subtree(identity, &denied)).flatten()
-    };
-    // `clean` reads nothing from the store (`docs/cli-spec.md` §7) but still
+    // a request with a lower floor is not served at all; otherwise a warm scan
+    // could quietly drop an entry that a cold scan shows, and the two would
+    // disagree about the same disk.
+    let complete = request.reporting_floor() >= CACHE_FILE_FLOOR_BYTES;
+    let verdicts = cache::store::Verdicts::new();
+    let hook = |identity: &DirIdentity| complete.then(|| store.subtree(identity, &verdicts)).flatten();
+    // `clean` serves nothing from the store (`docs/cli-spec.md` §7) but still
     // refreshes it: the store is loaded so that what it holds for the rest of
     // the volume survives the save.
-    let skip_hook: Option<SkipHook<'_>> = request.serve_from_cache.then_some(&hook);
+    let skip_hook: Option<SkipHook<'_>> = (request.cache == CacheUse::Serve).then_some(&hook);
     let files = request.file_report();
     let options = WalkOptions {
         // The whole tree is reported: `--depth` shapes the tree view, and the

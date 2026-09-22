@@ -215,7 +215,8 @@ Progress:
 - [x] Benchmark script for the cold and warm `scan` targets (`scripts/bench-scan.sh`, ADR 0006).
 - [ ] APFS clone accounting (post-1.0): a whole-volume walk that exceeds `used_bytes` warns with
       `size_exceeds_volume` until then.
-- [ ] Homebrew tap publishing 0.1.
+- [x] Homebrew tap publishing: `borlafu/homebrew-broza` receives `Formula/broza.rb` from the
+      release workflow (`HOMEBREW_TAP_TOKEN`); first published formula is 1.0.0 (2026-09-22).
 
 M3 progress:
 
@@ -249,7 +250,7 @@ M3 progress:
       (`~/.local/share/broza/state/donate_last_shown`); a marker that cannot be written is a `-v` note.
 - [x] Release 0.2: version 0.2.0, `CHANGELOG.md`, `dist-workspace.toml` (Apple Silicon only,
       shell + Homebrew installers, tap `borlafu/homebrew-broza`), `.github/workflows/release.yml`.
-      Tagged `v0.2.0` locally; publish when a remote exists.
+      Tagged `v0.2.0` locally only; never published (1.0.0 was the first public release).
 
 ### M3 — Green detectors and quarantine (release 0.2)
 
@@ -351,7 +352,7 @@ M4 progress:
       from the cache; split "counted placeholder" from "unreadable hole" so those subtrees can be
       (review of 1ab03c6, MEDIUM; cloud roots are excluded by default, so the cost is bounded).
 - [x] Reviewed (four Opus passes on the M4 commits, findings fixed) and released: version 0.3.0,
-      `CHANGELOG.md`, spec 1.2 dated 2026-09-22; tagged `v0.3.0` locally, publish when a remote exists.
+      `CHANGELOG.md`, spec 1.2 dated 2026-09-22; tagged `v0.3.0` locally only, never published.
 
 ### M5 — Inform-only, apps, polish (release 1.0)
 
@@ -422,7 +423,8 @@ M5 progress:
 - [ ] Post-1.0 test debt: `assert_cmd` coverage for exit codes `4`, `5`, `6`, `8`, `9` at the CLI
       level (AGENTS.md §7 asks for every code; today `0`–`3` and `7` are covered end to end).
 - [x] Reviewed (two Opus passes on the M5 commits, findings fixed) and released: version 1.0.0,
-      `CHANGELOG.md`, spec 1.3; tagged `v1.0.0` locally, publish when a remote exists.
+      `CHANGELOG.md`, spec 1.3; published 2026-09-22 as the first GitHub release
+      (`github.com/borlafu/broza`, tag `v1.0.0` on `a66daf7`) with the Homebrew formula.
 
 ## 5. Testing strategy
 

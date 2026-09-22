@@ -4,13 +4,9 @@ Broza is an open-source command-line tool that analyzes your Mac's APFS storage,
 "System Data" and purgeable space really are, and frees disk space with a dry-run first and a
 reversible quarantine. Built in Rust for Apple Silicon.
 
-> Status: pre-release. Phase 1 (CLI) is in active development. See the [roadmap](#roadmap).
-
-<!-- Badges (activated at first release)
-[![CI](https://github.com/borlafu/broza/actions/workflows/ci.yml/badge.svg)](https://github.com/borlafu/broza/actions)
-[![crates.io](https://img.shields.io/crates/v/broza-cli.svg)](https://crates.io/crates/broza-cli)
+[![CI](https://github.com/borlafu/broza/actions/workflows/ci.yml/badge.svg)](https://github.com/borlafu/broza/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/borlafu/broza)](https://github.com/borlafu/broza/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
--->
 
 ## Why Broza
 
@@ -25,16 +21,22 @@ The name is Spanish: *broza* means brushwood or useless clutter. Pronounced BRO-
 
 ## Quick start
 
-Install with Homebrew (available from release 0.1):
+Install with Homebrew:
 
 ```bash
 brew install borlafu/broza/broza
 ```
 
-Or with Cargo:
+Or with the installer script from the [latest release](https://github.com/borlafu/broza/releases/latest):
 
 ```bash
-cargo install broza-cli --locked
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/borlafu/broza/releases/latest/download/broza-cli-installer.sh | sh
+```
+
+Or build from source with Cargo:
+
+```bash
+cargo install --locked --git https://github.com/borlafu/broza broza-cli
 ```
 
 See what is using your disk:
@@ -211,28 +213,14 @@ Exit codes:
 
 Setting `CI` disables prompts, progress, and the support message. `NO_COLOR` disables color.
 
-## Roadmap
-
-Phase 1 delivers the CLI in six milestones:
-
-1. **M0** Skeleton, JSON contract, command tree, CI.
-2. **M1** Safety kernel: dry-run, confirmation policy, protected volumes.
-3. **M2** Read-only analysis: `scan` and `explain`. First release (0.1).
-4. **M3** Safe detectors, quarantine, `clean`, `restore`. Release 0.2.
-5. **M4** Review-level detectors: trash, snapshots, backups, simulators, duplicates, large files;
-   a scan cache that makes `suggest` run warm. Release 0.3.
-6. **M5** Cloud-synced reporting, unused apps, profiles, SBOM in releases. Release 1.0.
-
-Phase 2 is a paid desktop GUI built on the same open-source core. Details in the
-[implementation plan](docs/implementation-plan.md) and the [product requirements](docs/prd.md).
-
 ## Contributing
 
 Contributions are welcome. The project follows test-driven development, conventional commits,
 and a set of safety invariants that no pull request may weaken. Releases are built by `cargo-dist`
 from the committed `Cargo.lock` (`cargo build --locked` in CI) and ship a CycloneDX SBOM; code
 signing and notarization arrive with the Phase 2 app, which needs the same Developer ID.
-Human contributors: read the [PRD](docs/prd.md) and [CLI spec](docs/cli-spec.md). AI coding
+Human contributors: read the [PRD](docs/prd.md), the [CLI spec](docs/cli-spec.md), and the
+[implementation plan](docs/implementation-plan.md), which lists what is still open. AI coding
 agents: read [AGENTS.md](AGENTS.md).
 
 ## Support the project

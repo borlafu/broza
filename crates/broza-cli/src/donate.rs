@@ -7,7 +7,7 @@
 use jiff::{SignedDuration, Timestamp};
 
 /// Ko-fi link shown by the message and by `broza about`.
-pub const DONATE_URL: &str = "https://ko-fi.com/broza";
+pub const DONATE_URL: &str = "https://ko-fi.com/borlafu";
 /// Marker file, relative to the user's home directory.
 pub const MARKER_RELATIVE: &str = ".local/share/broza/state/donate_last_shown";
 /// Minimum time between two messages (condition 6): 30 days.

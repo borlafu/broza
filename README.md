@@ -233,7 +233,7 @@ agents: read [AGENTS.md](AGENTS.md).
 ## Support the project
 
 Broza is free and will stay free. If it saved you space, you can leave a tip at
-[ko-fi.com/broza](https://ko-fi.com/broza). It is a donation, nothing is sold and nothing is unlocked.
+[ko-fi.com/borlafu](https://ko-fi.com/borlafu). It is a donation, nothing is sold and nothing is unlocked.
 
 ## License
 

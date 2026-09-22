@@ -6,7 +6,7 @@ expression: "json_of(&[\"about\", \"--json\"])"
   "broza_version": "[version]",
   "command": "about",
   "data": {
-    "donate_url": "https://ko-fi.com/broza",
+    "donate_url": "https://ko-fi.com/borlafu",
     "homepage": "https://github.com/borlafu/broza",
     "license": "MIT",
     "name": "Broza",

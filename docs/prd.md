@@ -282,6 +282,8 @@ Detector notes (normative for v1):
 
 ### 10.1 Ko-fi configuration
 
+The page is the author's personal one, `https://ko-fi.com/borlafu`, with Broza named in its description: one account and one Stripe connection, and a donation that reads as support for a person rather than payment for a tool, which is the framing D1 depends on. The URL lives in one constant of the CLI (`crates/broza-cli/src/donate.rs`) so it can move later.
+
 - **Disable "Contributor status"** under Settings -> Payment. It is on by default and gives up 5% of tips. Disabled, one-off donations carry 0% platform fee.
 - Stripe processing (~2.9% + $0.30) is always paid. The **fixed part** weighs on small amounts: on $5 it is ~$0.45 (about 9%).
 - **Design consequence:** suggest amounts of $5 or more; do not leave the amount open downwards.

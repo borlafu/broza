@@ -127,7 +127,7 @@ mod tests {
         );
         assert_eq!(
             both[1],
-            "  If it helped you: https://ko-fi.com/broza   ·   Silence this: broza config set donate-prompt false"
+            "  If it helped you: https://ko-fi.com/borlafu   ·   Silence this: broza config set donate-prompt false"
         );
         assert_eq!(
             pending_only[0],

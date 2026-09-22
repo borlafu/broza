@@ -26,7 +26,7 @@ fn bare_invocation_prints_help_and_exits_zero() {
 #[test]
 fn about_exits_zero() {
     let home = temp_home();
-    broza(home.path()).arg("about").assert().code(0).stdout(contains("ko-fi.com/broza"));
+    broza(home.path()).arg("about").assert().code(0).stdout(contains("ko-fi.com/borlafu"));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn about_json_is_a_valid_envelope() {
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("invalid json: {e}"));
     assert_eq!(parsed["schema_version"], "1.1");
     assert_eq!(parsed["command"], "about");
-    assert_eq!(parsed["data"]["donate_url"], "https://ko-fi.com/broza");
+    assert_eq!(parsed["data"]["donate_url"], "https://ko-fi.com/borlafu");
     assert_eq!(parsed["data"]["license"], "MIT");
     assert_eq!(parsed["data"]["schema_version"], "1.1");
     assert!(parsed["warnings"].is_array());

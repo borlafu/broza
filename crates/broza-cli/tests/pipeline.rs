@@ -34,7 +34,7 @@ fn about_runs_end_to_end() {
     let home = temp_home();
     let (code, text) = run_in(home.path(), &["broza", "about"]);
     assert_eq!(code, ExitCode::Ok);
-    assert!(text.contains("ko-fi.com/broza"), "{text}");
+    assert!(text.contains("ko-fi.com/borlafu"), "{text}");
 }
 
 #[test]

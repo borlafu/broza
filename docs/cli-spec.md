@@ -478,7 +478,7 @@ $ broza about
 Broza 0.3.0  ·  MIT License  ·  JSON schema 1.1
 Safe disk cleanup for macOS 26/27 on Apple Silicon.
 Source:   https://github.com/borlafu/broza
-Support:  https://ko-fi.com/broza  (donation, nothing in return)
+Support:  https://ko-fi.com/borlafu  (donation, nothing in return)
 ```
 
 ---
@@ -959,7 +959,7 @@ Condition 6 is tracked by the marker file `~/.local/share/broza/state/donate_las
 
 ```
   Broza made 138.2 GB reclaimable (121.4 GB in quarantine, 16.8 GB freed). It is free and open source software.
-  If it helped you: https://ko-fi.com/broza   ·   Silence this: broza config set donate-prompt false
+  If it helped you: https://ko-fi.com/borlafu   ·   Silence this: broza config set donate-prompt false
 ```
 
 The figures follow principle 8: pending and freed bytes are reported separately inside the parenthesis; a figure that is zero is left out of it, and the parenthesis stays for the other one (`(12.4 GB freed)` after a purge, `(94.2 GB in quarantine)` after a plain cleanup).
@@ -1105,6 +1105,7 @@ Everything below shipped with 0.3.0; the milestone that produced each change is 
 - §3.5 and §3.8 (M3): `broza restore` and `broza quarantine list | expire | purge` are implemented. `restore --list` CSV columns defined; ids of one kind per invocation; unknown sessions exit `4` before any write; `purge` refuses unknown sessions before asking for `PURGE`; empty-store wording.
 - §3.5 (M3): `restore` resolves every id before writing (unknown item ids exit `4` too), `--all`/`--session`/`ID…` are mutually exclusive, `--all` reports unreadable sessions in `errors[]`; §5: a zero figure drops only its own part of the parenthesis.
 - §3.4 (M4): `purge` items are executed (re-check, remove, allocated bytes to `reclaimed_bytes`); a plan without `quarantine` items creates no session; `clean --apply --purge` works. `trash` detector documented in §3.3.
+- §3.9 and §5 (post-0.3): the support link is the author's personal Ko-fi page, `https://ko-fi.com/borlafu`.
 - §7 (M4): scan cache layout 3 — records carry their child directories and their files from 1 MB, subtrees are served whole, `suggest` runs warm, `clean` walks cold; a store from an older Broza is replaced, not refused (ADR 0008).
 - §4.4 (M4): `quarantined_bytes` pinned to allocated bytes, like `reclaimed_bytes` and `reclaimable_bytes`.
 - §3.3 and §4.1 (M4): `duplicates` detector (`duplicates.home`; scope, size window, kept copy and clone caveat spelled out); `file_report_truncated` warning.

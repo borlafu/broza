@@ -24,7 +24,8 @@ pub const DEFAULT_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// walks in measures the network instead of the disk, for minutes at a time
 /// (`docs/cli-spec.md` §7). Broza reports what is really on the disk and leaves
 /// the provider's copy to the provider, which is also what invariant §2.5 asks.
-pub const CLOUD_ROOTS: [&str; 2] = ["Library/Mobile Documents", "Library/CloudStorage"];
+pub const CLOUD_ROOTS: [&str; 5] =
+    ["Library/Mobile Documents", "Library/CloudStorage", "Dropbox", "OneDrive", "Google Drive"];
 /// Smallest file the home walk of `suggest` reports one by one: the
 /// `duplicates` threshold, 1 MB counted the way Finder counts. The
 /// `large-old-files` detector keeps only the 1 GB ones of those.
@@ -178,6 +179,9 @@ pub struct VolumeScan {
     pub nodes: Vec<DirNode>,
     /// The files the request asked to see one by one, sorted by path.
     pub files: Vec<FileEntry>,
+    /// `true` when macOS refused to list the scan's own root for lack of
+    /// permission: the whole scan was impossible, not merely incomplete.
+    pub root_refused: bool,
 }
 
 impl PartialEq for VolumeScan {

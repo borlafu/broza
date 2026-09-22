@@ -178,20 +178,47 @@ expression: envelope
         "action": "quarantine",
         "actionable": true,
         "category": "unused-apps",
-        "description": "Support files, caches and containers named after applications that are no longer installed.",
+        "description": "Caches, logs and saved state named after applications that are no longer installed.",
         "id": "unused-apps.leftovers",
         "item_count": 1,
         "paths": [
           {
             "last_used": "[time]",
-            "path": "/System/Volumes/Data/Users/dana/Library/Application Support/com.gone.Tool",
+            "path": "/System/Volumes/Data/Users/dana/Library/HTTPStorages/com.gone.Tool",
             "size_bytes": 1100001280
           }
         ],
-        "reasoning": "No application under /Applications, ~/Applications or /System/Applications carries this bundle identifier, and nothing has touched the directory for the threshold. A helper or a tool installed elsewhere may still own one: read the list before applying.",
+        "reasoning": "No application under /Applications, ~/Applications or /System/Applications, nor any helper inside one, carries this bundle identifier, and nothing inside the directory has changed for the threshold. A tool installed elsewhere may still own one: read the list before applying.",
         "reclaimable_bytes": 1100001280,
         "risk": "amber",
         "title": "Leftovers of applications no longer installed"
+      },
+      {
+        "action": "inform_only",
+        "actionable": false,
+        "category": "unused-apps",
+        "description": "Applications Spotlight has no last-opened date for, judged by the bundle's own times alone.",
+        "id": "unused-apps.unverified",
+        "instructions": {
+          "provider": "Finder",
+          "steps": [
+            "Open the application once if you still use it; Spotlight records the date and Broza stops listing it",
+            "Otherwise drag it from /Applications to the Trash, then run `broza suggest` again for its leftovers"
+          ],
+          "summary": "Check these yourself: Spotlight has no record of them being opened."
+        },
+        "item_count": 1,
+        "paths": [
+          {
+            "last_used": "[time]",
+            "path": "/Applications/Mystery.app",
+            "size_bytes": 500006912
+          }
+        ],
+        "reasoning": "Low confidence: macOS often records nothing for these, and an application launched by another program leaves no trace here. Broza lists them and will not remove them.",
+        "reclaimable_bytes": 500006912,
+        "risk": "red",
+        "title": "Applications with no record of use"
       },
       {
         "action": "inform_only",
@@ -215,7 +242,7 @@ expression: envelope
             "size_bytes": 700002304
           }
         ],
-        "reasoning": "Deleting a synced file locally deletes it from the cloud and from every other device, so Broza only reports these and shows the provider's own steps.",
+        "reasoning": "Deleting a synced file locally deletes it from the cloud and from every other device, so Broza only reports these and shows the provider's own steps. Evicted files and anything Broza could not read count as nothing here: the figure is a floor.",
         "reclaimable_bytes": 700002304,
         "risk": "red",
         "title": "Already backed up in Dropbox"
@@ -243,7 +270,7 @@ expression: envelope
             "size_bytes": 12500000768
           }
         ],
-        "reasoning": "Deleting a synced file locally deletes it from the cloud and from every other device, so Broza only reports these and shows the provider's own steps.",
+        "reasoning": "Deleting a synced file locally deletes it from the cloud and from every other device, so Broza only reports these and shows the provider's own steps. Evicted files and anything Broza could not read count as nothing here: the figure is a floor.",
         "reclaimable_bytes": 12500000768,
         "risk": "red",
         "title": "Already backed up in iCloud Drive"
@@ -287,7 +314,7 @@ expression: envelope
         "title": "Large files not opened in a long time"
       }
     ],
-    "inform_only_bytes": 51800006656,
+    "inform_only_bytes": 52300013568,
     "total_reclaimable_bytes": 337300017152
   },
   "errors": [],

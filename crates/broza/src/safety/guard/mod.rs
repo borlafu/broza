@@ -84,6 +84,10 @@ pub struct WriteRequest {
     pub quarantine_root: Option<PathBuf>,
     /// The user's home directory (`/Users/<name>`).
     pub home: PathBuf,
+    /// Roots a cloud provider syncs (`docs/cli-spec.md` §7), in both firmlink
+    /// spellings. Nothing under them is ever a plan item: a synced file deleted
+    /// locally is deleted from the cloud and every other device (AGENTS.md §2.5).
+    pub cloud_roots: Vec<PathBuf>,
     /// Per-uid temporary directories (`/private/var/folders/<xx>/<hash>`).
     pub uid_temp_dirs: Vec<PathBuf>,
 }
@@ -91,6 +95,7 @@ pub struct WriteRequest {
 impl WriteRequest {
     /// A request that writes nothing: every flag off, no cap, no exclusion.
     pub fn new(home: impl Into<PathBuf>) -> Self {
+        let home = home.into();
         Self {
             apply: false,
             purge: false,
@@ -100,7 +105,8 @@ impl WriteRequest {
             max_size: None,
             exclusions: Exclusions::none(),
             quarantine_root: None,
-            home: home.into(),
+            cloud_roots: crate::scan::default_excludes(&home),
+            home,
             uid_temp_dirs: Vec::new(),
         }
     }

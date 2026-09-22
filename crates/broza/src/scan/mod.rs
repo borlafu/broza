@@ -127,35 +127,23 @@ pub fn scan_paths(
         .iter()
         .map(|root| resolve_root(root, mounts, ports.fs.as_ref()).map(|entry| (entry, root.as_path())))
         .collect::<Result<Vec<_>, BrozaError>>()?;
-    let scans = match progress {
-        None => scan_each_root(&targets, request, ports, None),
-        Some(sink) => {
-            let reporter = ProgressReporter::new(sink, ports.clock.as_ref());
-            let scans = scan_each_root(&targets, request, ports, Some(&reporter));
-            reporter.flush();
-            scans
-        }
-    }?;
-    // A root the user named that macOS would not let Broza read at all is an
-    // operation that could not be done without the permission: exit `3`
-    // (`docs/cli-spec.md` §6). A refusal *inside* a readable root stays a warning.
-    for scan in &scans {
-        if let Some(refused) = refused_root(scan) {
-            return Err(BrozaError::PermissionDenied { path: refused.to_path_buf() });
-        }
-    }
-    Ok(scans)
+    let Some(sink) = progress else {
+        return scan_each_root(&targets, request, ports, None);
+    };
+    let reporter = ProgressReporter::new(sink, ports.clock.as_ref());
+    let scans = scan_each_root(&targets, request, ports, Some(&reporter));
+    reporter.flush();
+    scans
 }
 
-/// The scan's own root, when macOS refused to list it for lack of permission.
-fn refused_root(scan: &VolumeScan) -> Option<&Path> {
-    let root = scan.root.path.as_path();
-    scan.warnings
-        .iter()
-        .any(|warning| {
-            warning.code == walker::PERMISSION_DENIED_CODE && warning.path.as_deref() == Some(root)
-        })
-        .then_some(root)
+/// The first named root macOS refused to list, among `scans`.
+///
+/// `broza scan <PATH>` turns it into [`BrozaError::PermissionDenied`] (exit
+/// `3`, `docs/cli-spec.md` §6): the operation was impossible without the
+/// permission. `suggest` and `clean` walk the home and keep going on a
+/// warning, as does a volume-wide scan of an unreadable mount point.
+pub fn refused_root(scans: &[VolumeScan]) -> Option<&Path> {
+    scans.iter().find(|scan| scan.root_refused).map(|scan| scan.root.path.as_path())
 }
 
 /// The mount entry a scan root belongs to, when Broza may walk it at all.
@@ -183,9 +171,6 @@ fn resolve_root<'a>(
     Ok(entry)
 }
 
-/// Scan each root, grouped by volume so that one volume's cache is loaded once
-/// and written once however many roots live on it. Results keep root order;
-/// the first failure in that order wins.
 fn scan_each_root(
     targets: &[(&MountEntry, &Path)],
     request: &ScanRequest,
@@ -254,13 +239,26 @@ fn scan_roots_on(
 fn assemble(entry: &MountEntry, root_path: &Path, walked: WalkResult, request: &ScanRequest) -> VolumeScan {
     let volume_id = entry.volume.id.clone();
     let root = walked.root().cloned().unwrap_or_else(|| unreadable_root(entry, root_path));
+    // Judged on the raw walk errors, before any collapsing into a summary.
+    let root_refused = walked.errors.iter().any(|error| {
+        error.code == walker::PERMISSION_DENIED_CODE && error.path.as_deref() == Some(root_path)
+    });
     let mut warnings = collapse_permission_warnings(walked.errors.clone(), request.verbose_warnings);
     warnings.extend(cache_key_warning(request, &entry.volume));
     warnings.extend(overcount_warning(&root, entry));
     warnings.extend(file_report_warning(&walked, request, entry));
     let largest = aggregate::largest_items(&walked, request.top, request.min_size, &volume_id);
     let tree = aggregate::tree(&root, &walked.nodes, request.depth, request.min_size);
-    VolumeScan { largest, tree, root, warnings, volume_id, nodes: walked.nodes, files: walked.files }
+    VolumeScan {
+        largest,
+        tree,
+        root,
+        warnings,
+        volume_id,
+        nodes: walked.nodes,
+        files: walked.files,
+        root_refused,
+    }
 }
 
 /// Where this volume's cache lives: under its UUID, or under its BSD name.

@@ -217,8 +217,10 @@ fn suggest_lists_the_green_categories_of_the_recorded_home() {
         text.contains("Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache"),
         "{text}"
     );
-    // Docker's disk image plus the two cloud roots of the recording.
-    assert!(text.contains("Reported, not reclaimable by Broza: 51.8 GB"), "{text}");
+    // Docker's disk image, the two cloud roots and the application Spotlight
+    // has no record of.
+    assert!(text.contains("Reported, not reclaimable by Broza: 52.3 GB"), "{text}");
+    assert!(text.contains("Applications with no record of use"), "{text}");
     assert!(text.contains("INFO ONLY (red)"), "{text}");
     assert!(
         text.contains(

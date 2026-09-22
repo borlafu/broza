@@ -410,8 +410,9 @@ M5 progress:
 - [x] 2. Shared Spotlight helper (`detect/spotlight.rs`).
 - [x] 3. `unused-apps` detector (`detect/detectors/unused_apps.rs`).
 - [x] 4. Full Disk Access wording and exit `3` for an unreadable scan root.
-- [x] 5. SBOM in the release job (`cargo-cyclonedx = true`, workflow regenerated); CI builds
-      `--locked`; signing and notarization stay Phase 2.
+- [x] 5. SBOM in the release job (`cargo-cyclonedx = true`, workflow regenerated, then hand-patched:
+      dist 0.32 writes `steps.cargo-cyclonedx.output.paths`, which uploads nothing; `allow-dirty =
+      ["ci"]` keeps the fix); CI builds `--locked`; signing and notarization stay Phase 2.
 - [x] 6. README, PRD §16 traceability ("Covered by" column), spec 1.3.
 - [ ] Review; release 1.0.
 

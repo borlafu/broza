@@ -25,3 +25,6 @@ tap = "borlafu/homebrew-broza"
 publish-jobs = ["homebrew"]
 # A CycloneDX SBOM per release (RNF-05)
 cargo-cyclonedx = true
+# The generated workflow is hand-patched (`steps.cargo-cyclonedx.outputs.paths`,
+# which dist 0.32 writes as `.output.`), so `dist generate` must not overwrite it.
+allow-dirty = ["ci"]

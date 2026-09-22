@@ -115,6 +115,17 @@ pub enum GuardRejection {
         /// Root of the quarantine store.
         store_root: PathBuf,
     },
+    /// An item of a clean plan lives under a root a cloud provider syncs.
+    #[error(
+        "`{path}` is inside the cloud-synced root `{root}`; Broza never deletes synced files, it only \
+         reports them (`broza explain cloud-synced`)"
+    )]
+    InsideCloudRoot {
+        /// Path that was refused.
+        path: PathBuf,
+        /// The provider's root it lies under.
+        root: PathBuf,
+    },
     /// One component of the path is a symbolic link.
     #[error("path component `{0}` is a symbolic link")]
     SymlinkComponent(PathBuf),
@@ -286,6 +297,10 @@ mod tests {
             GuardRejection::InsideQuarantineStore {
                 path: "/Users/dana/.local/share/broza/quarantine/cln/items/1".into(),
                 store_root: "/Users/dana/.local/share/broza/quarantine".into(),
+            },
+            GuardRejection::InsideCloudRoot {
+                path: "/Users/dana/Dropbox/big.bin".into(),
+                root: "/Users/dana/Dropbox".into(),
             },
             GuardRejection::SymlinkComponent("/Users/dana/link".into()),
             GuardRejection::UnknownVolume("/nowhere".into()),

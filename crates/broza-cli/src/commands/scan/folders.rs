@@ -16,7 +16,8 @@ use broza::model::{Disk, LargestItem, VolumeId, Warning};
 use broza::ports::Ports;
 use broza::safety::firmlink::firmlink_spellings;
 use broza::scan::{
-    CacheUse, FileReport, MountTable, ScanProgress, ScanRequest, TreeView, VolumeScan, scan_all, scan_paths,
+    CacheUse, FileReport, MountTable, ScanProgress, ScanRequest, TreeView, VolumeScan, refused_root,
+    scan_all, scan_paths,
 };
 use broza::units::ByteSize;
 
@@ -92,7 +93,13 @@ pub fn walk(
     if settings.show_progress {
         clear_progress();
     }
-    Ok(results_of(scans?, &selected, request.top))
+    let scans = scans?;
+    // A path the user named that macOS would not let Broza read at all: the
+    // scan was impossible without the permission, exit `3` (§6).
+    if let Some(refused) = refused_root(&scans) {
+        return Err(BrozaError::PermissionDenied { path: refused.to_path_buf() });
+    }
+    Ok(results_of(scans, &selected, request.top))
 }
 
 /// The request `suggest` walks the home with: every directory measured, nothing
@@ -305,6 +312,7 @@ mod tests {
             warnings: Vec::new(),
             nodes: Vec::new(),
             files: Vec::new(),
+            root_refused: false,
         };
         let scans = vec![scan(vec![item("/a", 5), item("/b", 4)]), scan(vec![item("/c", 3), item("/d", 2)])];
 

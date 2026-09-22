@@ -57,6 +57,9 @@ pub(super) fn check_item(
         )));
     }
     check_path_belongs_to_finding(item, finding, mounts)?;
+    // Before the path is even looked at: a synced file is refused whether or
+    // not it is still there, in whichever spelling the plan used.
+    check_outside_cloud_roots(&item.path, req)?;
     let checked = match canonicalize_no_follow(&item.path, fs) {
         Ok(checked) => checked,
         Err(rejection) if rejection.is_missing_path() => {
@@ -197,6 +200,23 @@ fn check_outside_quarantine_store(path: &Path, req: &WriteRequest) -> Result<(),
         });
     }
     Ok(())
+}
+
+/// A synced file deleted locally is deleted from the cloud and from every other
+/// device (AGENTS.md §2.5): whatever detector named it, nothing under a cloud
+/// root is a plan item. The home walk leaves these roots out; this check is
+/// what holds when something else does not.
+fn check_outside_cloud_roots(path: &Path, req: &WriteRequest) -> Result<(), GuardRejection> {
+    let spellings = firmlink_spellings(path);
+    let inside = req.cloud_roots.iter().find(|root| {
+        firmlink_spellings(root)
+            .iter()
+            .any(|spelling| spellings.iter().any(|claim| claim.starts_with(spelling)))
+    });
+    match inside {
+        Some(root) => Err(GuardRejection::InsideCloudRoot { path: path.to_path_buf(), root: root.clone() }),
+        None => Ok(()),
+    }
 }
 
 /// The volume the path resolves to, cross-checked against the device `lstat` saw.

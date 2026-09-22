@@ -92,10 +92,11 @@ const OLD_MOVIE_TOUCHED: &str = "2019-08-10T14:00:00Z";
 /// What Spotlight answers for each big file under the home, as `mdls
 /// -name kMDItemLastUsedDate -raw` prints it: the movie was last opened in
 /// 2020, the thesis this summer, and the orphan module is unknown to it.
-const SPOTLIGHT_ANSWERS: [(&str, &str); 7] = [
+const SPOTLIGHT_ANSWERS: [(&str, &str); 8] = [
     (OLD_MOVIE, "2020-01-05 18:30:00 +0000"),
     (OLD_APP, "2024-01-10 09:00:00 +0000"),
     (FRESH_APP, "2026-09-01 09:00:00 +0000"),
+    (MYSTERY_APP, "(null)"),
     (INSTALLER, "(null)"),
     (INSTALLER_COPY, "(null)"),
     ("/System/Volumes/Data/Users/dana/Documents/thesis.pdf", "2026-08-01 09:00:00 +0000"),
@@ -112,8 +113,10 @@ const INSTALLER_TOUCHED: &str = "2025-12-01T09:00:00Z";
 /// An application nobody has opened since 2024, and one opened this month.
 const OLD_APP: &str = "/Applications/OldEditor.app";
 const FRESH_APP: &str = "/Applications/Fresh.app";
+/// An application Spotlight has no date for: listed, never acted on.
+const MYSTERY_APP: &str = "/Applications/Mystery.app";
 /// A leftover of an application no longer installed, untouched since 2023.
-const LEFTOVER: &str = "/System/Volumes/Data/Users/dana/Library/Application Support/com.gone.Tool";
+const LEFTOVER: &str = "/System/Volumes/Data/Users/dana/Library/HTTPStorages/com.gone.Tool";
 const LEFTOVER_TOUCHED: &str = "2023-03-01T09:00:00Z";
 /// The home directory of the recorded machine, in the spelling its files use.
 ///
@@ -186,12 +189,17 @@ fn filesystem() -> FakeFileOps {
     if let Ok(touched) = INSTALLER_TOUCHED.parse::<Timestamp>() {
         fs.set_times(INSTALLER, touched, touched);
     }
-    for (app, id, size) in
-        [(OLD_APP, "com.old.Editor", 3_000_000_000_u64), (FRESH_APP, "com.fresh.App", 900_000_000)]
-    {
+    for (app, id, size) in [
+        (OLD_APP, "com.old.Editor", 3_000_000_000_u64),
+        (FRESH_APP, "com.fresh.App", 900_000_000),
+        (MYSTERY_APP, "org.mystery.App", 500_000_000),
+    ] {
         fs.add_file(format!("{app}/Contents/Info.plist"), info_plist(id).as_bytes());
         fs.add_file(format!("{app}/Contents/MacOS/bin"), &[]);
         fs.set_size(format!("{app}/Contents/MacOS/bin"), size);
+    }
+    if let Ok(touched) = OLD_MOVIE_TOUCHED.parse::<Timestamp>() {
+        fs.set_times(MYSTERY_APP, touched, touched);
     }
     fs.add_file(format!("{LEFTOVER}/data.db"), &[]);
     fs.set_size(format!("{LEFTOVER}/data.db"), 1_100_000_000);

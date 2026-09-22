@@ -89,8 +89,8 @@ pub fn run(context: &CleanContext<'_>) -> Result<Outcome, BrozaError> {
         max_size: max_size.map(ByteSize::bytes),
         exclusions: selection.exclusions.clone(),
         quarantine_root: Some(root.clone()),
-        home: home.to_path_buf(),
         uid_temp_dirs: context.uid_temp_dirs.clone(),
+        ..WriteRequest::new(home)
     };
     let verdict =
         approve(&outcome, &detected.findings, &request, &detected.mounts, context.ports.fs.as_ref())?;

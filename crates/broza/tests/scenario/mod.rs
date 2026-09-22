@@ -99,6 +99,8 @@ pub fn fs() -> FakeFileOps {
         .with_exact_file("/Volumes/External/.Trashes/501/old.dmg", 60)
         .with_exact_file("/System/Volumes/Data/private/var/db/.Trashes/victim", 70)
         .with_exact_file("/Users/dana/Library/Mobile Documents/synced.key", 70)
+        .with_exact_file("/Users/dana/Dropbox/shared.bin", 70)
+        .with_exact_file("/Users/dana/Library/CloudStorage/OneDrive-Work/report.docx", 70)
         .with_dir("/Applications/Other.app")
         .with_dir("/Applications/Safari.app")
         .with_dir(STORE)

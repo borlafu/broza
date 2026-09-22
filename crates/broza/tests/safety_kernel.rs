@@ -334,6 +334,25 @@ fn a_document_cannot_ride_along_with_a_trash_finding() {
     assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
 }
 
+/// AGENTS.md §2.5: a synced file is never a plan item, whatever detector named
+/// it and however it is spelled.
+#[test]
+fn nothing_under_a_cloud_root_is_ever_a_plan_item() {
+    for path in [
+        "/Users/dana/Library/Mobile Documents/synced.key",
+        "/System/Volumes/Data/Users/dana/Library/Mobile Documents/synced.key",
+        "/Users/dana/Dropbox/shared.bin",
+        "/Users/dana/Library/CloudStorage/OneDrive-Work/report.docx",
+    ] {
+        let findings = vec![finding("duplicates.home", Category::Duplicates, &[(path, 70)])];
+        let plan = forced_plan(&findings[0], path, 70, Action::Quarantine);
+
+        let verdict = approve(&plan, &findings, &applying(), &mounts(), &fs());
+
+        assert!(matches!(verdict, Err(GuardRejection::InsideCloudRoot { .. })), "{path}: {verdict:?}");
+    }
+}
+
 /// Sizes are allocated bytes everywhere: a compressed or sparse file occupies
 /// less than its `st_size`, and a plan claiming what it occupies is right.
 #[test]

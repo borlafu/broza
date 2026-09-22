@@ -242,30 +242,33 @@ fn a_volume_whose_root_cannot_be_read_is_reported_as_empty_and_warned_about() {
 }
 
 #[test]
-fn a_named_root_macos_refuses_to_list_is_a_permission_error_not_a_warning() {
+fn a_named_root_macos_refuses_to_list_is_marked_refused_and_a_refusal_inside_is_not() {
     let (ports, handles) = ports();
     let documents = PathBuf::from("/System/Volumes/Data/Users/dana/Documents");
     handles.fs.add_denied(&documents);
 
-    let refused = scan_paths(std::slice::from_ref(&documents), &request(), &ports, &mac_mount_table(), None);
+    let refused = scan_paths(std::slice::from_ref(&documents), &request(), &ports, &mac_mount_table(), None)
+        .unwrap_or_else(|e| panic!("{e}"));
     let inside = scan_paths(
         &[PathBuf::from("/System/Volumes/Data/Users/dana")],
         &request(),
         &ports,
         &mac_mount_table(),
         None,
-    );
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
 
-    match refused {
-        Err(error @ BrozaError::PermissionDenied { .. }) => {
-            assert_eq!(ExitCode::from(&error), ExitCode::PermissionDenied);
-            assert!(error.to_string().contains("Documents"), "{error}");
-        }
-        other => panic!("naming an unreadable root is impossible without the permission: {other:?}"),
-    }
-    let home = inside.unwrap_or_else(|e| panic!("{e}"));
-    assert!(
-        home[0].warnings.iter().any(|w| w.code == "permission_denied"),
-        "a refusal inside stays a warning"
+    assert!(refused[0].root_refused);
+    assert_eq!(
+        broza::scan::refused_root(&refused),
+        Some(documents.as_path()),
+        "what `scan <PATH>` turns into exit 3"
+    );
+    assert!(!inside[0].root_refused, "a refusal inside a readable root is a warning");
+    assert!(inside[0].warnings.iter().any(|w| w.code == "permission_denied"));
+    assert_eq!(broza::scan::refused_root(&inside), None);
+    assert_eq!(
+        ExitCode::from(&BrozaError::PermissionDenied { path: documents.clone() }),
+        ExitCode::PermissionDenied
     );
 }

@@ -354,7 +354,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
       },
       {
         "kind": "file",
-        "path": "/System/Volumes/Data/Users/dana/Library/Application Support/com.gone.Tool/data.db",
+        "path": "/System/Volumes/Data/Users/dana/Library/HTTPStorages/com.gone.Tool/data.db",
         "size_bytes": 1100001280,
         "volume_id": "disk3s5"
       },

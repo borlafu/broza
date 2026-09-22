@@ -133,6 +133,8 @@ impl Provider {
 struct Measured {
     path: FindingPath,
     local_files: u64,
+    /// What the walk could not read below the root, if anything.
+    unreadable: Vec<crate::model::Diagnostic>,
 }
 
 /// The `cloud-synced` detector.
@@ -148,7 +150,18 @@ impl Detector for CloudSynced {
         let mut by_provider: BTreeMap<Provider, Vec<Measured>> = BTreeMap::new();
         for (provider, root) in roots(context, &mut detected) {
             match measure(context, &root) {
-                Ok(Some(measured)) => by_provider.entry(provider).or_default().push(measured),
+                Ok(Some(measured)) => {
+                    // A hole in the root makes the figure a floor, and says so.
+                    if let Some(error) = measured.unreadable.first() {
+                        detected.warnings.push(Detected::unreadable(
+                            Category::CloudSynced,
+                            error.path.as_deref().unwrap_or(&root),
+                            "part of its synced files",
+                            &BrozaError::Other(error.message.clone()),
+                        ));
+                    }
+                    by_provider.entry(provider).or_default().push(measured);
+                }
                 Ok(None) => {}
                 Err(error) => detected.warnings.push(Detected::unreadable(
                     Category::CloudSynced,
@@ -243,6 +256,7 @@ fn measure(context: &DetectContext<'_>, root: &Path) -> Result<Option<Measured>,
             last_used: node.mtime,
         },
         local_files,
+        unreadable: walked.errors,
     }))
 }
 
@@ -260,7 +274,8 @@ fn finding(provider: Provider, measured: Vec<Measured>) -> Result<crate::model::
         ))
         .reasoning(
             "Deleting a synced file locally deletes it from the cloud and from every other device, so \
-             Broza only reports these and shows the provider's own steps.",
+             Broza only reports these and shows the provider's own steps. Evicted files and anything \
+             Broza could not read count as nothing here: the figure is a floor.",
         )
         .reclaimable_bytes(bytes)
         .item_count(local_files)
@@ -366,6 +381,29 @@ mod tests {
             "{detected:?}"
         );
         assert!(detected.warnings.is_empty(), "nothing to warn about: {:?}", detected.warnings);
+    }
+
+    #[test]
+    fn every_root_this_detector_claims_is_one_the_home_walk_and_the_guard_keep_out_of() {
+        use crate::scan::request::CLOUD_ROOTS;
+        for (folder, _) in LEGACY_ROOTS {
+            assert!(CLOUD_ROOTS.contains(&folder), "{folder} must be a shared cloud root");
+        }
+        assert!(CLOUD_ROOTS.contains(&ICLOUD_ROOT) && CLOUD_ROOTS.contains(&CLOUD_STORAGE_DIR));
+    }
+
+    #[test]
+    fn a_hole_inside_a_cloud_root_is_a_warning_and_the_figure_is_a_floor() {
+        let fs = fs();
+        fs.add_denied(format!("{H}/Library/Mobile Documents/com~apple~CloudDocs/Photos"));
+
+        let detected = detect(&fs);
+
+        let icloud = detected.findings.iter().find(|f| f.id().to_string() == "cloud-synced.icloud").unwrap();
+        assert!(icloud.reclaimable_bytes() < 2_000_000_000, "the unreadable photos are not counted");
+        assert!(icloud.reasoning().unwrap().contains("floor"));
+        assert_eq!(detected.warnings.len(), 1, "{:?}", detected.warnings);
+        assert!(detected.warnings[0].message.contains("part of its synced files"), "{:?}", detected.warnings);
     }
 
     #[test]

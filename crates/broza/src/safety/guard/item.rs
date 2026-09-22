@@ -47,6 +47,15 @@ pub(super) fn check_item(
     if item.action == Action::TmutilDelete {
         return check_snapshot_item(index, item, finding, mounts);
     }
+    // `snapshot` is present exactly for `tmutil_delete` items (`docs/cli-spec.md`
+    // §4.4); a path item carrying one is a plan built by something else.
+    if item.snapshot.is_some() {
+        return Err(GuardRejection::Inconsistent(format!(
+            "item `{}` names a snapshot but its action is `{:?}`",
+            item.path.display(),
+            item.action
+        )));
+    }
     check_path_belongs_to_finding(item, finding, mounts)?;
     let checked = match canonicalize_no_follow(&item.path, fs) {
         Ok(checked) => checked,
@@ -88,13 +97,16 @@ fn check_snapshot_item(
     if item.size_bytes != 0 {
         return Err(inconsistent(format!("snapshot `{}` claims {} bytes", reference.name, item.size_bytes)));
     }
-    let listed = finding.snapshots().iter().find(|snapshot| snapshot.name == reference.name);
-    let matches = |snapshot: &Snapshot| {
-        snapshot.is_actionable()
+    // Time Machine gives the same name to the snapshots it takes on every
+    // volume in one pass (ADR 0007), so the name alone picks nothing: the
+    // finding must list this name with this UUID on this volume.
+    let is_listed = |snapshot: &Snapshot| {
+        snapshot.name == reference.name
+            && snapshot.is_actionable()
             && snapshot.volume.as_ref() == Some(&reference.volume)
             && snapshot.uuid.as_deref() == Some(reference.uuid.as_str())
     };
-    if !listed.is_some_and(matches) {
+    if !finding.snapshots().iter().any(is_listed) {
         return Err(inconsistent(format!(
             "snapshot `{}` ({}) is not one the finding lists as purgeable on `{}`",
             reference.name, reference.uuid, reference.volume

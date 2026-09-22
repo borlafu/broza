@@ -463,10 +463,64 @@ fn a_well_formed_snapshot_item_is_approved_without_touching_any_path() {
     }
 }
 
+/// A snapshot on the external volume: Time Machine gives it the same name as
+/// the Data volume's snapshot of the same second (ADR 0007).
+fn external_snapshot(name: &str, uuid: &str) -> Snapshot {
+    Snapshot {
+        volume: Some("disk4s1".parse().unwrap_or_else(|e| panic!("{e}"))),
+        mount_point: Some(PathBuf::from("/Volumes/External")),
+        ..data_snapshot(name, uuid)
+    }
+}
+
+const EXTERNAL_UUID: &str = "00000022-1111-4222-8333-000000000022";
+
+#[test]
+fn two_snapshots_of_the_same_name_on_two_volumes_are_told_apart_by_uuid() {
+    let finding = snapshots_finding(vec![data_snapshot(TM, TM_UUID), external_snapshot(TM, EXTERNAL_UUID)]);
+    let outcome =
+        snapshot_plan(&finding, "/Volumes/External", 0, Some(reference("disk4s1", TM, EXTERNAL_UUID)));
+
+    let verdict = approve(&outcome, std::slice::from_ref(&finding), &applying(), &mounts(), &fs());
+
+    match verdict {
+        Ok(Verdict::NeedsConfirmation(pending)) => {
+            assert_eq!(pending.items()[0].snapshot().map(|s| s.uuid.as_str()), Some(EXTERNAL_UUID));
+        }
+        other => panic!("the external snapshot is listed under its own uuid: {other:?}"),
+    }
+}
+
+#[test]
+fn a_path_item_that_names_a_snapshot_is_refused() {
+    let findings = unused_apps(&[("/Applications/Other.app", 10)]);
+    let plan = CleanPlan::dry_run(
+        session(),
+        vec![CleanItem {
+            path: PathBuf::from("/Applications/Other.app"),
+            finding_id: findings[0].id().clone(),
+            size_bytes: 10,
+            status: ItemStatus::Planned,
+            action: Action::Quarantine,
+            error: None,
+            snapshot: Some(reference("disk3s5", TM, TM_UUID)),
+        }],
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let outcome = PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() };
+
+    let verdict = approve(&outcome, &findings, &applying(), &mounts(), &fs());
+
+    assert!(matches!(verdict, Err(GuardRejection::Inconsistent(_))), "{verdict:?}");
+}
+
 #[test]
 fn every_forged_snapshot_item_is_refused() {
     let listed = data_snapshot(TM, TM_UUID);
     let finding = snapshots_finding(vec![listed]);
+    let two_volumes =
+        snapshots_finding(vec![data_snapshot(TM, TM_UUID), external_snapshot(TM, EXTERNAL_UUID)]);
+    let malformed_uuid = snapshots_finding(vec![data_snapshot(TM, "not-a-uuid")]);
     let system_finding = snapshots_finding(vec![Snapshot {
         volume: Some("disk3s1s1".parse().unwrap_or_else(|e| panic!("{e}"))),
         mount_point: Some(PathBuf::from("/")),
@@ -519,6 +573,31 @@ fn every_forged_snapshot_item_is_refused() {
             "snapshot on the system volume",
             &system_finding,
             snapshot_plan(&system_finding, "/", 0, Some(reference("disk3s1s1", TM, TM_UUID))),
+        ),
+        (
+            "the Data volume's uuid under the external volume's same-named snapshot",
+            &two_volumes,
+            snapshot_plan(&two_volumes, "/Volumes/External", 0, Some(reference("disk4s1", TM, TM_UUID))),
+        ),
+        (
+            "the external volume's uuid claimed on the Data volume",
+            &two_volumes,
+            snapshot_plan(
+                &two_volumes,
+                "/System/Volumes/Data",
+                0,
+                Some(reference("disk3s5", TM, EXTERNAL_UUID)),
+            ),
+        ),
+        (
+            "a listed uuid that is not a uuid",
+            &malformed_uuid,
+            snapshot_plan(
+                &malformed_uuid,
+                "/System/Volumes/Data",
+                0,
+                Some(reference("disk3s5", TM, "not-a-uuid")),
+            ),
         ),
     ];
     for (why, finding, outcome) in cases {

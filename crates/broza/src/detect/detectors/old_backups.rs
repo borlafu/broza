@@ -22,6 +22,10 @@ use crate::detect::detector::{DetectContext, Detected, Detector};
 const BACKUPS_DIR: &str = "Library/Application Support/MobileSync/Backup";
 /// The manifest at the top of every backup.
 const INFO_PLIST: &str = "Info.plist";
+/// Largest `Info.plist` Broza reads: real ones are a few kilobytes.
+const MAX_INFO_PLIST_BYTES: u64 = 1024 * 1024;
+/// How many device names the reasoning spells out before counting the rest.
+const MAX_DEVICES_NAMED: usize = 5;
 
 /// The `old-backups` detector.
 pub struct OldBackups;
@@ -72,9 +76,19 @@ impl Detector for OldBackups {
             .description("iPhone and iPad backups the Finder keeps; a newer backup or the device itself supersedes them.")
             .reasoning(format!(
                 "Last backed up more than --unused-after ago: {}. A device you still own backs up again on its next sync.",
-                devices.join(", ")
+                named(&devices)
             ));
         Ok(detected.with_finding(finish(builder, paths)?))
+    }
+}
+
+/// The first few device names, and a count of the rest: the reasoning is one
+/// line, not a roll call of every phone the user ever owned.
+fn named(devices: &[String]) -> String {
+    let shown = devices.iter().take(MAX_DEVICES_NAMED).cloned().collect::<Vec<_>>().join(", ");
+    match devices.len().saturating_sub(MAX_DEVICES_NAMED) {
+        0 => shown,
+        more => format!("{shown} and {more} more"),
     }
 }
 
@@ -110,8 +124,19 @@ impl BackupInfo {
 }
 
 /// Read and parse `<backup>/Info.plist`.
+///
+/// The manifest is a few kilobytes; one bigger than [`MAX_INFO_PLIST_BYTES`]
+/// is not a manifest, and reading it whole would be reading whatever it is.
 fn read_info(context: &DetectContext<'_>, backup: &Path) -> Result<BackupInfo, BrozaError> {
-    let bytes = context.fs.read(&backup.join(INFO_PLIST))?;
+    let manifest = backup.join(INFO_PLIST);
+    let size = context.fs.metadata(&manifest)?.size_bytes;
+    if size > MAX_INFO_PLIST_BYTES {
+        return Err(BrozaError::Other(format!(
+            "`{}` is {size} bytes, too big for a backup manifest",
+            manifest.display()
+        )));
+    }
+    let bytes = context.fs.read(&manifest)?;
     let info: Info = plist::from_bytes(&bytes).map_err(|error| {
         BrozaError::Other(format!("`{}` is not a backup manifest: {error}", backup.display()))
     })?;
@@ -187,6 +212,36 @@ mod tests {
         assert_eq!(finding.action(), Action::Quarantine);
         assert_eq!(finding.risk(), Risk::Amber);
         assert!(detected.warnings.is_empty(), "{:?}", detected.warnings);
+    }
+
+    #[test]
+    fn an_oversized_manifest_is_a_warning_and_is_never_read() {
+        let fs = fs();
+        let huge = format!("{H}/Library/Application Support/MobileSync/Backup/00008777-HUGE");
+        fs.add_file(
+            format!("{huge}/Info.plist"),
+            &info("Someone's iPhone", "iPhone X", "2020-01-01T00:00:00Z"),
+        );
+        fs.set_size(format!("{huge}/Info.plist"), MAX_INFO_PLIST_BYTES + 1);
+        fs.add_file(format!("{huge}/Manifest.db"), &[]);
+
+        let detected = detect(&fs);
+
+        assert!(detected.findings[0].paths().iter().all(|p| !p.path.ends_with("00008777-HUGE")));
+        assert_eq!(detected.warnings.len(), 1, "{:?}", detected.warnings);
+        assert!(
+            detected.warnings[0].message.contains("too big for a backup manifest"),
+            "{:?}",
+            detected.warnings
+        );
+    }
+
+    #[test]
+    fn the_reasoning_names_five_devices_and_counts_the_rest() {
+        let devices: Vec<String> = (1..=7).map(|n| format!("Phone {n}")).collect();
+
+        assert_eq!(named(&devices), "Phone 1, Phone 2, Phone 3, Phone 4, Phone 5 and 2 more");
+        assert_eq!(named(&devices[..2]), "Phone 1, Phone 2");
     }
 
     #[test]

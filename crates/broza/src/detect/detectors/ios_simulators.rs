@@ -10,16 +10,19 @@
 //! device's directory under `~/Library/Developer/CoreSimulator/Devices`, sized
 //! from the walk (falling back to `dataPathSize`). A failing or missing `xcrun`
 //! is a `location_unreadable` warning, never a failure.
+//!
+//! The listing is another program's output and never names what Broza
+//! proposes: a device whose `udid` is not a UUID is ignored (a path is built
+//! from it), and so is one whose availability the listing does not state.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use jiff::Timestamp;
 use serde::Deserialize;
 
 use crate::BrozaError;
-use crate::model::{Category, FindingPath};
+use crate::model::{Category, FindingPath, is_uuid};
 
 use super::support::{by_size_then_path, finish, path_with, start};
 use crate::detect::detector::{DetectContext, Detected, Detector};
@@ -63,7 +66,7 @@ impl Detector for IosSimulators {
             .devices
             .values()
             .flatten()
-            .filter(|device| is_unused(device, context))
+            .filter(|device| is_uuid(&device.udid) && is_unused(device, context))
             .map(|device| {
                 let dir = devices_dir.join(&device.udid);
                 let bytes = context.node(&dir).map_or(device.data_path_size, |node| node.allocated_bytes);
@@ -96,12 +99,13 @@ fn list_devices(context: &DetectContext<'_>) -> Result<Listing, BrozaError> {
 }
 
 /// Gone runtime, or last boot older than the threshold; never a device that
-/// simply has not been booted yet.
+/// simply has not been booted yet, nor one whose availability is not stated.
 fn is_unused(device: &Device, context: &DetectContext<'_>) -> bool {
-    if !device.is_available {
-        return true;
+    match device.is_available {
+        Some(false) => true,
+        Some(true) => device.last_booted().is_some_and(|at| context.is_unused_since(at)),
+        None => false,
     }
-    device.last_booted().is_some_and(|at| context.is_unused_since(at))
 }
 
 /// `simctl list -j devices`: runtimes to devices.
@@ -116,11 +120,10 @@ struct Listing {
 #[serde(default, rename_all = "camelCase")]
 struct Device {
     udid: String,
-    is_available: bool,
+    /// `None` when the listing does not say: such a device is left alone.
+    is_available: Option<bool>,
     data_path_size: u64,
     last_booted_at: Option<String>,
-    #[allow(dead_code)]
-    data_path: Option<PathBuf>,
 }
 
 impl Device {
@@ -189,6 +192,33 @@ mod tests {
         assert_eq!(finding.action(), Action::Quarantine);
         assert_eq!(finding.risk(), Risk::Amber);
         assert!(finding.paths()[0].path.starts_with(format!("{H}/Library/Developer/CoreSimulator/Devices")));
+        assert!(detected.warnings.is_empty(), "{:?}", detected.warnings);
+    }
+
+    #[test]
+    fn a_listing_that_names_no_uuid_or_no_availability_proposes_nothing_from_it() {
+        // A udid that is a path would replace the devices directory when
+        // joined; an empty one would *be* the devices directory.
+        let listing = serde_json::json!({ "devices": { "com.apple.CoreSimulator.SimRuntime.iOS-18-0": [
+            { "udid": "/Users/dana/Documents", "isAvailable": false, "dataPathSize": 1 },
+            { "udid": "", "isAvailable": false, "dataPathSize": 1 },
+            { "udid": "../..", "isAvailable": false, "dataPathSize": 1 },
+            { "udid": OLD_RUNTIME, "dataPathSize": 13_000_000, "lastBootedAt": "2019-01-01T00:00:00Z" }
+        ]}});
+        let runner = FakeRunner::new().with_output(
+            XCRUN,
+            &SIMCTL_LIST_ARGS,
+            ProcessOutput {
+                success: true,
+                code: Some(0),
+                stdout: listing.to_string().into_bytes(),
+                stderr: Vec::new(),
+            },
+        );
+
+        let detected = detect(&fs(), runner);
+
+        assert!(detected.findings.is_empty(), "{detected:?}");
         assert!(detected.warnings.is_empty(), "{:?}", detected.warnings);
     }
 

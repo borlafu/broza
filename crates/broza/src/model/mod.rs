@@ -46,7 +46,7 @@ pub mod suggest;
 pub(crate) mod timestamp;
 
 pub use category::Category;
-pub use disk::{Container, Disk, FsKind, Snapshot, TIME_MACHINE_PREFIX, Volume, VolumeRole};
+pub use disk::{Container, Disk, FsKind, Snapshot, TIME_MACHINE_PREFIX, Volume, VolumeRole, is_uuid};
 pub use envelope::{Diagnostic, Envelope, ErrorEntry, Host, Warning};
 pub use finding::{Action, Finding, FindingPath, Instructions, Risk};
 pub use finding_builder::FindingBuilder;

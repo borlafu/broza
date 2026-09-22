@@ -158,19 +158,28 @@ pub struct Snapshot {
 pub const TIME_MACHINE_PREFIX: &str = "com.apple.TimeMachine.";
 
 impl Snapshot {
-    /// `true` for a purgeable Time Machine snapshot on a known volume: the only
-    /// kind a plan may carry (`docs/cli-spec.md` §3.3).
+    /// `true` for a purgeable Time Machine snapshot with a UUID on a known
+    /// volume: the only kind a plan may carry (`docs/cli-spec.md` §3.3). The
+    /// UUID is what the deletion names, so a snapshot without one is reported
+    /// and never planned.
     pub fn is_actionable(&self) -> bool {
         self.purgeable
             && self.name.starts_with(TIME_MACHINE_PREFIX)
+            && self.uuid.as_deref().is_some_and(is_uuid)
             && self.volume.is_some()
             && self.mount_point.is_some()
     }
+}
 
-    /// The `YYYY-MM-DD-HHMMSS` stamp `tmutil deletelocalsnapshots` takes, from the name.
-    pub fn date_stamp(&self) -> Option<&str> {
-        self.name.strip_prefix(TIME_MACHINE_PREFIX).and_then(|rest| rest.strip_suffix(".local"))
-    }
+/// `true` for the `8-4-4-4-12` hexadecimal shape a snapshot UUID has: what
+/// `diskutil apfs deleteSnapshot -uuid` is handed, and nothing else.
+pub fn is_uuid(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    parts.len() == 5
+        && parts
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 #[cfg(test)]

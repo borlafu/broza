@@ -183,7 +183,7 @@ fn an_item_replaced_since_the_check_is_not_purged() {
 fn data_snapshot(name: &str, purgeable: bool) -> Snapshot {
     Snapshot {
         name: name.to_owned(),
-        uuid: None,
+        uuid: Some(format!("00000021-1111-4222-8333-{:012}", name.len() as u64 * 7919 % 1_000_000_007)),
         purgeable,
         volume: Some("disk3s5".parse::<VolumeId>().unwrap_or_else(|e| panic!("{e}"))),
         mount_point: Some(Path::new("/System/Volumes/Data").to_path_buf()),
@@ -250,7 +250,9 @@ fn a_snapshot_deletion_tmutil_refuses_fails_the_item_and_names_the_command() {
     assert_eq!(executed.plan.items()[0].error, Some(ItemErrorCode::PermissionDenied));
     assert_eq!(executed.warnings.len(), 1);
     assert!(
-        executed.warnings[0].message.contains("sudo tmutil deletelocalsnapshots 2026-09-20-101530"),
+        executed.warnings[0]
+            .message
+            .contains("sudo diskutil apfs deleteSnapshot disk3s5 -uuid 00000021-1111-4222-8333-"),
         "{:?}",
         executed.warnings
     );

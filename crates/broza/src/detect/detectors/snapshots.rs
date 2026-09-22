@@ -78,7 +78,13 @@ mod tests {
     use crate::testing::FakeFileOps;
 
     fn snapshot(name: &str, purgeable: bool) -> Snapshot {
-        Snapshot { name: name.into(), uuid: None, purgeable, volume: None, mount_point: None }
+        Snapshot {
+            name: name.into(),
+            uuid: Some("00000021-1111-4222-8333-000000000021".into()),
+            purgeable,
+            volume: None,
+            mount_point: None,
+        }
     }
 
     fn data() -> VolumeId {
@@ -112,6 +118,19 @@ mod tests {
         assert_eq!(finding.snapshots()[0].volume, Some(data()));
         assert!(finding.snapshots()[0].mount_point.as_deref().is_some_and(|p| p.ends_with("Data")));
         assert!(finding.paths().is_empty());
+    }
+
+    #[test]
+    fn a_purgeable_snapshot_without_a_uuid_is_reported_but_never_planned() {
+        let fs = FakeFileOps::new().with_root("/System/Volumes/Data", 2);
+        fs.add_dir(home());
+        let anonymous =
+            Snapshot { uuid: None, ..snapshot("com.apple.TimeMachine.2026-09-20-101530.local", true) };
+        let world = context_over(&fs, home()).with_snapshots(data(), vec![anonymous]);
+
+        let detected = Snapshots.detect(&world.context()).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(detected.findings.is_empty(), "nothing a plan could name: {detected:?}");
     }
 
     #[test]

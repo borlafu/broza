@@ -286,15 +286,17 @@ Design decisions taken at the start of M4 (2026-09-22), in the order the work la
    `Action::Quarantine` items move into the session as today; `Action::Purge` items are re-checked against the token's
    `(device, inode)` and removed with `remove_tree`, recorded `purged`, their allocated bytes added to
    `reclaimed_bytes`; `Action::TmutilDelete` items go to `SnapshotProvider::delete`, which takes an
-   `Approved<SnapshotDelete>` (new port method; `tmutil deletelocalsnapshots <date>` in the adapter,
-   `permission_denied` → item `failed` and the exact command on stderr). A plan without quarantine
+   `Approved<SnapshotDelete>` (new port method; `diskutil apfs deleteSnapshot <volume> -uuid <uuid>`
+   in the adapter — one snapshot on one volume, [ADR 0007](adr/0007-snapshot-deletion-by-uuid.md);
+   `permission_denied` → item `failed` and the exact command in a warning). A plan without quarantine
    items creates no session, so `quarantine_path` is absent. This lifts the "not implemented"
    refusal of `clean --apply --purge`.
 3. **Snapshot items in a plan**: `CleanItem` gains an optional `snapshot` object
    (`{ volume, name }`, schema 1.1 additive while unreleased); its `path` is the volume's mount point
    and is informational. The guard checks such an item without touching the filesystem: the finding
-   is of the `snapshots` category, the name is one the finding listed with `purgeable: true` and the
-   `com.apple.TimeMachine.` prefix, and the volume has a writable role. The planner builds these
+   is of the `snapshots` category, the name and UUID are ones the finding listed with `purgeable: true`
+   and the `com.apple.TimeMachine.` prefix, the volume is mounted where the item says with a data or
+   user role, and `size_bytes` is `0`. The planner builds these
    items from `finding.snapshots()`.
 4. **Snapshots detector**: `SnapshotProvider::list` on every data/user APFS volume; only purgeable
    `com.apple.TimeMachine.*` snapshots are listed; `reclaimable_bytes: 0` with the reasoning
@@ -325,7 +327,8 @@ M4 progress:
       `snapshot_deletions`, `SnapshotProvider::delete`, `tmutil deletelocalsnapshots`).
 - [x] 4. `snapshots` detector (`detect/detectors/snapshots.rs`).
 - [x] 5. `old-backups` detector (`detect/detectors/old_backups.rs`).
-- [ ] 6. `ios-simulators` detector.
+- [x] 6. `ios-simulators` detector (`detect/detectors/ios_simulators.rs`; recorded
+      `simctl_devices.json` beside the plist recordings).
 - [ ] 7. `large-old-files` detector.
 - [ ] 8. `duplicates` detector.
 - [ ] `quarantined_bytes` reports the guard-verified *apparent* size for files while every other

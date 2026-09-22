@@ -36,7 +36,10 @@
       "reasoning": "size not reported by macOS",
       "snapshots": [{
         "name": "com.apple.TimeMachine.2026-09-20-101530.local",
-        "purgeable": true
+        "uuid": "00000021-1111-4222-8333-000000000021",
+        "purgeable": true,
+        "volume": "disk3s5",
+        "mount_point": "/System/Volumes/Data"
       }]
     }, {
       "id": "cloud-synced.icloud",

@@ -160,16 +160,19 @@ fn items_of(finding: &Finding, selection: &Selection, quarantine_root: Option<&P
 
 /// One item per actionable snapshot of a `snapshots` finding.
 ///
-/// A snapshot the finding could not tie to a mounted volume is left out: the
-/// plan item's `path` is that volume's mount point, and the guard verifies the
-/// pair against the mount table (`docs/cli-spec.md` §4.4).
+/// A snapshot the finding could not tie to a mounted volume, or that has no
+/// UUID, is left out: the plan item's `path` is that volume's mount point and
+/// the guard verifies the pair against the mount table (`docs/cli-spec.md`
+/// §4.4). `--exclude` patterns are path-based and do not apply to snapshots.
 fn snapshot_items(finding: &Finding, action: Action) -> Vec<CleanItem> {
     finding
         .snapshots()
         .iter()
         .filter(|snapshot| snapshot.is_actionable())
         .filter_map(|snapshot| {
-            let (volume, mount_point) = (snapshot.volume.clone()?, snapshot.mount_point.clone()?);
+            let volume = snapshot.volume.clone()?;
+            let mount_point = snapshot.mount_point.clone()?;
+            let uuid = snapshot.uuid.clone()?;
             Some(CleanItem {
                 path: mount_point,
                 finding_id: finding.id().clone(),
@@ -177,7 +180,7 @@ fn snapshot_items(finding: &Finding, action: Action) -> Vec<CleanItem> {
                 status: ItemStatus::Planned,
                 action,
                 error: None,
-                snapshot: Some(SnapshotRef { volume, name: snapshot.name.clone() }),
+                snapshot: Some(SnapshotRef { volume, name: snapshot.name.clone(), uuid }),
             })
         })
         .collect()

@@ -8,6 +8,8 @@
 //! |---|---|
 //! | `list.plist` | `diskutil list -plist` |
 //! | `apfs_list.plist` | `diskutil apfs list -plist` |
+//! | `apfs_list_snapshots_<device>.plist` | `diskutil apfs listSnapshots -plist <device>`; the empty `_data` one answers for every device without its own |
+//! | `simctl_devices.json` | `xcrun simctl list -j devices` |
 //! | `tmutil_destinationinfo.plist` | `tmutil destinationinfo -X` |
 //! | `info_*.plist` | `diskutil info -plist <DeviceIdentifier>` |
 //!
@@ -40,6 +42,8 @@ const INFO_PREFIX: &str = "info_";
 const SNAPSHOTS_PREFIX: &str = "apfs_list_snapshots_";
 /// The recording of a volume without snapshots, the default answer.
 const NO_SNAPSHOTS_FIXTURE: &str = "apfs_list_snapshots_data.plist";
+/// Recording of `xcrun simctl list -j devices`, when the directory has one.
+const SIMCTL_DEVICES_FIXTURE: &str = "simctl_devices.json";
 /// Suffix of every recording this module reads.
 const PLIST_SUFFIX: &str = ".plist";
 
@@ -60,27 +64,39 @@ pub fn fixture_runner(dir: &Path) -> Result<FakeRunner, BrozaError> {
     runner.script_output(DISKUTIL, &["apfs", "list", "-plist"], recorded(&dir.join(APFS_LIST_FIXTURE))?);
     runner.script_output(TMUTIL, &DESTINATION_INFO_ARGS, recorded(&dir.join(DESTINATION_INFO_FIXTURE))?);
     for path in info_recordings(dir)? {
-        script_info(&runner, &path)?;
-        script_snapshots(&runner, dir, &path)?;
+        let device = script_info(&runner, &path)?;
+        script_snapshots(&runner, dir, &device)?;
+    }
+    let simctl = dir.join(SIMCTL_DEVICES_FIXTURE);
+    if simctl.is_file() {
+        runner.script_output(
+            crate::detect::detectors::ios_simulators::XCRUN,
+            &crate::detect::detectors::ios_simulators::SIMCTL_LIST_ARGS,
+            recorded(&simctl)?,
+        );
     }
     Ok(runner)
 }
 
-/// Answer `diskutil apfs listSnapshots -plist <device>` for the device an
-/// `info_<device>.plist` recording names: with its own recording when the
-/// directory has one, with the empty list otherwise.
-fn script_snapshots(runner: &FakeRunner, dir: &Path, info: &Path) -> Result<(), BrozaError> {
-    let Some(device) = info
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(|name| name.strip_prefix(INFO_PREFIX))
-        .and_then(|rest| rest.strip_suffix(PLIST_SUFFIX))
-    else {
-        return Ok(());
-    };
+/// Answer `diskutil apfs listSnapshots -plist <device>` for a recorded device:
+/// with `apfs_list_snapshots_<device>.plist` when the directory has one, with
+/// the empty list otherwise. A recording that lists a snapshot also answers the
+/// deletion of it (`diskutil apfs deleteSnapshot <device> -uuid <uuid>`) with
+/// success, so the CLI path can be driven end to end.
+fn script_snapshots(runner: &FakeRunner, dir: &Path, device: &str) -> Result<(), BrozaError> {
     let own = dir.join(format!("{SNAPSHOTS_PREFIX}{device}{PLIST_SUFFIX}"));
     let recording = if own.is_file() { own } else { dir.join(NO_SNAPSHOTS_FIXTURE) };
-    runner.script_output(DISKUTIL, &["apfs", "listSnapshots", "-plist", device], recorded(&recording)?);
+    let output = recorded(&recording)?;
+    for snapshot in crate::adapters::diskutil::parse_snapshots(&output.stdout)? {
+        if let Some(uuid) = snapshot.uuid.as_deref() {
+            runner.script_output(
+                DISKUTIL,
+                &["apfs", "deleteSnapshot", device, "-uuid", uuid],
+                ProcessOutput { success: true, code: Some(0), stdout: Vec::new(), stderr: Vec::new() },
+            );
+        }
+    }
+    runner.script_output(DISKUTIL, &["apfs", "listSnapshots", "-plist", device], output);
     Ok(())
 }
 
@@ -104,15 +120,15 @@ fn is_info_recording(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with(INFO_PREFIX) && name.ends_with(PLIST_SUFFIX))
 }
 
-/// File `path` under the device identifier the recording itself declares.
-fn script_info(runner: &FakeRunner, path: &Path) -> Result<(), BrozaError> {
+/// Script `diskutil info -plist <device>` from `path`; returns the device identifier.
+fn script_info(runner: &FakeRunner, path: &Path) -> Result<String, BrozaError> {
     let output = recorded(path)?;
     let info = parse_info(&output.stdout)?;
     if info.device_identifier.is_empty() {
         return Err(BrozaError::Other(format!("fixture {} declares no DeviceIdentifier", path.display())));
     }
     runner.script_output(DISKUTIL, &["info", "-plist", &info.device_identifier], output);
-    Ok(())
+    Ok(info.device_identifier)
 }
 
 /// The contents of `path` as the standard output of a successful command.

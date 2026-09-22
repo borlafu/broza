@@ -115,9 +115,7 @@ impl FakeSnapshots {
         self.set_snapshots(volume, snapshots);
         self
     }
-}
 
-impl FakeSnapshots {
     /// The snapshot names deleted so far, in order.
     pub fn deleted(&self) -> Vec<String> {
         lock(&self.deleted).clone()
@@ -136,19 +134,22 @@ impl SnapshotProvider for FakeSnapshots {
 
     fn delete(&self, token: &Approved<SnapshotDelete>, item: &ApprovedItem) -> Result<(), BrozaError> {
         let covered = token.items().iter().any(|approved| approved == item);
-        let Some(name) = item.snapshot().filter(|_| covered) else {
+        let Some(reference) = item.snapshot().filter(|_| covered) else {
             return Err(BrozaError::Other(format!(
                 "snapshot deletion: `{}` is not one of the snapshots the guard approved",
                 item.path().display()
             )));
         };
         if *lock(&self.refuse_deletions) {
-            return Err(BrozaError::PermissionDenied { path: std::path::PathBuf::from("/usr/bin/tmutil") });
+            return Err(BrozaError::PermissionDenied {
+                path: std::path::PathBuf::from("/usr/sbin/diskutil"),
+            });
         }
-        for snapshots in lock(&self.snapshots).values_mut() {
-            snapshots.retain(|snapshot| snapshot.name != name);
+        // Scoped like the real tool: this UUID on this volume, nothing else.
+        if let Some(snapshots) = lock(&self.snapshots).get_mut(&reference.volume) {
+            snapshots.retain(|snapshot| snapshot.uuid.as_deref() != Some(reference.uuid.as_str()));
         }
-        lock(&self.deleted).push(name.to_owned());
+        lock(&self.deleted).push(reference.name.clone());
         Ok(())
     }
 }

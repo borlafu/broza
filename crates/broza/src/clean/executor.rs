@@ -6,8 +6,9 @@
 //! user upgraded with `--purge` — are re-checked against the token's
 //! `(device, inode)` immediately before being removed for good, and their
 //! measured bytes go to `reclaimed_bytes`; `tmutil_delete` items are handed to
-//! the [`SnapshotProvider`] with a token narrowed to exactly those snapshots, and
-//! count as `purged` with no bytes (macOS reports no snapshot size). A plan
+//! the [`SnapshotProvider`] with a token narrowed to exactly those snapshots
+//! (`diskutil apfs deleteSnapshot <volume> -uuid <uuid>`, one snapshot on one
+//! volume), and count as `purged` with no bytes (macOS reports no snapshot size). A plan
 //! without `quarantine` items creates no session at all, so the report carries
 //! no `quarantine_path`.
 //!
@@ -95,18 +96,14 @@ fn delete_snapshots(
 /// The exact command the user may run themselves; Broza never invokes `sudo`
 /// (`docs/cli-spec.md` §6).
 fn needs_admin(item: &ApprovedItem) -> Warning {
-    let stamp = item.snapshot().and_then(|name| {
-        name.strip_prefix(crate::model::TIME_MACHINE_PREFIX).and_then(|rest| rest.strip_suffix(".local"))
-    });
-    Warning {
-        code: SNAPSHOT_NEEDS_ADMIN_CODE.to_owned(),
-        message: format!(
-            "deleting snapshot `{}` needs administrator privileges; run: sudo tmutil deletelocalsnapshots {}",
-            item.snapshot().unwrap_or_default(),
-            stamp.unwrap_or_default()
+    let message = match item.snapshot() {
+        Some(snapshot) => format!(
+            "deleting snapshot `{}` needs administrator privileges; run: sudo diskutil apfs deleteSnapshot {} -uuid {}",
+            snapshot.name, snapshot.volume, snapshot.uuid
         ),
-        path: Some(item.path().to_path_buf()),
-    }
+        None => "deleting a snapshot needs administrator privileges".to_owned(),
+    };
+    Warning { code: SNAPSHOT_NEEDS_ADMIN_CODE.to_owned(), message, path: Some(item.path().to_path_buf()) }
 }
 
 /// Remove every `purge` item for good, recording each outcome in the plan.

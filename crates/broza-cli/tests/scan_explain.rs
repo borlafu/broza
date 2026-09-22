@@ -285,6 +285,19 @@ fn clean_of_the_trash_purges_for_good_after_the_detailed_confirmation_that_yes_c
 }
 
 #[test]
+fn clean_of_the_snapshots_deletes_the_recorded_purgeable_one_by_uuid() {
+    let dry = json_of(&["clean", "--category", "snapshots", "--json"]);
+    let applied = json_of(&["clean", "--category", "snapshots", "--apply", "--yes", "--json"]);
+
+    assert_eq!(dry["data"]["items"][0]["action"], "tmutil_delete", "{dry}");
+    assert_eq!(dry["data"]["items"][0]["snapshot"]["uuid"], "00000021-1111-4222-8333-000000000021", "{dry}");
+    assert_eq!(dry["data"]["items"].as_array().map(Vec::len), Some(1), "only the purgeable one: {dry}");
+    assert_eq!(applied["data"]["items"][0]["status"], "purged", "{applied}");
+    assert_eq!(applied["data"]["reclaimed_bytes"], 0, "macOS reports no snapshot size: {applied}");
+    assert!(applied["data"]["quarantine_path"].is_null(), "{applied}");
+}
+
+#[test]
 fn clean_of_build_cache_skips_the_docker_disk_with_a_warning() {
     let envelope = json_of(&["clean", "--category", "build-cache", "--json"]);
 

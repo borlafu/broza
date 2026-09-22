@@ -1,0 +1,51 @@
+{
+  "devices" : {
+    "com.apple.CoreSimulator.SimRuntime.iOS-16-4" : [
+      {
+        "availabilityError" : "runtime profile not found using \"System\" match policy",
+        "dataPath" : "\/Users\/dana\/Library\/Developer\/CoreSimulator\/Devices\/7A86C94C-CFEE-4459-A0BC-2C88318F1057\/data",
+        "dataPathSize" : 13316096,
+        "logPath" : "\/Users\/dana\/Library\/Logs\/CoreSimulator\/7A86C94C-CFEE-4459-A0BC-2C88318F1057",
+        "udid" : "7A86C94C-CFEE-4459-A0BC-2C88318F1057",
+        "isAvailable" : false,
+        "deviceTypeIdentifier" : "com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro",
+        "state" : "Shutdown",
+        "name" : "iPhone 14 Pro"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-26-0" : [
+      {
+        "lastBootedAt" : "2026-09-20T09:12:00Z",
+        "dataPath" : "\/Users\/dana\/Library\/Developer\/CoreSimulator\/Devices\/1B2C3D4E-0000-4000-8000-000000000001\/data",
+        "dataPathSize" : 2147483648,
+        "logPath" : "\/Users\/dana\/Library\/Logs\/CoreSimulator\/1B2C3D4E-0000-4000-8000-000000000001",
+        "udid" : "1B2C3D4E-0000-4000-8000-000000000001",
+        "isAvailable" : true,
+        "deviceTypeIdentifier" : "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro",
+        "state" : "Shutdown",
+        "name" : "iPhone 17 Pro"
+      },
+      {
+        "lastBootedAt" : "2024-01-15T09:12:00Z",
+        "dataPath" : "\/Users\/dana\/Library\/Developer\/CoreSimulator\/Devices\/1B2C3D4E-0000-4000-8000-000000000002\/data",
+        "dataPathSize" : 5368709120,
+        "logPath" : "\/Users\/dana\/Library\/Logs\/CoreSimulator\/1B2C3D4E-0000-4000-8000-000000000002",
+        "udid" : "1B2C3D4E-0000-4000-8000-000000000002",
+        "isAvailable" : true,
+        "deviceTypeIdentifier" : "com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M4",
+        "state" : "Shutdown",
+        "name" : "iPad Pro 13-inch (M4)"
+      },
+      {
+        "dataPath" : "\/Users\/dana\/Library\/Developer\/CoreSimulator\/Devices\/1B2C3D4E-0000-4000-8000-000000000003\/data",
+        "dataPathSize" : 13316096,
+        "logPath" : "\/Users\/dana\/Library\/Logs\/CoreSimulator\/1B2C3D4E-0000-4000-8000-000000000003",
+        "udid" : "1B2C3D4E-0000-4000-8000-000000000003",
+        "isAvailable" : true,
+        "deviceTypeIdentifier" : "com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Ultra-3",
+        "state" : "Shutdown",
+        "name" : "Apple Watch Ultra 3"
+      }
+    ]
+  }
+}

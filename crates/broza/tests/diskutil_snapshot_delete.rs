@@ -1,5 +1,5 @@
-//! `DiskutilSnapshots::delete` against a scripted `tmutil`: the token gate, the
-//! command it runs, and the two ways `tmutil` says no.
+//! `DiskutilSnapshots::delete` against a scripted `diskutil`: the token gate, the
+//! command it runs, and the two ways `diskutil` says no.
 #![cfg(feature = "test-support")]
 
 use std::path::Path;
@@ -15,14 +15,15 @@ use broza::safety::guard::{
 };
 use broza::testing::{FakeFileOps, FakePrompter, FakeRunner, mac_mount_table};
 
-const TMUTIL: &str = "/usr/bin/tmutil";
+const DISKUTIL: &str = "/usr/sbin/diskutil";
 const NAME: &str = "com.apple.TimeMachine.2026-09-20-101530.local";
-const DATE: &str = "2026-09-20-101530";
+const UUID: &str = "00000021-1111-4222-8333-000000000021";
+const DELETE: [&str; 5] = ["apfs", "deleteSnapshot", "disk3s5", "-uuid", UUID];
 
 fn snapshot() -> Snapshot {
     Snapshot {
         name: NAME.to_owned(),
-        uuid: None,
+        uuid: Some(UUID.to_owned()),
         purgeable: true,
         volume: Some("disk3s5".parse::<VolumeId>().unwrap_or_else(|e| panic!("{e}"))),
         mount_point: Some(Path::new("/System/Volumes/Data").to_path_buf()),
@@ -74,9 +75,8 @@ fn output(success: bool, stderr: &str) -> ProcessOutput {
 }
 
 #[test]
-fn a_covered_snapshot_is_deleted_with_tmutil_by_its_date_stamp() {
-    let runner =
-        Arc::new(FakeRunner::new().with_output(TMUTIL, &["deletelocalsnapshots", DATE], output(true, "")));
+fn a_covered_snapshot_is_deleted_by_uuid_on_its_own_volume() {
+    let runner = Arc::new(FakeRunner::new().with_output(DISKUTIL, &DELETE, output(true, "")));
     let provider = DiskutilSnapshots::new(Arc::clone(&runner) as Arc<dyn ProcessRunner>);
     let token = token();
 
@@ -84,21 +84,21 @@ fn a_covered_snapshot_is_deleted_with_tmutil_by_its_date_stamp() {
 
     let calls = runner.calls();
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].program, TMUTIL);
-    assert_eq!(calls[0].args, vec!["deletelocalsnapshots".to_owned(), DATE.to_owned()]);
+    assert_eq!(calls[0].program, DISKUTIL);
+    assert_eq!(calls[0].args, DELETE.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>());
 }
 
 #[test]
-fn a_privilege_refusal_is_permission_denied_and_any_other_failure_keeps_tmutils_words() {
+fn a_privilege_refusal_is_permission_denied_and_any_other_failure_keeps_diskutils_words() {
     let refused = Arc::new(FakeRunner::new().with_output(
-        TMUTIL,
-        &["deletelocalsnapshots", DATE],
-        output(false, "tmutil: Operation not permitted"),
+        DISKUTIL,
+        &DELETE,
+        output(false, "Error deleting snapshot: Ownership of the affected disks is required"),
     ));
     let broken = Arc::new(FakeRunner::new().with_output(
-        TMUTIL,
-        &["deletelocalsnapshots", DATE],
-        output(false, "Failed to delete local snapshot (error 22)"),
+        DISKUTIL,
+        &DELETE,
+        output(false, "Error deleting snapshot (error 22)"),
     ));
     let token = token();
 
@@ -110,7 +110,7 @@ fn a_privilege_refusal_is_permission_denied_and_any_other_failure_keeps_tmutils_
 }
 
 #[test]
-fn an_item_the_token_does_not_cover_never_reaches_tmutil() {
+fn an_item_the_token_does_not_cover_never_reaches_diskutil() {
     let runner = Arc::new(FakeRunner::new());
     let provider = DiskutilSnapshots::new(Arc::clone(&runner) as Arc<dyn ProcessRunner>);
     let token = token();
@@ -130,7 +130,11 @@ fn return_other_token() -> Approved<Write> {
         Category::Snapshots,
         "Time Machine local snapshots",
     )
-    .snapshots(vec![Snapshot { name: "com.apple.TimeMachine.2026-09-01-000000.local".into(), ..snapshot() }])
+    .snapshots(vec![Snapshot {
+        name: "com.apple.TimeMachine.2026-09-01-000000.local".into(),
+        uuid: Some("00000031-1111-4222-8333-000000000031".into()),
+        ..snapshot()
+    }])
     .item_count(1)
     .build()
     .unwrap_or_else(|e| panic!("{e}"));

@@ -7,6 +7,8 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use crate::model::SnapshotRef;
+
 use super::seal;
 use crate::model::CleanPlan;
 use crate::safety::path::CanonicalPath;
@@ -61,8 +63,8 @@ pub struct ApprovedItem {
     size_bytes: u64,
     /// `true` when the leaf is a directory.
     is_dir: bool,
-    /// The snapshot name, for a `tmutil_delete` item; its `path` is the mount point.
-    snapshot: Option<String>,
+    /// The snapshot, for a `tmutil_delete` item; its `path` is the mount point.
+    snapshot: Option<SnapshotRef>,
 }
 
 impl ApprovedItem {
@@ -79,22 +81,22 @@ impl ApprovedItem {
     }
 
     /// Records a snapshot deletion the guard approved: the volume's mount point
-    /// and device, and the snapshot's name. There is no inode to re-check; the
-    /// provider deletes by name on that volume and nothing else.
-    pub(super) fn for_snapshot(mount_point: &Path, device: u64, name: &str) -> Self {
+    /// and device, and the snapshot itself. There is no inode to re-check; the
+    /// provider deletes that UUID on that volume and nothing else.
+    pub(super) fn for_snapshot(mount_point: &Path, device: u64, snapshot: &SnapshotRef) -> Self {
         Self {
             path: mount_point.to_path_buf(),
             device,
             inode: 0,
             size_bytes: 0,
             is_dir: true,
-            snapshot: Some(name.to_owned()),
+            snapshot: Some(snapshot.clone()),
         }
     }
 
     /// The snapshot this item deletes, for `tmutil_delete` items.
-    pub fn snapshot(&self) -> Option<&str> {
-        self.snapshot.as_deref()
+    pub fn snapshot(&self) -> Option<&SnapshotRef> {
+        self.snapshot.as_ref()
     }
 
     /// The checked path.

@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use super::{ApprovedItem, WriteRequest};
-use crate::model::{Action, Category, CleanItem, Finding};
+use crate::model::{Action, Category, CleanItem, Finding, Snapshot};
 use crate::ports::FileOps;
 use crate::safety::firmlink::{firmlink_spellings, is_volume_root};
 use crate::safety::path::{CanonicalPath, canonicalize_no_follow};
@@ -83,16 +83,22 @@ fn check_snapshot_item(
     if finding.category() != Category::Snapshots {
         return Err(inconsistent(format!("finding `{}` is not a snapshots finding", finding.id())));
     }
+    // macOS reports no snapshot size: a figure here would be a number the user
+    // is shown and nothing frees (`docs/cli-spec.md` §4.4).
+    if item.size_bytes != 0 {
+        return Err(inconsistent(format!("snapshot `{}` claims {} bytes", reference.name, item.size_bytes)));
+    }
     let listed = finding.snapshots().iter().find(|snapshot| snapshot.name == reference.name);
-    match listed {
-        Some(snapshot) if snapshot.is_actionable() && snapshot.volume.as_ref() == Some(&reference.volume) => {
-        }
-        _ => {
-            return Err(inconsistent(format!(
-                "snapshot `{}` is not one the finding lists as purgeable on `{}`",
-                reference.name, reference.volume
-            )));
-        }
+    let matches = |snapshot: &Snapshot| {
+        snapshot.is_actionable()
+            && snapshot.volume.as_ref() == Some(&reference.volume)
+            && snapshot.uuid.as_deref() == Some(reference.uuid.as_str())
+    };
+    if !listed.is_some_and(matches) {
+        return Err(inconsistent(format!(
+            "snapshot `{}` ({}) is not one the finding lists as purgeable on `{}`",
+            reference.name, reference.uuid, reference.volume
+        )));
     }
     let mount = mounts
         .entries()
@@ -101,7 +107,7 @@ fn check_snapshot_item(
         .ok_or_else(|| GuardRejection::UnknownVolume(item.path.clone()))?;
     allows_action(mount.volume.role, Action::TmutilDelete)
         .map_err(|rejection| rejection.with_path(&item.path))?;
-    let approved = ApprovedItem::for_snapshot(&item.path, mount.device, &reference.name);
+    let approved = ApprovedItem::for_snapshot(&item.path, mount.device, reference);
     Ok(Outcome { index, kind: OutcomeKind::Approved(approved) })
 }
 

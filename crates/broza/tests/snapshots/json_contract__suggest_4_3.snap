@@ -41,8 +41,11 @@ expression: value
         "risk": "amber",
         "snapshots": [
           {
+            "mount_point": "/System/Volumes/Data",
             "name": "com.apple.TimeMachine.2026-09-20-101530.local",
-            "purgeable": true
+            "purgeable": true,
+            "uuid": "00000021-1111-4222-8333-000000000021",
+            "volume": "disk3s5"
           }
         ],
         "title": "Time Machine local snapshots"

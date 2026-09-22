@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Snapshots</key>
+	<array>
+		<dict>
+			<key>LimitingContainerShrink</key>
+			<false/>
+			<key>Purgeable</key>
+			<true/>
+			<key>RevertTo</key>
+			<false/>
+			<key>RootTo</key>
+			<false/>
+			<key>SnapshotName</key>
+			<string>com.apple.TimeMachine.2026-09-20-101530.local</string>
+			<key>SnapshotUUID</key>
+			<string>00000021-1111-4222-8333-000000000021</string>
+			<key>SnapshotXID</key>
+			<integer>27718201</integer>
+		</dict>
+		<dict>
+			<key>LimitingContainerShrink</key>
+			<false/>
+			<key>Purgeable</key>
+			<false/>
+			<key>RevertTo</key>
+			<false/>
+			<key>RootTo</key>
+			<false/>
+			<key>SnapshotName</key>
+			<string>com.apple.TimeMachine.2026-09-21-093000.local</string>
+			<key>SnapshotUUID</key>
+			<string>00000022-1111-4222-8333-000000000022</string>
+			<key>SnapshotXID</key>
+			<integer>27718355</integer>
+		</dict>
+	</array>
+</dict>
+</plist>

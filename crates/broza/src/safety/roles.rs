@@ -34,7 +34,8 @@ pub fn is_protected(role: VolumeRole) -> bool {
 /// Checks that `action` may be performed on a volume with this `role`.
 ///
 /// - protected roles refuse everything;
-/// - `backup` only accepts [`Action::TmutilDelete`] (Time Machine's own tool);
+/// - `backup` accepts nothing: a Time Machine destination is Time Machine's, and local
+///   snapshots live on data and user volumes;
 /// - an unrecognised role is treated as the most restrictive one and refuses
 ///   everything, so a future macOS role can never become writable by accident;
 /// - [`Action::InformOnly`] is not a write at all and is always refused here; the
@@ -52,7 +53,6 @@ pub fn allows_action(role: VolumeRole, action: Action) -> Result<(), GuardReject
     }
     match role {
         VolumeRole::Data | VolumeRole::User => Ok(()),
-        VolumeRole::Backup if action == Action::TmutilDelete => Ok(()),
         _ => refused(),
     }
 }
@@ -110,9 +110,8 @@ mod tests {
     }
 
     #[test]
-    fn a_backup_volume_only_accepts_tmutil_delete() {
-        assert_eq!(allows_action(VolumeRole::Backup, Action::TmutilDelete), Ok(()));
-        for action in [Action::Quarantine, Action::Purge] {
+    fn a_backup_volume_accepts_no_action_at_all() {
+        for action in [Action::Quarantine, Action::Purge, Action::TmutilDelete] {
             assert_eq!(
                 allows_action(VolumeRole::Backup, action),
                 Err(GuardRejection::ActionNotAllowed {

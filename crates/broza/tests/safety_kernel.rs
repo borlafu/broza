@@ -15,7 +15,7 @@ use broza::ExitCode;
 use broza::clean::{PlanOutcome, Selection};
 use broza::model::{
     Action, Category, CleanItem, CleanPlan, Finding, FindingPath, Instructions, ItemErrorCode, ItemStatus,
-    Risk, VolumeRole,
+    Risk, Snapshot, SnapshotRef, VolumeRole,
 };
 use broza::ports::Answer;
 use broza::safety::guard::{Verdict, WriteRequest, approve};
@@ -386,4 +386,143 @@ fn forced_plan(finding: &Finding, path: &str, size_bytes: u64, action: Action) -
     )
     .unwrap_or_else(|error| panic!("{error}"));
     PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() }
+}
+
+/// A purgeable Time Machine snapshot on the Data volume, as the detector reports it.
+fn data_snapshot(name: &str, uuid: &str) -> Snapshot {
+    Snapshot {
+        name: name.to_owned(),
+        uuid: Some(uuid.to_owned()),
+        purgeable: true,
+        volume: Some("disk3s5".parse().unwrap_or_else(|e| panic!("{e}"))),
+        mount_point: Some(PathBuf::from("/System/Volumes/Data")),
+    }
+}
+
+fn snapshots_finding(snapshots: Vec<Snapshot>) -> Finding {
+    Finding::builder(
+        "snapshots.timemachine-local".parse().unwrap_or_else(|e| panic!("{e}")),
+        Category::Snapshots,
+        "Time Machine local snapshots",
+    )
+    .snapshots(snapshots)
+    .item_count(1)
+    .reasoning("size not reported by macOS")
+    .build()
+    .unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// A plan with one snapshot item, built by hand so every field can be forged.
+fn snapshot_plan(
+    finding: &Finding,
+    path: &str,
+    size_bytes: u64,
+    snapshot: Option<SnapshotRef>,
+) -> PlanOutcome {
+    let plan = CleanPlan::dry_run(
+        session(),
+        vec![CleanItem {
+            path: PathBuf::from(path),
+            finding_id: finding.id().clone(),
+            size_bytes,
+            status: ItemStatus::Planned,
+            action: Action::TmutilDelete,
+            error: None,
+            snapshot,
+        }],
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    PlanOutcome { plan, informed_only: Vec::new(), informed_in_passing: Vec::new() }
+}
+
+const TM: &str = "com.apple.TimeMachine.2026-09-20-101530.local";
+const TM_UUID: &str = "00000021-1111-4222-8333-000000000021";
+
+fn reference(volume: &str, name: &str, uuid: &str) -> SnapshotRef {
+    SnapshotRef {
+        volume: volume.parse().unwrap_or_else(|e| panic!("{e}")),
+        name: name.to_owned(),
+        uuid: uuid.to_owned(),
+    }
+}
+
+#[test]
+fn a_well_formed_snapshot_item_is_approved_without_touching_any_path() {
+    let finding = snapshots_finding(vec![data_snapshot(TM, TM_UUID)]);
+    let outcome = snapshot_plan(&finding, "/System/Volumes/Data", 0, Some(reference("disk3s5", TM, TM_UUID)));
+
+    let verdict = approve(&outcome, std::slice::from_ref(&finding), &applying(), &mounts(), &fs());
+
+    match verdict {
+        Ok(Verdict::NeedsConfirmation(pending)) => {
+            assert_eq!(pending.items().len(), 1);
+            assert_eq!(pending.items()[0].snapshot().map(|s| s.uuid.as_str()), Some(TM_UUID));
+            assert!(pending.request().irreversible, "a snapshot deletion cannot be undone");
+        }
+        other => panic!("expected a pending approval, got {other:?}"),
+    }
+}
+
+#[test]
+fn every_forged_snapshot_item_is_refused() {
+    let listed = data_snapshot(TM, TM_UUID);
+    let finding = snapshots_finding(vec![listed]);
+    let system_finding = snapshots_finding(vec![Snapshot {
+        volume: Some("disk3s1s1".parse().unwrap_or_else(|e| panic!("{e}"))),
+        mount_point: Some(PathBuf::from("/")),
+        ..data_snapshot(TM, TM_UUID)
+    }]);
+    let not_purgeable = snapshots_finding(vec![Snapshot { purgeable: false, ..data_snapshot(TM, TM_UUID) }]);
+    let cases: Vec<(&str, &Finding, PlanOutcome)> = vec![
+        ("no snapshot named", &finding, snapshot_plan(&finding, "/System/Volumes/Data", 0, None)),
+        (
+            "name the finding never listed",
+            &finding,
+            snapshot_plan(
+                &finding,
+                "/System/Volumes/Data",
+                0,
+                Some(reference("disk3s5", "com.apple.TimeMachine.2020-01-01-000000.local", TM_UUID)),
+            ),
+        ),
+        (
+            "uuid that is not the listed one",
+            &finding,
+            snapshot_plan(
+                &finding,
+                "/System/Volumes/Data",
+                0,
+                Some(reference("disk3s5", TM, "00000099-1111-4222-8333-000000000099")),
+            ),
+        ),
+        (
+            "volume other than the listed one",
+            &finding,
+            snapshot_plan(&finding, "/System/Volumes/Data", 0, Some(reference("disk4s1", TM, TM_UUID))),
+        ),
+        (
+            "mount point that is not the volume's",
+            &finding,
+            snapshot_plan(&finding, "/Users/dana", 0, Some(reference("disk3s5", TM, TM_UUID))),
+        ),
+        (
+            "a size where macOS reports none",
+            &finding,
+            snapshot_plan(&finding, "/System/Volumes/Data", 4096, Some(reference("disk3s5", TM, TM_UUID))),
+        ),
+        (
+            "snapshot the finding lists as not purgeable",
+            &not_purgeable,
+            snapshot_plan(&not_purgeable, "/System/Volumes/Data", 0, Some(reference("disk3s5", TM, TM_UUID))),
+        ),
+        (
+            "snapshot on the system volume",
+            &system_finding,
+            snapshot_plan(&system_finding, "/", 0, Some(reference("disk3s1s1", TM, TM_UUID))),
+        ),
+    ];
+    for (why, finding, outcome) in cases {
+        let verdict = approve(&outcome, std::slice::from_ref(finding), &applying(), &mounts(), &fs());
+        assert!(verdict.is_err(), "{why}: {verdict:?}");
+    }
 }

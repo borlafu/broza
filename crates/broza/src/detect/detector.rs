@@ -15,7 +15,7 @@ use jiff::Timestamp;
 
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, Finding};
-use crate::ports::{FileOps, SnapshotProvider};
+use crate::ports::{FileOps, ProcessRunner, SnapshotProvider};
 use crate::scan::{DirNode, MountTable};
 
 /// Warning code for a location one detector wanted and could not read.
@@ -72,9 +72,10 @@ impl Detected {
         Diagnostic {
             code: LOCATION_UNREADABLE_CODE.to_owned(),
             message: format!(
-                "the {} detector could not read {}: {error}; {what} were not checked",
+                "the {} detector could not read {}: {}; {what} were not checked",
                 category.as_str(),
-                path.display()
+                path.display(),
+                first_line(&error.to_string())
             ),
             path: Some(path.to_path_buf()),
         }
@@ -101,6 +102,8 @@ pub struct DetectContext<'a> {
     pub home_nodes: &'a [DirNode],
     /// APFS local snapshots, for the `snapshots` detector.
     pub snapshots: &'a dyn SnapshotProvider,
+    /// External commands (`xcrun simctl`, `mdls`), always with a timeout.
+    pub process: &'a dyn ProcessRunner,
     /// The same nodes, indexed by path and by parent.
     index: NodeIndex<'a>,
 }
@@ -129,18 +132,38 @@ impl<'a> NodeIndex<'a> {
     }
 }
 
+/// The adapters a detection run reads through.
+#[derive(Clone, Copy)]
+pub struct DetectPorts<'a> {
+    /// Filesystem access, for what the walk does not carry.
+    pub fs: &'a dyn FileOps,
+    /// APFS local snapshots.
+    pub snapshots: &'a dyn SnapshotProvider,
+    /// External commands, always with a timeout.
+    pub process: &'a dyn ProcessRunner,
+}
+
 impl<'a> DetectContext<'a> {
     /// Package what detectors read, indexing the walk once.
     pub fn new(
         home: &'a Path,
-        fs: &'a dyn FileOps,
+        ports: DetectPorts<'a>,
         mounts: &'a MountTable,
         now: Timestamp,
         unused_after: Duration,
         home_nodes: &'a [DirNode],
-        snapshots: &'a dyn SnapshotProvider,
     ) -> Self {
-        Self { home, fs, mounts, now, unused_after, home_nodes, snapshots, index: NodeIndex::of(home_nodes) }
+        Self {
+            home,
+            fs: ports.fs,
+            mounts,
+            now,
+            unused_after,
+            home_nodes,
+            snapshots: ports.snapshots,
+            process: ports.process,
+            index: NodeIndex::of(home_nodes),
+        }
     }
 
     /// The measured node for `path`, when the walk reached it.
@@ -175,4 +198,18 @@ impl<'a> DetectContext<'a> {
     pub fn under_home(&self, relative: &str) -> PathBuf {
         self.home.join(relative)
     }
+}
+
+/// Longest a reason quoted in a warning gets: one line, bounded.
+const REASON_MAX_CHARS: usize = 200;
+
+/// The first line of an error, cut to [`REASON_MAX_CHARS`]: a warning quotes
+/// the reason, it does not reproduce a dump.
+fn first_line(text: &str) -> String {
+    let line = text.lines().next().unwrap_or_default();
+    if line.chars().count() <= REASON_MAX_CHARS {
+        return line.to_owned();
+    }
+    let cut: String = line.chars().take(REASON_MAX_CHARS).collect();
+    format!("{cut}…")
 }

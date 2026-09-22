@@ -45,10 +45,12 @@ pub struct CleanItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SnapshotRef {
-    /// The volume the snapshot belongs to.
+    /// The volume the snapshot belongs to; the deletion is scoped to it.
     pub volume: VolumeId,
     /// The snapshot's name, `com.apple.TimeMachine.YYYY-MM-DD-HHMMSS.local`.
     pub name: String,
+    /// The snapshot's UUID, which is what the deletion names.
+    pub uuid: String,
 }
 
 #[cfg(test)]

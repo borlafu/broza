@@ -3,7 +3,13 @@ error[E0382]: borrow of moved value: `approved`
    |
 10 | fn spend_twice(approved: Approved<Write>) {
    |                -------- move occurs because `approved` has type `Approved<broza::safety::Write>`, which does not implement the `Copy` trait
-11 |     let _snapshots = narrow_to_snapshot_delete(approved);
-   |                                                -------- value moved here
+11 |     let _plan = approved.into_plan();
+   |                          ----------- `approved` moved due to this method call
 12 |     execute(&approved);
    |             ^^^^^^^^^ value borrowed here after move
+   |
+note: `Approved::<K>::into_plan` takes ownership of the receiver `self`, which moves `approved`
+  --> src/safety/guard/token.rs
+   |
+   |     pub fn into_plan(self) -> CleanPlan {
+   |                      ^^^^

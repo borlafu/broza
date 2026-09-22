@@ -60,34 +60,17 @@ fn check_inside_store(
 /// Borrows the approval: a plan may mix files to quarantine and snapshots to
 /// delete, and the executor spends this token on the latter while the mover
 /// keeps the original for the former. Only items the guard approved as
-/// snapshots are carried over; the plan itself is unchanged.
+/// snapshots are carried over. The plan travels along unchanged for the
+/// record; the provider reads only `items()`.
 pub fn snapshot_deletions(approved: &Approved<Write>) -> Approved<SnapshotDelete> {
     let items: Vec<ApprovedItem> =
         approved.items().iter().filter(|item| item.snapshot().is_some()).cloned().collect();
     issue::<SnapshotDelete>(ApprovedPlan::new(approved.plan().clone(), items))
 }
 
-/// Narrows a plan approved for writing to a snapshot deletion.
-///
-/// Takes the token by value: the same approval cannot also be spent on a
-/// filesystem write. Every item must carry [`Action::TmutilDelete`], because
-/// snapshots are removed by `tmutil` and never by unlinking files.
-pub fn narrow_to_snapshot_delete(
-    approved: Approved<Write>,
-) -> Result<Approved<SnapshotDelete>, GuardRejection> {
-    if let Some(item) = approved.plan().items().iter().find(|item| item.action != Action::TmutilDelete) {
-        return Err(GuardRejection::Inconsistent(format!(
-            "`{}` is not a snapshot deletion",
-            item.path.display()
-        )));
-    }
-    let items = approved.items().to_vec();
-    Ok(issue::<SnapshotDelete>(ApprovedPlan::new(approved.into_plan(), items)))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{approve_quarantine_write, narrow_to_snapshot_delete};
+    use super::approve_quarantine_write;
     use crate::model::{Action, CleanItem, CleanPlan, ItemStatus, SessionId, Volume, VolumeRole};
     use crate::safety::guard::token::evidence_for;
     use crate::safety::guard::token::issue;
@@ -120,6 +103,37 @@ mod tests {
             items.iter().map(|item| evidence_for(&item.path.display().to_string(), 2, 3)).collect();
         let plan = CleanPlan::dry_run(session(), items).unwrap_or_else(|error| panic!("{error}"));
         issue::<Write>(ApprovedPlan::new(plan, evidence))
+    }
+
+    #[test]
+    fn only_the_snapshot_items_of_an_approval_are_carried_into_the_narrowed_token() {
+        let reference = crate::model::SnapshotRef {
+            volume: "disk3s5".parse().unwrap_or_else(|error| panic!("{error}")),
+            name: "com.apple.TimeMachine.2026-09-20-101530.local".to_owned(),
+            uuid: "00000021-1111-4222-8333-000000000021".to_owned(),
+        };
+        let plan = CleanPlan::dry_run(session(), vec![item("/Users/dana/a", Action::Quarantine)])
+            .unwrap_or_else(|error| panic!("{error}"));
+        let items = vec![
+            evidence_for("/Users/dana/a", 2, 3),
+            super::ApprovedItem::for_snapshot(Path::new("/System/Volumes/Data"), 2, &reference),
+        ];
+        let approval = issue::<Write>(ApprovedPlan::new(plan, items));
+
+        let narrowed = super::snapshot_deletions(&approval);
+
+        assert_eq!(narrowed.items().len(), 1);
+        assert_eq!(narrowed.items()[0].snapshot(), Some(&reference));
+        assert_eq!(approval.items().len(), 2, "the original approval is untouched");
+    }
+
+    #[test]
+    fn an_approval_without_snapshots_narrows_to_an_empty_token() {
+        let approval = approved(vec![item("/Users/dana/a", Action::Quarantine)]);
+
+        let narrowed = super::snapshot_deletions(&approval);
+
+        assert!(narrowed.items().is_empty());
     }
 
     fn table(role: VolumeRole) -> MountTable {
@@ -176,22 +190,5 @@ mod tests {
             .err()
             .unwrap_or_else(|| panic!("an unknown volume must be refused"));
         assert_eq!(rejection, GuardRejection::UnknownVolume(STORE.into()));
-    }
-
-    #[test]
-    fn only_a_plan_made_of_snapshot_deletions_can_be_narrowed() {
-        let snapshots = approved(vec![item("/Users/dana/snap", Action::TmutilDelete)]);
-        let narrowed = narrow_to_snapshot_delete(snapshots).unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(narrowed.plan().items().len(), 1);
-        assert_eq!(narrowed.items().len(), 1);
-
-        let mixed = approved(vec![
-            item("/Users/dana/snap", Action::TmutilDelete),
-            item("/Users/dana/Library/Caches/a", Action::Quarantine),
-        ]);
-        let rejection = narrow_to_snapshot_delete(mixed)
-            .err()
-            .unwrap_or_else(|| panic!("a mixed plan is not a snapshot deletion"));
-        assert!(matches!(rejection, GuardRejection::Inconsistent(_)), "{rejection}");
     }
 }

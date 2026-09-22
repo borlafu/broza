@@ -318,7 +318,7 @@ The home walk of `suggest` gains a file report (`ScanRequest.files_min_size`, de
 
 M4 progress:
 
-- [ ] 1. `trash` detector.
+- [x] 1. `trash` detector (`detect/detectors/trash.rs`).
 - [ ] 2. Irreversible executor (`purge`, `tmutil_delete`); `clean --apply --purge` enabled.
 - [ ] 3. Snapshot items in the plan and the guard.
 - [ ] 4. `snapshots` detector.

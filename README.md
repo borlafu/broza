@@ -122,12 +122,9 @@ Broza is designed so that a mistake cannot cost you data.
 - **Dry-run by default.** `broza clean` only simulates. Nothing changes without `--apply`.
 - **Reversible by default.** Deleted items go to a quarantine for 30 days. `broza restore` puts them back.
 - **Irreversible deletion is deliberate.** `--purge` requires typing the word `PURGE`. `--yes` does not skip it.
-- **System volumes are untouchable.** Broza never writes to the System, Preboot, Recovery, or VM
-  volumes. There is no flag to change that.
-- **Cloud files are only reported.** Files already synced to iCloud Drive, Dropbox, OneDrive, or
-  Google Drive are never deleted. Broza shows the provider's official steps instead.
-- **Honest numbers.** Purgeable space is shown separately from free space. Quarantined bytes are
-  reported separately from bytes actually freed.
+- **System volumes are untouchable.** Broza never writes to the System, Preboot, Recovery, or VM volumes. There is no flag to change that.
+- **Cloud files are only reported.** Files already synced to iCloud Drive, Dropbox, OneDrive, or Google Drive are never deleted. Broza shows the provider's official steps instead.
+- **Honest numbers.** Purgeable space is shown separately from free space. Quarantined bytes are reported separately from bytes actually freed.
 - **Scriptable.** Every command has `--json`. No prompt appears without a terminal.
 
 ## What it cleans

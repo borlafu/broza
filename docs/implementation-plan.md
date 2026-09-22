@@ -275,6 +275,59 @@ Scope: `trash` (purge action), `snapshots` (`diskutil apfs listSnapshots -plist`
 Exit criteria: each detector has fixture-tree tests plus one negative test; full `suggest` < 15 s
 on the development machine.
 
+Design decisions taken at the start of M4 (2026-09-22), in the order the work lands:
+
+1. **Trash detector** (`detect/detectors/trash.rs`): `~/.Trash` from the home walk plus
+   `<mount>/.Trashes/<uid>` on every writable, unprotected volume, read directly (one `read_dir`
+   per volume; a trash Broza may not read is a `location_unreadable` warning). Paths are the direct
+   children; action `purge` is the category default, risk amber. No safety change: `.Trashes` is
+   already a conditional allowed root.
+2. **Irreversible executor** (`quarantine/mover.rs` → per-item dispatch): `Action::Quarantine` items
+   move into the session as today; `Action::Purge` items are re-checked against the token's
+   `(device, inode)` and removed with `remove_tree`, recorded `purged`, their allocated bytes added to
+   `reclaimed_bytes`; `Action::TmutilDelete` items go to `SnapshotProvider::delete`, which takes an
+   `Approved<SnapshotDelete>` (new port method; `tmutil deletelocalsnapshots <date>` in the adapter,
+   `permission_denied` → item `failed` and the exact command on stderr). A plan without quarantine
+   items creates no session, so `quarantine_path` is absent. This lifts the "not implemented"
+   refusal of `clean --apply --purge`.
+3. **Snapshot items in a plan**: `CleanItem` gains an optional `snapshot` object
+   (`{ volume, name }`, schema 1.1 additive while unreleased); its `path` is the volume's mount point
+   and is informational. The guard checks such an item without touching the filesystem: the finding
+   is of the `snapshots` category, the name is one the finding listed with `purgeable: true` and the
+   `com.apple.TimeMachine.` prefix, and the volume has a writable role. The planner builds these
+   items from `finding.snapshots()`.
+4. **Snapshots detector**: `SnapshotProvider::list` on every data/user APFS volume; only purgeable
+   `com.apple.TimeMachine.*` snapshots are listed; `reclaimable_bytes: 0` with the reasoning
+   "size not reported by macOS".
+5. **Old backups**: `~/Library/Application Support/MobileSync/Backup/<udid>/Info.plist` read through
+   `FileOps` and parsed with `plist` (`Device Name`, `Product Name`, `Last Backup Date`); a backup
+   whose last date is older than `unused-after` is proposed, one path per backup, sized from the walk.
+6. **iOS simulators**: `xcrun simctl list -j devices,runtimes` through `ProcessRunner` with a 10 s
+   timeout and a recorded fixture; unavailable devices and devices not booted for `unused-after`
+   are proposed as `~/Library/Developer/CoreSimulator/Devices/<udid>`; a failing or missing `xcrun`
+   is a warning, never an abort.
+7. **Large old files**: files of at least 1 GB reported by the walk, `last_used =
+   max(atime, kMDItemLastUsedDate)` with `mdls` through `ProcessRunner` for the candidates only,
+   low-confidence reasoning when Spotlight has no value; older than `unused-after` is proposed.
+8. **Duplicates**: files of at least 1 MB reported by the walk, grouped by size, then by the first
+   4 KiB (`FileOps::read_prefix`, new), then by full BLAKE3 (`FileOps::hash_file`, new, adapter-side);
+   the oldest copy is kept, the rest proposed; `.git` object stores are skipped.
+
+The home walk of `suggest` gains a file report (`ScanRequest.files_min_size`, decoupled from
+`min_size`) for items 7 and 8; the cache rule is unchanged.
+
+M4 progress:
+
+- [ ] 1. `trash` detector.
+- [ ] 2. Irreversible executor (`purge`, `tmutil_delete`); `clean --apply --purge` enabled.
+- [ ] 3. Snapshot items in the plan and the guard.
+- [ ] 4. `snapshots` detector.
+- [ ] 5. `old-backups` detector.
+- [ ] 6. `ios-simulators` detector.
+- [ ] 7. `large-old-files` detector.
+- [ ] 8. `duplicates` detector.
+- [ ] `suggest` under 15 s on the development machine; review; release 0.3.
+
 ### M5 — Inform-only, apps, polish (release 1.0)
 
 Scope: `cloud-synced` (iCloud Drive, Dropbox, OneDrive, Google Drive; evicted / dataless

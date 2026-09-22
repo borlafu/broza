@@ -19,6 +19,9 @@ const _: () = assert!(CACHE_FILE_FLOOR_BYTES == crate::scan::request::DETECTOR_F
 pub struct ChildDir {
     /// The entry name, as bytes.
     pub name: Vec<u8>,
+    /// Device id (`st_dev`) of the child; a walk never crosses devices, but
+    /// the key is the child's own, not assumed from the parent.
+    pub device: u64,
     /// Inode number (`st_ino`) of the child.
     pub inode: u64,
     /// Modification time of the child in nanoseconds since the unix epoch;

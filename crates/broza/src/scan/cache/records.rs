@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use jiff::Timestamp;
 
 use crate::scan::cache::key::{CACHE_FILE_FLOOR_BYTES, CacheKey, ChildDir, DirRecord, FileRecord};
-use crate::scan::walker::{CachedSubtree, DirNode, FileEntry, WalkResult};
+use crate::scan::walker::{DirNode, FileEntry, WalkResult};
 
 /// The records of every directory the walk measured itself.
 ///
@@ -27,6 +27,7 @@ pub fn records_of(walk: &WalkResult, recorded_at: Timestamp) -> Vec<DirRecord> {
         if let (Some(parent), Some(name)) = (node.path.parent(), node.path.file_name()) {
             children.entry(parent).or_default().push(ChildDir {
                 name: name.as_bytes().to_vec(),
+                device: node.device,
                 inode: node.inode,
                 mtime_ns: node.mtime.map(Timestamp::as_nanosecond),
             });
@@ -99,18 +100,21 @@ pub(super) fn file_of(dir: &Path, device: u64, record: &FileRecord) -> FileEntry
 }
 
 /// The key a child entry's own record has.
-pub(super) fn child_key(parent: &CacheKey, child: &ChildDir) -> Option<CacheKey> {
-    Some(CacheKey { device: parent.device, inode: child.inode, mtime_ns: child.mtime_ns? })
+pub(super) fn child_key(child: &ChildDir) -> Option<CacheKey> {
+    Some(CacheKey { device: child.device, inode: child.inode, mtime_ns: child.mtime_ns? })
+}
+
+/// `true` for a name that is one plain path component: what `read_dir` gives
+/// and what `records_of` writes. A store is a plain file, and a record that
+/// names `..`, an empty string or a slash would place a node outside the
+/// subtree it came from, so it is not served.
+pub(super) fn is_plain_name(name: &[u8]) -> bool {
+    !name.is_empty() && name != b"." && name != b".." && !name.contains(&b'/')
 }
 
 /// The path a child entry lives at.
 pub(super) fn child_path(parent: &Path, child: &ChildDir) -> PathBuf {
     parent.join(OsStr::from_bytes(&child.name))
-}
-
-/// An empty subtree to fill while rebuilding.
-pub(super) fn empty_subtree() -> CachedSubtree {
-    CachedSubtree::default()
 }
 
 #[cfg(test)]

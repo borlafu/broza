@@ -109,7 +109,10 @@ impl Totals {
             file_count: 1,
             dir_count: 0,
             dataless_count: 0,
-            largest_item_bytes: meta.allocated_bytes,
+            // Whichever size is bigger: a compressed file is reportable by its
+            // apparent size, and the cache gate compares this against the
+            // report's floor, so it must not undercount what could be listed.
+            largest_item_bytes: meta.allocated_bytes.max(meta.size_bytes),
             // A file with several names may be credited to another directory
             // once hard links are settled; its size comes back through the
             // surviving sighting, so it must not be claimed twice here.

@@ -68,6 +68,7 @@ pub struct ApprovedItem {
 
 /// What an approved item points at.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Target {
     /// A path the executor may move or remove, with its checked identity.
     Path(WritablePath),
@@ -170,11 +171,6 @@ impl ApprovedItem {
                 snapshot: snapshot.clone(),
             },
         }
-    }
-
-    /// What this item points at.
-    pub fn target(&self) -> &Target {
-        &self.target
     }
 
     /// The path the executor may write, with its identity; `None` for a

@@ -197,6 +197,10 @@ pub struct WalkOptions<'a> {
     /// Path prefixes that are not visited at all.
     pub exclude: Vec<PathBuf>,
     /// Cache lookup: when it answers, the subtree is not walked again.
+    ///
+    /// A served subtree comes back as the cache kept it; with a `max_depth`,
+    /// the nodes at the boundary are not marked `children_truncated` the way a
+    /// walked boundary is. `scan` and `suggest` never combine the two.
     pub skip_hook: Option<SkipHook<'a>>,
     /// Shallowest depth the cache may answer at; never below [`MIN_CACHE_DEPTH`].
     pub cache_from_depth: usize,

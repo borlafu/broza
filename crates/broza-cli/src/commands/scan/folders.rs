@@ -151,6 +151,7 @@ fn request_for(args: &ScanArgs, settings: &FolderSettings) -> Result<ScanRequest
         min_size: min_size.bytes(),
         exclude,
         no_cache: settings.no_cache,
+        serve_from_cache: true,
         cache_root: settings.home.as_deref().map(|home| home.join(CACHE_DIR)),
         cache_ttl: settings.cache_ttl,
         verbose_warnings: settings.verbose,

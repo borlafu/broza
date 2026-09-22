@@ -178,19 +178,17 @@ fn cached_dir(
         context.options.max_depth.is_none_or(|max| depth.saturating_add(below_root) <= max)
     };
     let (nodes, hidden): (Vec<DirNode>, Vec<DirNode>) = nodes.into_iter().partition(reported);
+    // The served files are already in the store under the records they came
+    // from, so none is collected for it again; only the report wants them.
     let cap = context.options.report_files_top;
-    let mut top = TopFiles::new(cap);
-    let mut cache_files = Vec::new();
-    for file in files {
-        let reportable = file.size_bytes.max(file.allocated_bytes);
-        if context.options.report_files_min_size.is_some_and(|min| reportable >= min) {
-            top = top.with(file.clone());
-        }
-        if context.options.cache_files_min_size.is_some_and(|min| reportable >= min) {
-            cache_files.push(file);
-        }
-    }
-    Partial { nodes, hidden, files: top, cache_files, totals: totals.as_child(), ..Partial::empty(cap) }
+    let top = files
+        .into_iter()
+        .filter(|file| {
+            let reportable = file.size_bytes.max(file.allocated_bytes);
+            context.options.report_files_min_size.is_some_and(|min| reportable >= min)
+        })
+        .fold(TopFiles::new(cap), TopFiles::with);
+    Partial { nodes, hidden, files: top, totals: totals.as_child(), ..Partial::empty(cap) }
 }
 
 /// A directory Broza may not read: a warning, an empty node, and the walk goes on.
@@ -240,7 +238,7 @@ fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u
         if !node.from_cache {
             let own = direct.get(node.path.as_path()).copied().unwrap_or(0);
             let below = from_children.get(node.path.as_path()).copied().unwrap_or(0);
-            node.largest_item_bytes = own.max(below).min(node.allocated_bytes);
+            node.largest_item_bytes = own.max(below).min(node.allocated_bytes.max(node.size_bytes));
         }
         if let Some(parent) = node.path.parent() {
             let as_item = node.largest_item_bytes.max(node.allocated_bytes);

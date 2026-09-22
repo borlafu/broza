@@ -43,5 +43,16 @@ files.
 - The store grows to hold names and big files: about 30 MB for a home of a few million entries.
 - What `suggest` shows may be up to `cache-ttl` old for files that grew in place, as `scan`
   always could; `--no-cache` walks cold. `clean` stays at the cold rate.
+- New with layout 2: a directory whose mtime was set back after its contents changed (`rsync -t`,
+  `tar -p`, a restore) is served with the names its record kept, so a warm report can list
+  entries that are gone or miss new ones until the TTL. Layout 1 could only report a stale size.
+- A refused subtree is remembered for the walk (`Denied`), so a change deep in a tree costs one
+  key-only descent, not one per ancestor the walker asks about; a subtree is materialised only
+  after it passed.
+- `clean` walks with `serve_from_cache: false`: the store is loaded and refreshed, never replaced
+  by the home walk alone.
+- Still open: one cloud placeholder file makes every directory above it unservable
+  (`has_truncation`), which predates this layout; splitting "counted placeholder" from "hole"
+  would let those subtrees be served.
 - `FileEntry` carries identity and times from the walk, so detectors never re-`stat` a file and
   reading one for comparison cannot change the answer.

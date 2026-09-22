@@ -297,11 +297,16 @@ fn walk_volume(
     // it could list; otherwise a warm scan would quietly drop an entry that a
     // cold scan shows, and the two would disagree about the same disk.
     let floor = request.reporting_floor();
+    let denied = cache::store::Denied::new();
     let hook = |identity: &DirIdentity| {
         let record = CacheKey::of(identity).and_then(|key| store.lookup(&key))?;
         let complete = floor >= CACHE_FILE_FLOOR_BYTES || record.largest_item_bytes < floor;
-        (record.is_usable() && complete).then(|| store.subtree(identity)).flatten()
+        (record.is_usable() && complete).then(|| store.subtree(identity, &denied)).flatten()
     };
+    // `clean` reads nothing from the store (`docs/cli-spec.md` §7) but still
+    // refreshes it: the store is loaded so that what it holds for the rest of
+    // the volume survives the save.
+    let skip_hook: Option<SkipHook<'_>> = request.serve_from_cache.then_some(&hook);
     let files = request.file_report();
     let options = WalkOptions {
         // The whole tree is reported: `--depth` shapes the tree view, and the
@@ -309,7 +314,7 @@ fn walk_volume(
         max_depth: None,
         same_device_only: true,
         exclude: request.exclude.clone(),
-        skip_hook: Some(&hook),
+        skip_hook,
         // Whatever the tree view shows is measured on this run.
         cache_from_depth: request.depth.saturating_add(1),
         // With nothing to list, collecting file entries only to drop them

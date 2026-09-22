@@ -5,6 +5,7 @@
 mod scan_world;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use broza::model::Volume;
 use broza::ports::FileOps;
@@ -351,4 +352,38 @@ fn a_store_written_by_an_older_broza_is_replaced_without_an_error() {
     assert!(!scan.nodes.is_empty(), "the scan ran");
     let bytes = handles.fs.read(Path::new(DATA_STORE)).unwrap_or_else(|error| panic!("{error}"));
     assert_eq!(bytes[4], broza::scan::cache::STORE_VERSION, "rewritten in the current layout");
+}
+
+#[test]
+fn a_walk_that_does_not_serve_from_the_cache_reads_the_disk_and_keeps_the_store() {
+    let (ports, handles) = ports();
+    handles.fs.add_file(BIG, &[]);
+    handles.fs.set_size(BIG, 5 * A_MEGABYTE);
+    let cold = scan_data(&ports, &for_detectors());
+    let outside = "/System/Volumes/Data/Users/dana/Movies";
+    let outside_key = cold
+        .nodes
+        .iter()
+        .find(|node| node.path == Path::new(outside))
+        .and_then(|node| broza::scan::CacheKey::of(&node.identity()))
+        .unwrap_or_else(|| panic!("a key for {outside}"));
+
+    // What `clean` does: the home walked cold, the store loaded and refreshed.
+    handles.fs.set_size(BIG, 6 * A_MEGABYTE);
+    let home = PathBuf::from("/System/Volumes/Data/Users/dana/Documents");
+    let request = ScanRequest { serve_from_cache: false, ..for_detectors() };
+    let mut scans =
+        scan_paths(&[home], &request, &ports, &mac_mount_table(), None).unwrap_or_else(|e| panic!("{e}"));
+    let cold_again = scans.pop().unwrap_or_else(|| panic!("a scan"));
+
+    let big = cold_again.files.iter().find(|file| file.path == Path::new(BIG)).map(|file| file.size_bytes);
+    assert_eq!(big, Some(6 * A_MEGABYTE), "nothing came from the cache");
+    let store = broza::scan::CacheStore::load(
+        Path::new(DATA_STORE),
+        handles.fs.as_ref(),
+        handles.clock.as_ref(),
+        Duration::from_secs(3600),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    assert!(store.lookup(&outside_key).is_some(), "the records of the rest of the volume survived the save");
 }

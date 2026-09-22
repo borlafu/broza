@@ -37,7 +37,8 @@ pub struct DetectionRequest<'a> {
     /// `suggest` may: it reports, and a cached figure up to `cache-ttl` old is
     /// what the cache promises. `clean` may not: its plan is checked against
     /// the disk item by item, and a size the cache remembered from before a
-    /// file grew would be refused there and abort the run.
+    /// file grew would be refused there and abort the run. Either way the
+    /// store is loaded and refreshed, never replaced by the home alone.
     pub trust_cache: bool,
 }
 
@@ -82,7 +83,7 @@ pub fn detect(request: &DetectionRequest<'_>) -> Result<Detection, BrozaError> {
 /// warnings; it refreshes `scan`'s cache on the way.
 fn walk_home(request: &DetectionRequest<'_>, mounts: &MountTable) -> Result<VolumeScan, BrozaError> {
     let for_home = request_for_home(request.folders)?;
-    let scan_request = ScanRequest { no_cache: for_home.no_cache || !request.trust_cache, ..for_home };
+    let scan_request = ScanRequest { serve_from_cache: request.trust_cache, ..for_home };
     let mut scans = scan_paths(&[request.home.to_path_buf()], &scan_request, request.ports, mounts, None)?;
     scans.pop().ok_or_else(|| BrozaError::Other("the home walk produced nothing".into()))
 }

@@ -347,6 +347,9 @@ M4 progress:
       with the nodes and files the detectors read; `suggest` sets its floor to the file report's
       (1 MB) and trusts the cache, `clean` walks cold. Measured 2026-09-22 on the developer's home
       (release build): cold 36 s, warm 7.6–8.7 s, findings identical; the store is 30 MB.
+- [ ] A dataless (cloud placeholder) file marks every ancestor `has_truncation`, so none is served
+      from the cache; split "counted placeholder" from "unreadable hole" so those subtrees can be
+      (review of 1ab03c6, MEDIUM; cloud roots are excluded by default, so the cost is bounded).
 - [ ] Review; release 0.3.
 
 ### M5 — Inform-only, apps, polish (release 1.0)

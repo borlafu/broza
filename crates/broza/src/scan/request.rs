@@ -68,6 +68,11 @@ pub fn default_excludes(home: &Path) -> Vec<PathBuf> {
 ///
 /// The core never reads the environment, so the cache location arrives here
 /// rather than being derived from `$HOME` (`AGENTS.md` §4).
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "four independent flags of one request, each a CLI switch or a caller's choice: external \
+              volumes, bypassing the cache read, serving from the loaded cache, verbose warnings"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanRequest {
     /// `--volume`: a volume id, name, or mount point. `None` means every volume.
@@ -84,6 +89,11 @@ pub struct ScanRequest {
     pub exclude: Vec<PathBuf>,
     /// `--no-cache`: ignore what is cached. A fresh cache is still written.
     pub no_cache: bool,
+    /// Whether unchanged subtrees may be served from the loaded store. `false`
+    /// walks everything and keeps the store: what `clean` does, so a size the
+    /// cache remembered never reaches the guard while `scan`'s records for the
+    /// rest of the volume survive (`docs/cli-spec.md` §7).
+    pub serve_from_cache: bool,
     /// Where the cache lives (`~/.cache/broza`); `None` disables it entirely.
     pub cache_root: Option<PathBuf>,
     /// How long a cached record stays usable.
@@ -105,6 +115,7 @@ impl Default for ScanRequest {
             min_size: DEFAULT_MIN_SIZE_BYTES,
             exclude: Vec::new(),
             no_cache: false,
+            serve_from_cache: true,
             cache_root: None,
             cache_ttl: DEFAULT_CACHE_TTL,
             verbose_warnings: false,

@@ -113,10 +113,20 @@ pub struct DirRecord {
     pub child_dirs: Vec<ChildDir>,
     /// The files directly inside at or above [`CACHE_FILE_FLOOR_BYTES`].
     pub files: Vec<FileRecord>,
-    /// The clone families whose credited clone is directly inside, as
-    /// `(device, original inode)`: a warm walk that meets another clone of one
-    /// of these discounts it, as the cold walk that wrote the record did.
-    pub kept_clones: Vec<(u64, u64)>,
+    /// The clone families whose credited clone is directly inside, with the
+    /// clone's name: a warm walk that meets another clone of one of these
+    /// discounts it, as the cold walk that wrote the record did, and knows
+    /// which served file is the one that keeps the bytes.
+    pub kept_clones: Vec<KeptClone>,
+}
+
+/// A clone family's credited clone, as a record names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptClone {
+    /// The family: `(device, original inode)`.
+    pub family: (u64, u64),
+    /// The credited clone's entry name, as bytes.
+    pub name: Vec<u8>,
 }
 
 impl DirRecord {
@@ -166,7 +176,7 @@ impl DirRecord {
 
     /// The same record, knowing which clone families are kept directly inside.
     #[must_use]
-    pub fn with_kept_clones(self, kept_clones: Vec<(u64, u64)>) -> Self {
+    pub fn with_kept_clones(self, kept_clones: Vec<KeptClone>) -> Self {
         Self { kept_clones, ..self }
     }
 

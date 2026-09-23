@@ -49,13 +49,16 @@ therefore read alike, and only the clones announce the family.
    knows of (`WalkResult::clone_families`: the clones met, the families served subtrees keep,
    and the clones in the file lists); `large-old-files` proposes no file whose removal frees
    nothing; `trash`, `user-cache` and `build-cache` size a file the way the walk settled it.
-   The file report keeps shared-bytes files (hard links, clones) in a heap of their own, so a
-   folder of a million clones cannot push real files out of the top-N before settlement.
-6. What `clean --purge` counts as reclaimed follows the same rule as a hard link: a clone
+   The file report keeps shared-bytes files (hard links, clones) in a heap of their own, walked
+   or served from the cache, so a folder of a million clones cannot push real files out of the
+   top-N before settlement; the report can therefore hold up to twice the cap (400 000 entries
+   for the detectors, some 40 MB more at the peak). Each record names its kept clones by name,
+   so a served keeper keeps the size its record settled.
+5. What `clean --purge` counts as reclaimed follows the same rule as a hard link: a clone
    frees nothing certain, so it counts for nothing (`reclaimed_bytes` is never more than what
    was freed, AGENTS.md §2.7). Whether a clone's family is all gone is not knowable at purge
    time; the figure stays what is certain.
-5. The walk runs on its own thread pool with 64 MiB stacks. The recursion is one frame per
+6. The walk runs on its own thread pool with 64 MiB stacks. The recursion is one frame per
    directory level, a macOS path allows 512 levels, and the ledger made the frames large enough
    to overflow the default 2 MiB at 466 levels on a test tree. Reserved, not committed.
 

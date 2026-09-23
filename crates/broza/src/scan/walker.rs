@@ -40,6 +40,7 @@
 
 mod clones;
 mod dedupe;
+mod leaves;
 mod parts;
 mod top_files;
 mod types;
@@ -57,7 +58,8 @@ pub use types::{
 
 use crate::BrozaError;
 use crate::ports::{EntryMetadata, FileOps};
-use parts::{Children, Context, Leaves, Partial, Totals};
+use leaves::{Children, Leaves};
+use parts::{Context, Partial, Totals};
 use top_files::TopFiles;
 
 /// Stack of each walker thread.
@@ -123,7 +125,7 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
         Ok(listing) => listing,
         Err(error) => return unreadable_dir(&identity, &error, context),
     };
-    let Children { dirs, leaves, errors, skipped, .. } = parts::split_children(path, listing, context);
+    let Children { dirs, leaves, errors, skipped, .. } = leaves::split_children(path, listing, context);
     context.report(leaves.entries.saturating_add(1), leaves.totals.size_bytes);
     let child_dirs = dirs.len() as u64;
     let cap = context.options.report_files_top;
@@ -167,7 +169,7 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
         cache_files,
         originals: leaves.originals.merge(below.originals),
         clones: leaves.clones.merge(below.clones),
-        served_families: below.served_families,
+        served_keepers: below.served_keepers,
     }
 }
 
@@ -196,13 +198,8 @@ fn cached_dir(
     };
     // A family whose credited clone lives in this subtree is spoken for: any
     // other clone of it the walk meets is discounted, as the cold walk that
-    // wrote the record did — so the family reads as one with a known original.
-    let originals =
-        kept_clones.iter().fold(clones::Originals::default(), |mut originals, (device, inode)| {
-            originals.record(*device, *inode);
-            originals
-        });
-    let served_families = kept_clones;
+    // wrote the record did, and the credited one keeps its bytes.
+    let served_keepers = kept_clones;
     let totals = Totals {
         size_bytes: root.size_bytes,
         allocated_bytes: root.allocated_bytes,
@@ -221,22 +218,23 @@ fn cached_dir(
     };
     let (nodes, hidden): (Vec<DirNode>, Vec<DirNode>) = nodes.into_iter().partition(reported);
     // The served files are already in the store under the records they came
-    // from, so none is collected for it again; only the report wants them.
+    // from, so none is collected for it again; only the report wants them —
+    // shared-bytes files in their own heap, as walked ones are.
     let cap = context.options.report_files_top;
-    let top = files
+    let (shared, plain): (Vec<FileEntry>, Vec<FileEntry>) = files
         .into_iter()
         .filter(|file| {
             let reportable = file.size_bytes.max(file.allocated_bytes);
             context.options.report_files_min_size.is_some_and(|min| reportable >= min)
         })
-        .fold(TopFiles::new(cap), TopFiles::with);
+        .partition(|file| file.link_count > 1 || file.is_clone());
     Partial {
         nodes,
         hidden,
-        files: top,
+        files: plain.into_iter().fold(TopFiles::new(cap), TopFiles::with),
+        shared_files: shared.into_iter().fold(TopFiles::new(cap), TopFiles::with),
         totals: totals.as_child(),
-        originals,
-        served_families,
+        served_keepers,
         ..Partial::empty(cap)
     }
 }
@@ -323,7 +321,7 @@ fn sorted(partial: Partial) -> WalkResult {
         mut cache_files,
         originals,
         clones: ledger,
-        served_families,
+        served_keepers,
         ..
     } = partial;
     let hidden_paths: HashSet<PathBuf> = hidden.iter().map(|node| node.path.clone()).collect();
@@ -335,11 +333,11 @@ fn sorted(partial: Partial) -> WalkResult {
     let dropped: HashSet<&Path> = settled.dropped.iter().map(PathBuf::as_path).collect();
     cache_files.retain(|file| !dropped.contains(file.path.as_path()));
     let clones::Settlement { nodes, mut files, mut cache_files, credited, mut kept_clones, families } =
-        clones::settle_clones(settled.nodes, settled.files, cache_files, ledger, originals);
+        clones::settle_clones(settled.nodes, settled.files, cache_files, ledger, originals, served_keepers);
     // A family the cache kept below `max_depth` has no node to be recorded
     // under; the record it would belong to is never written either.
-    kept_clones.retain(|(dir, _)| !hidden_paths.contains(dir));
-    let clone_families = clones::families_of(families, served_families, &files, &cache_files);
+    kept_clones.retain(|(keeper, _)| keeper.parent().is_none_or(|dir| !hidden_paths.contains(dir)));
+    let clone_families = clones::families_of(families, &files, &cache_files);
     // The surviving name of every multiply-linked file or clone is a direct
     // file of the directory it is credited to; the discounted names count
     // nowhere.

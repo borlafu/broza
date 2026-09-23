@@ -4,11 +4,12 @@
 //! clone id is its own inode — keeps the bytes when it is still there; when it
 //! is gone, the clone whose path sorts first does, so two runs agree.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::WalkOptions;
 use super::tests::{node, sample, walk_sample};
 use crate::ports::FileOps;
+use crate::scan::walker::FileEntry;
 use crate::testing::FakeFileOps;
 
 /// The sample tree with `f1` cloned into `a/` and into `b/`, original removed
@@ -64,7 +65,7 @@ fn clones_leave_every_directory_cacheable_and_the_kept_family_is_reported() {
 
     assert!(result.nodes.iter().all(|node| !node.has_hard_links), "{:?}", result.nodes);
     assert_eq!(result.kept_clones.len(), 1);
-    assert_eq!(result.kept_clones[0].0, Path::new("/vol/a"), "the keeper's directory");
+    assert_eq!(result.kept_clones[0].0, Path::new("/vol/a/f1-copy"), "the keeper");
 }
 
 #[test]
@@ -74,12 +75,12 @@ fn a_family_kept_in_a_served_subtree_discounts_the_clone_the_walk_meets() {
 
     let fs = with_family(false);
     let cold = walk_sample(&fs, &WalkOptions::default());
-    let family = cold.kept_clones[0].1;
+    let kept = cold.kept_clones[0].clone();
     // Serve `a`, the keeper's directory, as the cache would: its aggregate,
-    // and the family it keeps.
+    // and the keeper it names.
     let hook = |identity: &DirIdentity| {
         (identity.path == Path::new("/vol/a"))
-            .then(|| CachedSubtree { kept_clones: vec![family], ..subtree(identity, 6000) })
+            .then(|| CachedSubtree { kept_clones: vec![kept.clone()], ..subtree(identity, 6000) })
     };
     let options = WalkOptions { skip_hook: Some(&hook), ..WalkOptions::default() };
 
@@ -121,6 +122,37 @@ fn a_discounted_clone_is_reported_as_freeing_nothing_and_leaves_the_largest_item
 }
 
 #[test]
+fn a_served_subtree_s_clones_never_push_a_real_file_out_of_the_file_report_either() {
+    use super::tests::subtree;
+    use crate::scan::walker::{CachedSubtree, DirIdentity};
+
+    let fs = FakeFileOps::new().with_root("/vol", 1).with_sized_file("/vol/a/real", 3000).with_dir("/vol/b");
+    let served = |identity: &DirIdentity| {
+        let clone = |name: &str, inode: u64| FileEntry {
+            inode,
+            device: 1,
+            clone_id: Some(50),
+            ..FileEntry::sized(name, 10_000)
+        };
+        (identity.path == Path::new("/vol/b")).then(|| CachedSubtree {
+            files: vec![clone("/vol/b/c1", 51), clone("/vol/b/c2", 52)],
+            ..subtree(identity, 20_000)
+        })
+    };
+    let options = WalkOptions {
+        skip_hook: Some(&served),
+        report_files_min_size: Some(1),
+        report_files_top: 2,
+        ..WalkOptions::default()
+    };
+
+    let result = walk_sample(&fs, &options);
+
+    let paths: Vec<&str> = result.files.iter().map(|file| file.path.to_str().unwrap_or("")).collect();
+    assert!(paths.contains(&"/vol/a/real"), "{paths:?}");
+}
+
+#[test]
 fn clones_never_push_a_real_file_out_of_the_file_report() {
     // Two slots; the clone family is bigger than the real file, and the copy
     // is worth nothing once settled. The real file has to survive.
@@ -152,8 +184,10 @@ fn the_families_the_walk_knows_of_come_from_the_ledger_the_cache_and_the_file_li
 
     // Served subtree keeping another family, and a walk that meets no clone.
     let hook = |identity: &DirIdentity| {
-        (identity.path == Path::new("/vol/b"))
-            .then(|| CachedSubtree { kept_clones: vec![(1, 99)], ..subtree(identity, 5000) })
+        (identity.path == Path::new("/vol/b")).then(|| CachedSubtree {
+            kept_clones: vec![(PathBuf::from("/vol/b/keeper"), (1, 99))],
+            ..subtree(identity, 5000)
+        })
     };
     let quiet = sample();
     let options = WalkOptions { skip_hook: Some(&hook), ..WalkOptions::default() };

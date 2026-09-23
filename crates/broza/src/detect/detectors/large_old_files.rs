@@ -48,7 +48,7 @@ impl Detector for LargeOldFiles {
         let judged: Vec<Judged> = context
             .home_files
             .iter()
-            .filter(|file| is_candidate(file, &skipped))
+            .filter(|file| is_candidate(file, &skipped, context))
             .filter_map(|file| judge(file, context, &mut spotlight))
             .collect();
         detected.warnings.extend(spotlight.warning());
@@ -65,18 +65,18 @@ impl Detector for LargeOldFiles {
     }
 }
 
-/// Big enough, with one name, freeing something, and not on another
-/// detector's ground.
+/// Big enough, sharing its blocks with nothing, freeing something, and not on
+/// another detector's ground.
 ///
 /// Symlinks and cloud placeholders never reach here: the walk reports a
 /// placeholder as nothing but a count, and a symlink's own `lstat` size is
-/// its target path, nowhere near the threshold. A clone whose family is
-/// counted elsewhere arrives with no allocated bytes, and proposing a file
-/// whose removal frees nothing is not a suggestion.
-fn is_candidate(file: &FileEntry, skipped: &[PathBuf]) -> bool {
+/// its target path, nowhere near the threshold. A hard link, a clone, or the
+/// original of a family with a clone standing frees nothing when removed, and
+/// proposing that is not a suggestion.
+fn is_candidate(file: &FileEntry, skipped: &[PathBuf], context: &DetectContext<'_>) -> bool {
     file.size_bytes >= LARGE_FILE_MIN_BYTES
         && file.allocated_bytes > 0
-        && file.link_count <= 1
+        && !context.shares_blocks(file)
         && !skipped.iter().any(|dir| file.path.starts_with(dir))
 }
 
@@ -247,6 +247,17 @@ mod tests {
         assert_eq!(detected.warnings[0].code, SPOTLIGHT_UNAVAILABLE_CODE);
         assert!(detected.warnings[0].message.contains("command not found"), "{:?}", detected.warnings);
         assert!(detected.findings[0].reasoning().unwrap().contains("Low confidence for 2"));
+    }
+
+    #[test]
+    fn a_file_with_a_clone_standing_is_never_proposed_and_neither_is_the_clone() {
+        let fs = fs();
+        fs.add_clone(OLD, "/System/Volumes/Data/Users/dana/Movies/holiday-2019 copy.mov");
+        let answers = [(OLD_TOO, "(null)")];
+
+        let detected = detect(&fs, runner(&answers));
+
+        assert_eq!(proposed(&detected), vec![OLD_TOO.to_owned()], "{detected:?}");
     }
 
     #[test]

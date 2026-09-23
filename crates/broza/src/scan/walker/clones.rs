@@ -40,11 +40,11 @@
 //!
 //! A directory holding clones stays cacheable — marking it otherwise, as a
 //! hard link's directories are, would re-walk a cloned media folder on every
-//! warm run. Instead each cache record names the families whose credited
-//! clone lives directly in it ([`Settlement::kept_clones`]), and a subtree
-//! served from the cache hands those families back as if their originals had
-//! been seen: any other clone the walk meets is discounted, as the cold walk
-//! discounted it. What the records cannot say is where an *original* lives,
+//! warm run. Instead each cache record names the credited clone of every
+//! family kept directly in it ([`Settlement::kept_clones`]), and a subtree
+//! served from the cache hands those keepers back: any other clone the walk
+//! meets is discounted, as the cold walk discounted it, and the served keeper
+//! keeps its bytes. What the records cannot say is where an *original* lives,
 //! so a family whose original sits in a cached subtree while a clone is walked
 //! counts once per side. That errs towards more space in use than there is,
 //! and is bounded by `cache-ttl`.
@@ -199,8 +199,8 @@ pub(super) struct Settlement {
     /// The clones that keep their family's bytes: direct files of the
     /// directories they are credited to.
     pub credited: Vec<LinkSighting>,
-    /// The same, as the cache records them: the credited clone's directory and
-    /// its family.
+    /// The same, as the cache records them: the credited clone's path and its
+    /// family. Served keepers are not repeated here; their records have them.
     pub kept_clones: Vec<(PathBuf, FamilyKey)>,
     /// Every family the walk met a clone of.
     pub families: Vec<FamilyKey>,
@@ -213,15 +213,22 @@ pub(super) fn settle_clones(
     cache_files: Vec<FileEntry>,
     ledger: CloneLedger,
     originals: Originals,
+    served_keepers: Vec<(PathBuf, FamilyKey)>,
 ) -> Settlement {
+    let mut keepers: HashMap<FamilyKey, PathBuf> =
+        served_keepers.into_iter().map(|(path, family)| (family, path)).collect();
     if ledger.is_empty() {
+        // Served keepers already carry the sizes their records settled, and
+        // nothing walked belongs to their families.
+        let mut families: Vec<FamilyKey> = keepers.into_keys().collect();
+        families.sort_unstable();
         return Settlement {
             nodes,
             files,
             cache_files,
             credited: Vec::new(),
             kept_clones: Vec::new(),
-            families: Vec::new(),
+            families,
         };
     }
     let originals = originals.sorted();
@@ -231,14 +238,18 @@ pub(super) fn settle_clones(
         let total = charges.entry(dir.as_ref()).or_default();
         *total = total.plus(charge);
     }
-    let mut keepers: HashMap<FamilyKey, PathBuf> = HashMap::new();
     let mut credited = Vec::new();
     let mut kept_clones = Vec::new();
     let mut families: Vec<(FamilyKey, Family)> = families.into_iter().collect();
     families.sort_by_key(|family| family.0);
-    let family_keys: Vec<FamilyKey> = families.iter().map(|(key, _)| *key).collect();
+    let mut family_keys: Vec<FamilyKey> = families.iter().map(|(key, _)| *key).collect();
+    family_keys.extend(keepers.keys().copied());
+    family_keys.sort_unstable();
+    family_keys.dedup();
     for (key, family) in families {
-        if originals.contains(key) {
+        // A family whose original was seen, or whose keeper a served record
+        // names, is spoken for: every clone met here is discounted.
+        if originals.contains(key) || keepers.contains_key(&key) {
             continue;
         }
         // The first path keeps the bytes: take its charge back.
@@ -248,9 +259,7 @@ pub(super) fn settle_clones(
             *charge = charge.minus(&Charge::of_first(&family.first));
         }
         credited.push(sighting_of(&family.first));
-        if let Some(dir) = family.first.path.parent() {
-            kept_clones.push((dir.to_path_buf(), key));
-        }
+        kept_clones.push((family.first.path.clone(), key));
         keepers.insert(key, family.first.path);
     }
     let nodes = apply_charges(nodes, &charges);
@@ -259,17 +268,14 @@ pub(super) fn settle_clones(
     Settlement { nodes, files, cache_files, credited, kept_clones, families: family_keys }
 }
 
-/// Every family the walk knows of: those it met clones of, those subtrees
-/// served from the cache keep, and those of the clones in the file lists.
-/// Sorted, without repeats.
+/// Every family the walk knows of: those it met clones of or a served record
+/// keeps, and those of the clones in the file lists. Sorted, without repeats.
 pub(super) fn families_of(
     met: Vec<FamilyKey>,
-    served: Vec<FamilyKey>,
     files: &[FileEntry],
     cache_files: &[FileEntry],
 ) -> Vec<FamilyKey> {
     let mut families = met;
-    families.extend(served);
     let listed = files.iter().chain(cache_files).filter(|file| file.is_clone());
     families.extend(listed.filter_map(|file| Some((file.device, file.clone_id?))));
     families.sort_unstable();

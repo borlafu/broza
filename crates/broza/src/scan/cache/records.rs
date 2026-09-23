@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
-use crate::scan::cache::key::{CACHE_FILE_FLOOR_BYTES, CacheKey, ChildDir, DirRecord, FileRecord};
+use crate::scan::cache::key::{CACHE_FILE_FLOOR_BYTES, CacheKey, ChildDir, DirRecord, FileRecord, KeptClone};
 use crate::scan::walker::{DirNode, FileEntry, WalkResult};
 
 /// The records of every directory the walk measured itself.
@@ -48,9 +48,13 @@ pub fn records_of(walk: &WalkResult, recorded_at: Timestamp) -> Vec<DirRecord> {
             });
         }
     }
-    let mut kept: HashMap<&Path, Vec<(u64, u64)>> = HashMap::new();
-    for (dir, family) in &walk.kept_clones {
-        kept.entry(dir.as_path()).or_default().push(*family);
+    let mut kept: HashMap<&Path, Vec<KeptClone>> = HashMap::new();
+    for (keeper, family) in &walk.kept_clones {
+        if let (Some(parent), Some(name)) = (keeper.parent(), keeper.file_name()) {
+            kept.entry(parent)
+                .or_default()
+                .push(KeptClone { family: *family, name: name.as_bytes().to_vec() });
+        }
     }
     walk.nodes
         .iter()
@@ -61,7 +65,7 @@ pub fn records_of(walk: &WalkResult, recorded_at: Timestamp) -> Vec<DirRecord> {
             let mut own_files = files.remove(node.path.as_path()).unwrap_or_default();
             own_files.sort_by(|a, b| a.name.cmp(&b.name));
             let mut kept_clones = kept.remove(node.path.as_path()).unwrap_or_default();
-            kept_clones.sort_unstable();
+            kept_clones.sort_by(|a, b| a.family.cmp(&b.family).then_with(|| a.name.cmp(&b.name)));
             Some(record.with_child_dirs(child_dirs).with_files(own_files).with_kept_clones(kept_clones))
         })
         .collect()

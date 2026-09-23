@@ -198,12 +198,20 @@ impl<'a> DetectContext<'a> {
         file.link_count > 1 || file.is_clone() || self.has_clones(file.device, file.inode)
     }
 
-    /// The allocated bytes removing the file at `path` would free, as the walk
-    /// settled them: the walk's own figure when it reported the file, else
-    /// `meta`'s — or nothing for a clone, whose family keeps the blocks.
+    /// The allocated bytes removing the file at `path` would free.
+    ///
+    /// `meta` was just read, so it is the figure for a file that shares
+    /// nothing. For one that does — a hard link, a clone, the original of a
+    /// family — the walk's settled figure is used when the walk reported the
+    /// file, and nothing otherwise: the blocks stay with the rest of the family.
     pub fn settled_allocated(&self, path: &Path, meta: &EntryMetadata) -> u64 {
-        if let Ok(at) = self.home_files.binary_search_by(|file| file.path.as_path().cmp(path)) {
-            return self.home_files.get(at).map_or(meta.allocated_bytes, |file| file.allocated_bytes);
+        let reported = self
+            .home_files
+            .binary_search_by(|file| file.path.as_path().cmp(path))
+            .ok()
+            .and_then(|at| self.home_files.get(at));
+        if let Some(file) = reported.filter(|file| self.shares_blocks(file)) {
+            return file.allocated_bytes;
         }
         if meta.link_count > 1 || meta.is_clone() || self.has_clones(meta.device, meta.inode) {
             return 0;

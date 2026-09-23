@@ -36,9 +36,9 @@ pub struct CachedSubtree {
     pub nodes: Vec<DirNode>,
     /// The files the cache keeps, anywhere in the subtree.
     pub files: Vec<FileEntry>,
-    /// The clone families whose credited clone lives in the subtree, as
-    /// `(device, original inode)`.
-    pub kept_clones: Vec<(u64, u64)>,
+    /// The credited clone of each family kept in the subtree, and the family
+    /// as `(device, original inode)`.
+    pub kept_clones: Vec<(PathBuf, (u64, u64))>,
 }
 
 /// What the scan cache keys a directory by (`docs/implementation-plan.md` §3.4).
@@ -281,11 +281,10 @@ pub struct WalkResult {
     pub cache_files: Vec<FileEntry>,
     /// Warnings about what could not be read, sorted by path.
     pub errors: Vec<Diagnostic>,
-    /// The clone families that keep their bytes in each directory: the
-    /// directory of the clone credited with them, and the family's
+    /// The clone credited with each family's bytes, and the family's
     /// `(device, original inode)`. Sorted. The cache records them so that a
     /// warm walk discounts the family's other clones wherever it meets them
-    /// (`clones.rs`).
+    /// and leaves the credited one its bytes (`clones.rs`).
     pub kept_clones: Vec<(PathBuf, (u64, u64))>,
     /// Every clone family the walk knows of, as `(device, original inode)`,
     /// sorted: the families of the clones it met, those subtrees served from

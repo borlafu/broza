@@ -73,7 +73,7 @@ fn every_clone_of_an_original_the_walk_saw_is_discounted() {
     let nodes = vec![node("/vol", 300, 3), node("/vol/copies", 200, 2)];
     let ledger = ledger(&[("/vol/copies/a", 11, 7, 100), ("/vol/copies/b", 12, 7, 100)]);
 
-    let result = settle_clones(nodes, Vec::new(), Vec::new(), ledger, originals(&[7]));
+    let result = settle_clones(nodes, Vec::new(), Vec::new(), ledger, originals(&[7]), Vec::new());
 
     assert_eq!(sizes(&result.nodes), vec![("/vol".to_owned(), 100, 1), ("/vol/copies".to_owned(), 0, 0)]);
     assert!(result.credited.is_empty(), "the original holds the bytes, as an ordinary file");
@@ -85,7 +85,7 @@ fn without_the_original_the_first_path_keeps_the_bytes() {
     // Recorded in the wrong order on purpose.
     let ledger = ledger(&[("/vol/b/f", 12, 7, 100), ("/vol/a/f", 11, 7, 100)]);
 
-    let result = settle_clones(nodes, Vec::new(), Vec::new(), ledger, originals(&[]));
+    let result = settle_clones(nodes, Vec::new(), Vec::new(), ledger, originals(&[]), Vec::new());
 
     assert_eq!(
         sizes(&result.nodes),
@@ -101,7 +101,7 @@ fn two_ledgers_merge_into_the_same_answer_whatever_the_split() {
     let left = ledger(&[("/vol/d", 14, 8, 100), ("/vol/a", 11, 7, 100)]);
     let right = ledger(&[("/vol/b", 12, 7, 100), ("/vol/c", 13, 8, 100)]);
 
-    let result = settle_clones(nodes, Vec::new(), Vec::new(), left.merge(right), originals(&[]));
+    let result = settle_clones(nodes, Vec::new(), Vec::new(), left.merge(right), originals(&[]), Vec::new());
 
     assert_eq!(sizes(&result.nodes), vec![("/vol".to_owned(), 200, 2)]);
     let mut kept: Vec<String> = result.credited.iter().map(|c| c.path.display().to_string()).collect();
@@ -114,27 +114,31 @@ fn a_kept_family_is_recorded_under_its_keeper_s_directory_and_stays_cacheable() 
     let nodes = vec![node("/vol", 300, 3), node("/vol/a", 100, 1), node("/vol/b", 200, 2)];
     let ledger = ledger(&[("/vol/a/f", 11, 7, 100), ("/vol/b/f", 12, 7, 100), ("/vol/b/g", 13, 8, 100)]);
 
-    let result = settle_clones(nodes, Vec::new(), Vec::new(), ledger, originals(&[8]));
+    let result = settle_clones(nodes, Vec::new(), Vec::new(), ledger, originals(&[8]), Vec::new());
 
     assert!(
         result.nodes.iter().all(|node| !node.has_hard_links),
         "clones never make a directory uncacheable"
     );
-    assert_eq!(result.kept_clones, vec![(PathBuf::from("/vol/a"), (1, 7))], "family 8 has its original");
+    assert_eq!(result.kept_clones, vec![(PathBuf::from("/vol/a/f"), (1, 7))], "family 8 has its original");
 }
 
 #[test]
-fn a_family_kept_in_a_cached_subtree_reads_as_one_with_an_original() {
-    // What the walker does with a served record's `kept_clones`: the
-    // family is handed over as an original, and the walked clone is
-    // discounted.
+fn a_family_whose_keeper_a_served_record_names_discounts_the_walked_clone_and_spares_the_keeper() {
     let nodes = vec![node("/vol", 100, 1), node("/vol/b", 100, 1)];
     let ledger = ledger(&[("/vol/b/f", 12, 7, 100)]);
+    // The served keeper arrives in the file list with the size its record settled.
+    let files = vec![file("/vol/a/keeper", 11, 7, 100), file("/vol/b/f", 12, 7, 100)];
+    let served = vec![(PathBuf::from("/vol/a/keeper"), (1, 7))];
 
-    let result = settle_clones(nodes, Vec::new(), Vec::new(), ledger, originals(&[7]));
+    let result = settle_clones(nodes, files, Vec::new(), ledger, originals(&[]), served);
 
     assert_eq!(sizes(&result.nodes), vec![("/vol".to_owned(), 0, 0), ("/vol/b".to_owned(), 0, 0)]);
-    assert!(result.kept_clones.is_empty());
+    let sizes: Vec<(&str, u64)> =
+        result.files.iter().map(|file| (file.path.to_str().unwrap_or(""), file.allocated_bytes)).collect();
+    assert_eq!(sizes, vec![("/vol/a/keeper", 100), ("/vol/b/f", 0)]);
+    assert!(result.kept_clones.is_empty(), "the served keeper's record already names it");
+    assert_eq!(result.families, vec![(1, 7)]);
 }
 
 #[test]
@@ -148,7 +152,7 @@ fn a_discounted_file_frees_nothing_and_a_keeper_or_an_original_keeps_its_bytes()
         file("/vol/o", 8, 8, 100),
     ];
 
-    let result = settle_clones(nodes, files.clone(), files, ledger, originals(&[8]));
+    let result = settle_clones(nodes, files.clone(), files, ledger, originals(&[8]), Vec::new());
 
     let sizes: Vec<(&str, u64)> =
         result.files.iter().map(|file| (file.path.to_str().unwrap_or(""), file.allocated_bytes)).collect();
@@ -161,8 +165,14 @@ fn a_discounted_file_frees_nothing_and_a_keeper_or_an_original_keeps_its_bytes()
 fn a_walk_without_clones_is_left_alone() {
     let nodes = vec![node("/vol", 100, 1)];
 
-    let result =
-        settle_clones(nodes.clone(), Vec::new(), Vec::new(), CloneLedger::default(), originals(&[1, 2]));
+    let result = settle_clones(
+        nodes.clone(),
+        Vec::new(),
+        Vec::new(),
+        CloneLedger::default(),
+        originals(&[1, 2]),
+        Vec::new(),
+    );
 
     assert_eq!(result.nodes, nodes);
 }

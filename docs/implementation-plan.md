@@ -214,7 +214,7 @@ Progress:
 - [x] Walker wired into `broza scan`: `largest_items`, `--tree`, `PATH` arguments, progress on stderr.
 - [x] Benchmark script for the cold and warm `scan` targets (`scripts/bench-scan.sh`, ADR 0006).
 - [x] APFS clone accounting (post-1.0, 1.1.0, ADR 0009): a clone family is counted once, by clone
-      id; the original keeps the bytes, or the first clone by path. Cache layout 4 carries the id.
+      id; the original keeps the bytes, or the first clone by path. Cache layout 5 carries the id.
       `size_exceeds_volume` stays for what the id cannot settle (cached subtrees, diverged clones).
       Cold `scan` on the developer's Data volume (1.8 M clones): 37–44 s and 1.4 GB peak against
       31–39 s and 0.75–0.89 GB for 1.0.0 on the same runs; warm `suggest` 8 s, as before (cache

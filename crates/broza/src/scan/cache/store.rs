@@ -206,7 +206,8 @@ impl CacheStore {
             return Check::Refused;
         };
         let names_are_plain = record.child_dirs.iter().map(|child| child.name.as_slice()).all(is_plain_name)
-            && record.files.iter().map(|file| file.name.as_slice()).all(is_plain_name);
+            && record.files.iter().map(|file| file.name.as_slice()).all(is_plain_name)
+            && record.kept_clones.iter().map(|kept| kept.name.as_slice()).all(is_plain_name);
         if !names_are_plain {
             verdicts.record(key, false);
             return Check::Refused;

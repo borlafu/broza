@@ -43,7 +43,7 @@ therefore read alike, and only the clones announce the family.
    13 s to 17 s). Instead each cache record names the families whose credited clone is directly
    inside it, and a subtree served from the cache hands those families back as if their originals
    had been seen, so any other clone the warm walk meets is discounted as the cold walk discounted
-   it. Cache records also carry each file's clone id (store layout 4; older stores are replaced),
+   it. Cache records also carry each file's clone id (store layout 5; older stores are replaced),
    so a subtree served from the cache gives the detectors the same files a walk would.
    `duplicates` proposes neither a clone nor a file that has one among the families the walk
    knows of (`WalkResult::clone_families`: the clones met, the families served subtrees keep,
@@ -72,6 +72,10 @@ therefore read alike, and only the clones announce the family.
 - Purging the *original* of a family that still has clones reports its blocks as freed: the
   executor sees a plain file, and the family is not known at purge time. `reclaimed_bytes`
   overstates by that file in that one case.
+- The cache can also err the other way: a record written while a family's original existed
+  discounted the clones inside it, and once that original is deleted the still-fresh record keeps
+  discounting them, so their bytes are missing from the total until the record expires. Bounded
+  by `cache-ttl`, like the cases below.
 - The records say where a family's credited clone is, not where its original is: a family whose
   original sits in a cached subtree while one of its clones is walked counts once per side, and a
   family whose original was deleted after its clones' directories were recorded stays discounted

@@ -179,6 +179,12 @@ impl FileEntry {
         self.clone_id.is_some_and(|id| id != self.inode)
     }
 
+    /// `true` when other names may share this file's blocks: a hard link or a
+    /// clone. Such a file is settled after the walk and reported in its own heap.
+    pub fn is_shared(&self) -> bool {
+        self.link_count > 1 || self.is_clone()
+    }
+
     /// A file of `size_bytes` with one name and no known dates, for tests.
     #[cfg(test)]
     pub(crate) fn sized(path: &str, size_bytes: u64) -> Self {

@@ -11,7 +11,7 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 - APFS clone families are counted once (ADR 0009). A folder of cloned media — WhatsApp's
   `Message/Media` measured 434.6 GB on a 392 GB volume — now measures what deleting it would
   free: the original keeps the bytes, or the clone whose path sorts first when the original is
-  gone. The scan cache carries each file's clone id (layout 4; an older store is rebuilt on the
+  gone. The scan cache carries each file's clone id (layout 5; an older store is rebuilt on the
   next scan), and `duplicates` proposes neither a clone nor a file that has one, since
   quarantining either frees nothing. `size_exceeds_volume` keeps firing for what the clone id
   cannot settle and no longer says clones are counted separately. `clean --purge` counts a

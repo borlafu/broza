@@ -136,8 +136,36 @@ mod tests {
     use jiff::Timestamp;
 
     use super::records_of;
+    use crate::scan::cache::key::KeptClone;
     use crate::scan::walker::{WalkOptions, walk};
     use crate::testing::FakeFileOps;
+
+    #[test]
+    fn a_record_names_the_clone_that_keeps_its_family_s_bytes() {
+        // The original is gone, so the first clone by path keeps the bytes:
+        // `a/keeper.mov`, and its record has to say so by name.
+        let fs = FakeFileOps::new().with_root("/vol", 1).with_sized_file("/vol/b/source.mov", 2_000_000);
+        fs.add_clone("/vol/b/source.mov", "/vol/a/keeper.mov");
+        fs.add_clone("/vol/b/source.mov", "/vol/b/other.mov");
+        crate::ports::FileOps::remove_tree(&fs, Path::new("/vol/b/source.mov"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let walked = walk(Path::new("/vol"), &WalkOptions::default(), &fs);
+        assert_eq!(walked.kept_clones.len(), 1, "{:?}", walked.kept_clones);
+        let family = walked.kept_clones[0].1;
+
+        let records = records_of(&walked, Timestamp::UNIX_EPOCH);
+
+        let node_of = |path: &str| {
+            walked.nodes.iter().find(|node| node.path == Path::new(path)).unwrap_or_else(|| panic!("{path}"))
+        };
+        let record_of = |path: &str| {
+            let node = node_of(path);
+            records.iter().find(|record| record.key.inode == node.inode).unwrap_or_else(|| panic!("{path}"))
+        };
+        assert_eq!(record_of("/vol/a").kept_clones, vec![KeptClone { family, name: b"keeper.mov".to_vec() }]);
+        assert!(record_of("/vol/b").kept_clones.is_empty(), "b's clone is discounted");
+        assert!(record_of("/vol").kept_clones.is_empty());
+    }
 
     #[test]
     fn a_record_names_its_child_directories_and_its_big_files_in_name_order() {

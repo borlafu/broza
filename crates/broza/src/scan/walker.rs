@@ -227,7 +227,7 @@ fn cached_dir(
             let reportable = file.size_bytes.max(file.allocated_bytes);
             context.options.report_files_min_size.is_some_and(|min| reportable >= min)
         })
-        .partition(|file| file.link_count > 1 || file.is_clone());
+        .partition(FileEntry::is_shared);
     Partial {
         nodes,
         hidden,

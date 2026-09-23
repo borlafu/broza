@@ -195,7 +195,7 @@ impl<'a> DetectContext<'a> {
     /// `true` when `file` shares its blocks with another file: a hard link, a
     /// clone, or the original of a family the walk saw a clone of.
     pub fn shares_blocks(&self, file: &FileEntry) -> bool {
-        file.link_count > 1 || file.is_clone() || self.has_clones(file.device, file.inode)
+        file.is_shared() || self.has_clones(file.device, file.inode)
     }
 
     /// The allocated bytes removing the file at `path` would free.
@@ -265,4 +265,67 @@ pub(crate) fn first_line(text: &str) -> String {
     }
     let cut: String = line.chars().take(REASON_MAX_CHARS).collect();
     format!("{cut}…")
+}
+
+#[cfg(test)]
+mod settled_tests {
+    use std::path::Path;
+
+    use crate::detect::test_support::{context_over, home};
+    use crate::ports::FileOps;
+    use crate::testing::FakeFileOps;
+
+    const ORIGINAL: &str = "/System/Volumes/Data/Users/dana/Movies/original.mov";
+    const CLONE: &str = "/System/Volumes/Data/Users/dana/Movies/clone.mov";
+    const PLAIN: &str = "/System/Volumes/Data/Users/dana/Movies/plain.mov";
+    const UNREPORTED: &str = "/System/Volumes/Data/Users/dana/Movies/small.txt";
+
+    fn fs() -> FakeFileOps {
+        let fs = FakeFileOps::new().with_root("/System/Volumes/Data", 2);
+        fs.add_dir(home());
+        fs.add_file(ORIGINAL, &vec![1_u8; 2_000_000]);
+        fs.add_clone(ORIGINAL, CLONE);
+        fs.add_file(PLAIN, &vec![2_u8; 2_000_000]);
+        fs.add_file(UNREPORTED, b"tiny");
+        fs
+    }
+
+    #[test]
+    fn a_reported_file_that_shares_blocks_is_sized_as_the_walk_settled_it() {
+        let fs = fs();
+        let world = context_over(&fs, home());
+        let context = world.context();
+        let original = fs.metadata(Path::new(ORIGINAL)).unwrap_or_else(|e| panic!("{e}"));
+        let clone = fs.metadata(Path::new(CLONE)).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(context.has_clones(original.device, original.inode));
+        assert_eq!(
+            context.settled_allocated(Path::new(ORIGINAL), &original),
+            original.allocated_bytes,
+            "keeps the bytes"
+        );
+        assert_eq!(context.settled_allocated(Path::new(CLONE), &clone), 0, "discounted by the walk");
+    }
+
+    #[test]
+    fn a_plain_file_is_sized_from_the_fresh_metadata_and_an_unreported_clone_frees_nothing() {
+        let fs = fs();
+        let world = context_over(&fs, home());
+        let context = world.context();
+        let grown = crate::ports::EntryMetadata {
+            allocated_bytes: 9_000_000,
+            ..fs.metadata(Path::new(PLAIN)).unwrap_or_else(|e| panic!("{e}"))
+        };
+        let unreported = fs.metadata(Path::new(UNREPORTED)).unwrap_or_else(|e| panic!("{e}"));
+        let unreported_clone =
+            crate::ports::EntryMetadata { clone_id: Some(unreported.inode + 1000), ..unreported.clone() };
+
+        assert_eq!(
+            context.settled_allocated(Path::new(PLAIN), &grown),
+            9_000_000,
+            "the walk's figure may be stale"
+        );
+        assert_eq!(context.settled_allocated(Path::new(UNREPORTED), &unreported), unreported.allocated_bytes);
+        assert_eq!(context.settled_allocated(Path::new(UNREPORTED), &unreported_clone), 0);
+    }
 }

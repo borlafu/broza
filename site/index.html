@@ -77,25 +77,58 @@
     <div class="cards">
       <div class="card">
         <span class="step-n">1 · install</span>
-        <h3>Homebrew, script, or Cargo</h3>
-        <pre><code>brew install borlafu/broza/broza</code></pre>
-        <pre><code>curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/borlafu/broza/releases/latest/download/broza-cli-installer.sh | sh</code></pre>
-        <pre><code>cargo install --locked \
-  --git https://github.com/borlafu/broza broza-cli</code></pre>
+        <h3>Pick your installer</h3>
+        <div class="tabs" id="install-tabs" role="tablist" aria-label="Installation method" hidden>
+          <button class="tab" type="button" role="tab" id="tab-brew" aria-controls="panel-brew" aria-selected="true">Homebrew</button>
+          <button class="tab" type="button" role="tab" id="tab-script" aria-controls="panel-script" aria-selected="false">Script</button>
+          <button class="tab" type="button" role="tab" id="tab-cargo" aria-controls="panel-cargo" aria-selected="false">Cargo</button>
+        </div>
+        <div class="panel" id="panel-brew" role="tabpanel" aria-labelledby="tab-brew">
+          <div class="cmdline">
+            <code><span class="sh" aria-hidden="true">$</span> brew install borlafu/broza/broza</code>
+            <button class="copy-mini" type="button" data-copy-text="brew install borlafu/broza/broza" aria-label="Copy the Homebrew command"><span aria-hidden="true">copy</span></button>
+          </div>
+          <p>The tap is <code>borlafu/homebrew-broza</code>; <code>brew upgrade</code> keeps it current.</p>
+        </div>
+        <div class="panel" id="panel-script" role="tabpanel" aria-labelledby="tab-script">
+          <div class="cmdline">
+            <code><span class="sh" aria-hidden="true">$</span> curl --proto '=https' --tlsv1.2 -LsSf https://github.com/borlafu/broza/releases/latest/download/broza-cli-installer.sh | sh</code>
+            <button class="copy-mini" type="button" data-copy-text="curl --proto '=https' --tlsv1.2 -LsSf https://github.com/borlafu/broza/releases/latest/download/broza-cli-installer.sh | sh" aria-label="Copy the installer script command"><span aria-hidden="true">copy</span></button>
+          </div>
+          <p>Installs the signed binary from the <a href="https://github.com/borlafu/broza/releases/latest">latest release</a>.</p>
+        </div>
+        <div class="panel" id="panel-cargo" role="tabpanel" aria-labelledby="tab-cargo">
+          <div class="cmdline">
+            <code><span class="sh" aria-hidden="true">$</span> cargo install --locked --git https://github.com/borlafu/broza broza-cli</code>
+            <button class="copy-mini" type="button" data-copy-text="cargo install --locked --git https://github.com/borlafu/broza broza-cli" aria-label="Copy the Cargo command"><span aria-hidden="true">copy</span></button>
+          </div>
+          <p>Builds from source against the committed <code>Cargo.lock</code>.</p>
+        </div>
       </div>
       <div class="card">
         <span class="step-n">2 · look</span>
         <h3>See where the space went</h3>
-        <pre><code>broza scan
-broza suggest</code></pre>
+        <div class="cmdline">
+          <code><span class="sh" aria-hidden="true">$</span> broza scan</code>
+          <button class="copy-mini" type="button" data-copy-text="broza scan" aria-label="Copy the scan command"><span aria-hidden="true">copy</span></button>
+        </div>
+        <div class="cmdline">
+          <code><span class="sh" aria-hidden="true">$</span> broza suggest</code>
+          <button class="copy-mini" type="button" data-copy-text="broza suggest" aria-label="Copy the suggest command"><span aria-hidden="true">copy</span></button>
+        </div>
         <p><code>scan</code> maps disks, containers and volumes. <code>suggest</code> groups what can go by risk level.</p>
       </div>
       <div class="card">
         <span class="step-n">3 · trim</span>
         <h3>Dry run, then apply</h3>
-        <pre><code>broza clean --risk green
-broza clean --risk green --apply</code></pre>
+        <div class="cmdline">
+          <code><span class="sh" aria-hidden="true">$</span> broza clean --risk green</code>
+          <button class="copy-mini" type="button" data-copy-text="broza clean --risk green" aria-label="Copy the dry-run command"><span aria-hidden="true">copy</span></button>
+        </div>
+        <div class="cmdline">
+          <code><span class="sh" aria-hidden="true">$</span> broza clean --risk green --apply</code>
+          <button class="copy-mini" type="button" data-copy-text="broza clean --risk green --apply" aria-label="Copy the apply command"><span aria-hidden="true">copy</span></button>
+        </div>
         <p>The first command changes nothing. The second asks you to confirm, then moves items to quarantine.</p>
       </div>
     </div>
@@ -301,6 +334,7 @@ Quarantine: ~/.local/share/broza/quarantine/cln_20260921103608_a1b2
   </div>
 </footer>
 
+<script src="ui.js" defer></script>
 <script src="demo.js" defer></script>
 </body>
 </html>

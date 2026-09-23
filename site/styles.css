@@ -273,6 +273,69 @@ section { padding-block: clamp(40px, 7vw, 72px); }
 }
 .note { color: var(--ink-soft); font-size: 15px; margin-top: 18px; }
 
+/* ---------- install tabs + command lines ---------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 7px 12px;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--leaf); }
+.tab[aria-selected="true"] { color: var(--leaf); border-bottom-color: var(--leaf); }
+
+.panel + .panel { margin-top: 12px; }
+.panel p { color: var(--ink-soft); font-size: 14px; margin-top: 10px; }
+
+.cmdline {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--term-bg);
+  border-radius: var(--radius);
+  padding: 10px 10px 10px 13px;
+}
+.cmdline + .cmdline { margin-top: 8px; }
+.cmdline code {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--term-fg);
+  overflow-wrap: anywhere;
+}
+.cmdline .sh { color: var(--term-green); margin-right: 8px; }
+.copy-mini {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--term-dim);
+  background: none;
+  border: 1px solid #27453c;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  flex: none;
+}
+.copy-mini:hover { color: var(--term-fg); border-color: #3c6355; }
+.copy-mini:focus-visible { outline-color: var(--term-green); }
+
+@media (min-width: 900px) {
+  #quick-start .cards { grid-template-columns: 1.5fr 1fr 1fr; }
+}
+
 /* ---------- terminal ---------- */
 
 .term {
@@ -308,7 +371,7 @@ section { padding-block: clamp(40px, 7vw, 72px); }
 .term-body .info { color: var(--term-red); }
 .term-body .dim { color: var(--term-dim); }
 .term-body .strong { color: var(--term-bright); }
-.term-step + .term-step { margin-top: 18px; display: block; }
+.term-body.is-live .term-step { display: block; }
 
 .cursor {
   display: inline-block;

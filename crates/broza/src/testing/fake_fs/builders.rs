@@ -82,6 +82,20 @@ impl FakeFileOps {
         );
     }
 
+    /// Make the open handle of the directory at `path` report a wrong
+    /// identity, as if the directory had been replaced between the listing
+    /// that named it and the open.
+    pub fn misreport_identity(&self, path: impl AsRef<Path>) {
+        lock(&self.misreported_identity).push(path.as_ref().to_path_buf());
+    }
+
+    /// Builder form of [`FakeFileOps::misreport_identity`].
+    #[must_use]
+    pub fn with_misreported_identity(self, path: impl AsRef<Path>) -> Self {
+        self.misreport_identity(path);
+        self
+    }
+
     /// Builder form of [`FakeFileOps::add_clone`].
     #[must_use]
     pub fn with_clone(self, existing: impl AsRef<Path>, copy: impl AsRef<Path>) -> Self {

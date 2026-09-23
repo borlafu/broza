@@ -27,6 +27,9 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo build --workspace --locked
       - run: cargo test --workspace --all-features --locked
+      # A tree deeper than a path can name, walked with few descriptors:
+      # what keeps the walk from holding one per level (ADR 0010).
+      - run: (ulimit -n 256 && cargo test -p broza --all-features --locked --test deep_paths)
       - run: cargo doc --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links

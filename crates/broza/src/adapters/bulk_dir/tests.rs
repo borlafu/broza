@@ -160,24 +160,20 @@ fn a_filesystem_that_cannot_do_this_at_all_is_refused_once() {
     reset_bulk_state_for_tests();
     BULK_STATE.store(super::STATE_TESTING, Ordering::SeqCst);
 
-    set_errno(libc::ENOTSUP);
     assert!(
-        matches!(super::failed_call(), super::Collected::Unsupported),
+        matches!(
+            super::failed_call(&std::io::Error::from_raw_os_error(libc::ENOTSUP)),
+            super::Collected::Unsupported
+        ),
         "a filesystem without the call will not grow one"
     );
-
-    set_errno(libc::EIO);
     assert!(
-        matches!(super::failed_call(), super::Collected::Unavailable),
+        matches!(
+            super::failed_call(&std::io::Error::from_raw_os_error(libc::EIO)),
+            super::Collected::Unavailable
+        ),
         "one unhappy directory says nothing about the next"
     );
-}
-
-/// Set the thread's `errno`, which is what the reader reads after a failure.
-fn set_errno(value: i32) {
-    // SAFETY: `__error()` returns this thread's own errno slot, valid for the
-    // life of the thread, and nothing else is reading it here.
-    unsafe { *libc::__error() = value };
 }
 
 #[test]
@@ -241,4 +237,30 @@ fn make_fifo(path: &Path) {
     // SAFETY: `name` is a live, NUL-terminated C string for the whole call.
     let made = unsafe { libc::mkfifo(name.as_ptr(), 0o600) };
     assert_eq!(made, 0, "mkfifo: {}", std::io::Error::last_os_error());
+}
+
+#[test]
+fn the_fallback_listing_is_complete_after_the_bulk_reader_read_the_descriptor_to_the_end() {
+    let _state = keep_state();
+    reset_bulk_state_for_tests();
+    let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+    for i in 0..50 {
+        std::fs::write(dir.path().join(format!("f{i}")), b"x").unwrap_or_else(|e| panic!("{e}"));
+    }
+    // A first descriptor earns the reader's trust (its own position moves to
+    // the end, which is why it is not the one under test); the second is read
+    // to its end by the bulk reader, as the walk does before any fallback.
+    let warmup = crate::adapters::dir_fd::open_directory(dir.path()).unwrap_or_else(|e| panic!("{e}"));
+    let _ = super::read_dir_in(&warmup, dir.path());
+    let handle = crate::adapters::dir_fd::open_directory(dir.path()).unwrap_or_else(|e| panic!("{e}"));
+    let Some(bulk) = super::read_dir_in(&handle, dir.path()) else {
+        eprintln!("skipped: getattrlistbulk is not usable here");
+        return;
+    };
+    assert_eq!(bulk.len(), 50, "the bulk reader read this descriptor to its end");
+
+    let names =
+        crate::adapters::dir_fd::read_dir_names_in(&handle).unwrap_or_else(|e| panic!("readdir: {e}"));
+
+    assert_eq!(names.len(), 50, "a fallback on the same descriptor starts from the beginning: {names:?}");
 }

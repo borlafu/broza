@@ -102,6 +102,21 @@ fn a_tree_hundreds_of_levels_deep_is_walked_to_the_bottom() {
 }
 
 #[test]
+fn a_directory_replaced_between_the_listing_and_the_open_is_left_unwalked_with_a_warning() {
+    let fs = sample().with_misreported_identity("/vol/a");
+
+    let result = walk_sample(&fs, &WalkOptions::default());
+
+    let a = node(&result, "/vol/a");
+    assert_eq!(a.size_bytes, 0, "nothing below it is counted");
+    assert!(a.has_truncation);
+    assert_eq!(node(&result, "/vol").size_bytes, 5000, "only b");
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert_eq!(result.errors[0].path.as_deref(), Some(Path::new("/vol/a")));
+    assert!(result.errors[0].message.contains("replaced while scanning"), "{}", result.errors[0].message);
+}
+
+#[test]
 fn a_node_carries_the_identity_the_cache_is_keyed_by() {
     let fs = sample();
     let result = walk_sample(&fs, &WalkOptions::default());

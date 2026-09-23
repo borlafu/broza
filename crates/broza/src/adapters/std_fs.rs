@@ -18,9 +18,7 @@
 //! a real exFAT volume cannot be mounted from a test, so that path is verified
 //! against the documented errno rather than against hardware.
 
-use std::any::Any;
-use std::ffi::OsStr;
-use std::fs::{self, File, Permissions};
+use std::fs::{self, Permissions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -30,40 +28,20 @@ use jiff::Timestamp;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::BrozaError;
-use crate::adapters::dir_fd;
+use crate::adapters::dir_fd::{SF_DATALESS, STAT_BLOCK_BYTES};
 use crate::adapters::io_error::from_io;
+use crate::adapters::std_fs_dirs as dirs;
 use crate::adapters::std_fs_exclusive as exclusive;
 use crate::ports::{ContentHash, DirHandle, DirListing, EntryMetadata, FileOps, FsLock, RenameMode};
 
-/// Size of the blocks `st_blocks` counts, fixed at 512 bytes by POSIX.
-const STAT_BLOCK_BYTES: u64 = 512;
 /// Mode a file created by [`FileOps::write_atomic`] gets: owner writes, all read.
 const DEFAULT_FILE_MODE: u32 = 0o644;
 /// The permission bits of `st_mode`, without the file type.
 const MODE_BITS: u32 = 0o7777;
-/// `SF_DATALESS` in `st_flags`: a cloud placeholder whose contents are elsewhere.
-const SF_DATALESS: u32 = 0x4000_0000;
 
 /// [`FileOps`] backed by the real filesystem.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdFileOps;
-
-/// An open directory descriptor, the handle the walker descends by.
-#[derive(Debug)]
-struct FdDirHandle(File);
-
-impl DirHandle for FdDirHandle {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// The descriptor behind a handle this adapter handed out; `None` for one
-/// another adapter made, which no caller does but which must not be an
-/// `unwrap`.
-fn descriptor(handle: &dyn DirHandle) -> Option<&File> {
-    handle.as_any().downcast_ref::<FdDirHandle>().map(|handle| &handle.0)
-}
 
 /// How much of a file each read of the hasher asks for.
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
@@ -124,35 +102,24 @@ impl FileOps for StdFileOps {
     }
 
     fn open_dir(&self, path: &Path) -> Result<Box<dyn DirHandle>, BrozaError> {
-        let dir = dir_fd::open_directory(path)
-            .map_err(|source| from_io(format!("open directory {}", path.display()), path, source))?;
-        Ok(Box::new(FdDirHandle(dir)))
+        dirs::open_dir(path)
     }
 
-    fn open_dir_in(
+    fn open_dir_below(
         &self,
-        parent: &dyn DirHandle,
-        name: &OsStr,
+        anchor: &dyn DirHandle,
+        relative: &Path,
         path: &Path,
     ) -> Result<Box<dyn DirHandle>, BrozaError> {
-        let Some(parent) = descriptor(parent) else {
-            return self.open_dir(path);
-        };
-        let dir = dir_fd::open_directory_in(parent, name)
-            .map_err(|source| from_io(format!("open directory {}", path.display()), path, source))?;
-        Ok(Box::new(FdDirHandle(dir)))
+        dirs::open_dir_below(anchor, relative, path)
+    }
+
+    fn dir_identity(&self, dir: &dyn DirHandle) -> Option<(u64, u64)> {
+        dirs::dir_identity(dir)
     }
 
     fn list_dir(&self, dir: &dyn DirHandle, path: &Path) -> Result<DirListing, BrozaError> {
-        let Some(dir) = descriptor(dir) else {
-            return self.read_dir_with_metadata(path);
-        };
-        if let Some(listing) = crate::adapters::bulk_dir::read_dir_in(dir, path) {
-            return Ok(listing);
-        }
-        // Without the bulk reader the plain pair is path-based, and stops
-        // where paths stop (`PATH_MAX`); that is the fallback's known limit.
-        self.read_dir_the_plain_way(path)
+        dirs::list_dir(dir, path, || self.read_dir_with_metadata(path))
     }
 
     fn exists(&self, path: &Path) -> bool {

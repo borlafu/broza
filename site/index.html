@@ -37,9 +37,8 @@
 <main id="main">
 
 <section class="hero" style="padding-block:0">
-  <img class="hero-canopy" src="assets/hero-canopy.svg" alt="" role="presentation">
   <div class="hero-body">
-    <img class="hero-margins" src="assets/hero-margins.svg" alt="A tangled line-drawn jungle of leaves, ferns and vines">
+    <img class="hero-jungle" src="assets/hero-jungle.svg" alt="A tangled line-drawn jungle of leaves, ferns and vines">
     <div class="hero-plate">
       <span class="pill">v1.0 · apple silicon · mit</span>
       <h1>Your Mac's disk,<br>explained. Then trimmed.</h1>
@@ -48,9 +47,9 @@
         <a class="btn btn-primary" href="#quick-start">Get started</a>
         <a class="btn btn-ghost" href="https://github.com/borlafu/broza">View on GitHub</a>
       </div>
-      <div class="oneliner">
-        <code id="install-cmd">brew install borlafu/broza/broza</code>
-        <button class="copy" type="button" data-copy="install-cmd">Copy</button>
+      <div class="cmdline cmdline-hero">
+        <code><span class="sh" aria-hidden="true">$</span> brew install borlafu/broza/broza</code>
+        <button class="copy-mini" type="button" data-copy-text="brew install borlafu/broza/broza" aria-label="Copy the Homebrew command"><span aria-hidden="true">copy</span></button>
       </div>
     </div>
   </div>
@@ -69,13 +68,13 @@
 
 <section id="quick-start">
   <div class="wrap">
-    <div class="section-head">
-      <p class="eyebrow">Quick start</p>
+    <div class="section-head section-head-center">
+      <span class="pill">quick start</span>
       <h2>Three commands from full disk to clear one</h2>
       <p>Install it, look at what is there, then trim. The trim step is a dry run until you add <code>--apply</code>.</p>
     </div>
-    <div class="cards">
-      <div class="card">
+    <div class="cards quick-cards">
+      <div class="card card-soft card-install">
         <span class="step-n">1 · install</span>
         <h3>Pick your installer</h3>
         <div class="tabs" id="install-tabs" role="tablist" aria-label="Installation method" hidden>
@@ -105,7 +104,7 @@
           <p>Builds from source against the committed <code>Cargo.lock</code>.</p>
         </div>
       </div>
-      <div class="card">
+      <div class="card card-soft">
         <span class="step-n">2 · look</span>
         <h3>See where the space went</h3>
         <div class="cmdline">
@@ -118,7 +117,7 @@
         </div>
         <p><code>scan</code> maps disks, containers and volumes. <code>suggest</code> groups what can go by risk level.</p>
       </div>
-      <div class="card">
+      <div class="card card-soft">
         <span class="step-n">3 · trim</span>
         <h3>Dry run, then apply</h3>
         <div class="cmdline">
@@ -132,7 +131,7 @@
         <p>The first command changes nothing. The second asks you to confirm, then moves items to quarantine.</p>
       </div>
     </div>
-    <p class="note">Requires macOS 26 or 27 on Apple Silicon. Full Disk Access is optional: without it Broza scans what it can and tells you what it skipped.</p>
+    <p class="note note-center">Requires macOS 26 or 27 on Apple Silicon. Full Disk Access is optional: without it Broza scans what it can and tells you what it skipped.</p>
   </div>
 </section>
 

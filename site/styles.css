@@ -123,22 +123,20 @@ code, pre, kbd { font-family: var(--mono); }
 
 .hero { background: var(--paper); }
 
-.hero-canopy {
-  display: block;
-  width: 100%;
-  height: clamp(120px, 22vh, 220px);
-  object-fit: cover;
-  object-position: center bottom;
+.hero-body {
+  position: relative;
+  padding-top: clamp(150px, 26vh, 250px);
+  padding-bottom: clamp(24px, 4vw, 48px);
+  overflow: hidden;
 }
 
-.hero-body { position: relative; }
-
-.hero-margins {
+.hero-jungle {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center top;
   pointer-events: none;
 }
 
@@ -190,29 +188,7 @@ code, pre, kbd { font-family: var(--mono); }
 .btn-ghost { border-color: var(--line-strong); color: var(--ink); background: var(--paper); }
 .btn-ghost:hover { border-color: var(--leaf); color: var(--leaf); }
 
-.oneliner {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
-  background: #f2ead9;
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius);
-  padding: 8px 10px 8px 14px;
-  max-width: 100%;
-}
-.oneliner code { font-size: 14px; white-space: nowrap; overflow-x: auto; }
-.copy {
-  font: inherit;
-  font-size: 13px;
-  color: var(--ink-soft);
-  background: var(--paper);
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  padding: 4px 9px;
-  cursor: pointer;
-}
-.copy:hover { color: var(--leaf); border-color: var(--leaf); }
+.cmdline-hero { display: inline-flex; margin-top: 14px; text-align: left; }
 
 .hero-cut { display: block; width: 100%; height: auto; }
 
@@ -301,39 +277,56 @@ section { padding-block: clamp(40px, 7vw, 72px); }
 
 .cmdline {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  background: var(--term-bg);
+  background: #f2ead9;
+  border: 1px dashed var(--line-strong);
   border-radius: var(--radius);
-  padding: 10px 10px 10px 13px;
+  padding: 8px 8px 8px 14px;
+  max-width: 100%;
 }
 .cmdline + .cmdline { margin-top: 8px; }
 .cmdline code {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 14px;
   line-height: 1.6;
-  color: var(--term-fg);
+  color: var(--ink);
   overflow-wrap: anywhere;
 }
-.cmdline .sh { color: var(--term-green); margin-right: 8px; }
+.cmdline .sh { color: var(--leaf); margin-right: 6px; user-select: none; }
 .copy-mini {
   font: inherit;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--term-dim);
-  background: none;
-  border: 1px solid #27453c;
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
-  padding: 3px 8px;
+  padding: 4px 9px;
   cursor: pointer;
   flex: none;
 }
-.copy-mini:hover { color: var(--term-fg); border-color: #3c6355; }
-.copy-mini:focus-visible { outline-color: var(--term-green); }
+.copy-mini:hover { color: var(--leaf); border-color: var(--leaf); }
 
-@media (min-width: 900px) {
-  #quick-start .cards { grid-template-columns: 1.5fr 1fr 1fr; }
+.section-head-center { text-align: center; margin-inline: auto; }
+.section-head-center .pill { margin-bottom: 12px; }
+
+.quick-cards { grid-template-columns: 1fr; }
+.card-soft {
+  border: 0;
+  background: var(--paper-2);
+  border-radius: 16px;
+  padding: 22px 24px;
+}
+.card-install { text-align: center; }
+.card-install .tabs { justify-content: center; }
+.card-install .panel { max-width: 720px; margin-inline: auto; }
+.card-install .cmdline { text-align: left; }
+.note-center { text-align: center; }
+
+@media (min-width: 700px) {
+  .quick-cards { grid-template-columns: 1fr 1fr; }
+  .card-install { grid-column: 1 / -1; }
 }
 
 /* ---------- terminal ---------- */
@@ -472,10 +465,8 @@ section { padding-block: clamp(40px, 7vw, 72px); }
 
 @media (max-width: 700px) {
   body { font-size: 16px; }
-  .hero-canopy { height: clamp(84px, 16vh, 130px); }
-  .oneliner { flex-wrap: wrap; }
-  .oneliner code { white-space: normal; overflow-wrap: anywhere; }
-  .hero-margins { display: none; }
+  .hero-body { padding-top: 132px; }
+  .cmdline-hero { display: flex; }
   .hero-plate { width: 100%; }
   .nav-links a:not(.repo) { display: none; }
 

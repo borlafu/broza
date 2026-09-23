@@ -256,8 +256,8 @@ M3 progress:
 - [x] End-to-end in process: `clean --apply -y` → `quarantine list` → `restore --session` puts the
       bytes back unchanged and empties the store (`commands/quarantine_tests.rs`).
 - [x] Donation gate (RF-17): `Outcome::reclaimed` marks an applied cleanup, `donate_display`
-      gathers the six conditions, prints the two lines on stderr and rewrites the marker file
-      (`~/.local/share/broza/state/donate_last_shown`); a marker that cannot be written is a `-v` note.
+      gathers the conditions and prints the banner on stderr (post-1.0: five conditions, no
+      cooldown marker; blank lines, dim rules, bold first line).
 - [x] Release 0.2: version 0.2.0, `CHANGELOG.md`, `dist-workspace.toml` (Apple Silicon only,
       shell + Homebrew installers, tap `borlafu/homebrew-broza`), `.github/workflows/release.yml`.
       Tagged `v0.2.0` locally only; never published (1.0.0 was the first public release).
@@ -267,7 +267,7 @@ M3 progress:
 Scope: `Detector` trait, `Registry`, filters, exclusions; detectors `user-cache` and `build-cache`
 (DerivedData, Archives, orphan `node_modules`, `__pycache__`, `.gradle`, `target/`, `Docker.raw`
 inform-only); `quarantine/*`; `clean --apply`; `quarantine list | expire | purge`; `restore`;
-donation gate (RF-17, six conditions, 30-day marker); `suggest`.
+donation gate (RF-17); `suggest`.
 
 Exit criteria: end-to-end `assert_cmd` in a tempdir: dry-run → `--apply -y` → `restore --session`
 restores byte-identical content; cross-volume skip test; donation table test; dry-run reports

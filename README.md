@@ -7,6 +7,7 @@ reversible quarantine. Built in Rust for Apple Silicon.
 [![CI](https://github.com/borlafu/broza/actions/workflows/ci.yml/badge.svg)](https://github.com/borlafu/broza/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/borlafu/broza)](https://github.com/borlafu/broza/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/borlafu)
 
 ## Why Broza
 
@@ -227,6 +228,8 @@ agents: read [AGENTS.md](AGENTS.md).
 
 Broza is free and will stay free. If it saved you space, you can leave a tip at
 [ko-fi.com/borlafu](https://ko-fi.com/borlafu). It is a donation, nothing is sold and nothing is unlocked.
+
+[![Support Broza on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/borlafu)
 
 ## License
 

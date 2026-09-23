@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" role="img">
-  <title>A dense hanging canopy of ferns, slit monstera leaves, vines and curling tendrils</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 920" role="img">
+  <title>A tangled line-drawn jungle: a dense canopy of ferns, monstera leaves and vines that grows down both sides</title>
   <defs>
     <g id="v" fill="none" stroke-linecap="round"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -3 L0 -47"/><path d="M0 -14 L9 -22 M0 -24 L9 -32 M0 -34 L7 -40 M0 -14 L-9 -22 M0 -24 L-9 -32 M0 -34 L-7 -40"/></g>
     <g id="p" fill="none"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/></g>
@@ -80,5 +80,45 @@
       <g stroke="#B7AB92" stroke-width="1.2"><path d="M60 236 l8 -7 M212 230 l-7 -8 M348 244 l9 6 M498 232 l-8 7 M640 240 l6 8 M180 262 l7 -6 M620 266 l-7 -6"/></g>
     </g>
   </g>
+  <g id="ml" fill="none" stroke-width="1.6" stroke-linecap="round">
+    <use href="#q" fill="#EBF1E0" stroke="none" transform="translate(20 140) rotate(-22) scale(1.5)"/>
+    <use href="#p" fill="#F2F5E8" stroke="none" transform="translate(62 268) rotate(-14) scale(1.7)"/>
+    <use href="#m" stroke="#1F7A4C" transform="translate(30 132) rotate(-26) scale(.95)"/>
+    <use href="#v" stroke="#8FBF3F" transform="translate(74 104) rotate(18) scale(1)"/>
+    <use href="#v" stroke="#0E9488" transform="translate(22 186) rotate(-46) scale(1.15)"/>
+    <use href="#v" stroke="#1F7A4C" transform="translate(84 222) rotate(22) scale(1.05)"/>
+    <use href="#v" stroke="#8FBF3F" transform="translate(26 272) rotate(-34) scale(1.2)"/>
+    <use href="#v" stroke="#0E9488" transform="translate(104 300) rotate(12) scale(.95)"/>
+    <use href="#v" stroke="#1F7A4C" transform="translate(48 320) rotate(-18) scale(1.1)"/>
+    <use href="#f" stroke="#CBD9C0" stroke-width="1.2" transform="translate(6 30) rotate(24) scale(1.3)"/>
+    <use href="#f" stroke="#CBD9C0" stroke-width="1.2" transform="translate(30 208) rotate(16) scale(1.1)"/>
+    <path stroke="#4A6A5E" stroke-width="1.3" d="M4 16 C48 62 8 104 50 150 S10 216 56 264 S22 300 46 320"/>
+    <path stroke="#CBD9C0" stroke-width="1.2" d="M104 28 C132 58 96 84 120 116 C140 144 108 168 128 198"/>
+    <use href="#c" stroke="#8FBF3F" transform="translate(134 250) rotate(10) scale(.85)"/>
+    <use href="#c" stroke="#C9A24A" transform="translate(112 92) rotate(-8) scale(.8)"/>
+    <g stroke="#B7AB92" stroke-width="1.2"><path d="M126 196 l8 -7 M110 286 l9 6 M96 148 l6 8"/></g>
+  </g>
+  <g id="bridge" fill="none" stroke-width="1.6" stroke-linecap="round">
+    <use href="#q" fill="#F5EFDE" stroke="none" transform="translate(150 330) rotate(-30) scale(1.4)"/>
+    <use href="#m" stroke="#0E9488" transform="translate(126 318) rotate(-40) scale(1)"/>
+    <use href="#v" stroke="#1F7A4C" transform="translate(70 296) rotate(-12) scale(1.1)"/>
+    <use href="#v" stroke="#8FBF3F" transform="translate(178 302) rotate(28) scale(.95)"/>
+    <use href="#v" stroke="#0E9488" transform="translate(212 284) rotate(-58) scale(1.05)"/>
+    <use href="#v" stroke="#CBD9C0" stroke-width="1.2" transform="translate(238 318) rotate(-22) scale(1.3)"/>
+    <use href="#f" stroke="#DCD2BC" stroke-width="1.2" transform="translate(60 236) rotate(-30) scale(1.2)"/>
+    <use href="#f" stroke="#8FBF3F" transform="translate(196 240) rotate(38) scale(.9)"/>
+    <use href="#c" stroke="#C9A24A" transform="translate(150 372) rotate(-20) scale(.8)"/>
+    <use href="#c" stroke="#1F7A4C" transform="translate(228 350) rotate(24) scale(-0.8 0.8)"/>
+    <path stroke="#4A6A5E" d="M240 262 C200 296 150 274 112 316 S52 340 40 372"/>
+    <path stroke="#C9A24A" d="M330 246 C290 262 262 300 230 292 S170 336 140 350"/>
+    <path stroke="#CBD9C0" stroke-width="1.2" d="M120 250 C160 284 120 312 154 342 S110 386 138 410"/>
+    <g stroke="#B7AB92" stroke-width="1.2"><path d="M96 340 l8 -7 M204 356 l-7 -8 M262 300 l9 6"/></g>
+  </g>
   <use href="#canopy" transform="translate(1272 -22) scale(-1 1)"/>
+  <use href="#ml" transform="translate(0 260)"/>
+  <use href="#ml" transform="translate(0 580)"/>
+  <use href="#ml" transform="translate(1200 224) scale(-1 1)"/>
+  <use href="#ml" transform="translate(1200 544) scale(-1 1)"/>
+  <use href="#bridge"/>
+  <use href="#bridge" transform="translate(1200 -14) scale(-1 1)"/>
 </svg>

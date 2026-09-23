@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" role="img">
+  <title>A dense hanging canopy of ferns, slit monstera leaves, vines and curling tendrils</title>
+  <defs>
+    <g id="v" fill="none" stroke-linecap="round"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -3 L0 -47"/><path d="M0 -14 L9 -22 M0 -24 L9 -32 M0 -34 L7 -40 M0 -14 L-9 -22 M0 -24 L-9 -32 M0 -34 L-7 -40"/></g>
+    <g id="p" fill="none"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/></g>
+    <g id="q" fill="none"><path d="M0 0 C26 -14 34 -44 22 -74 C14 -92 -14 -92 -22 -74 C-34 -44 -26 -14 0 0 Z"/></g>
+    <g id="m" fill="none" stroke-linecap="round"><path d="M0 0 C26 -14 34 -44 22 -74 C14 -92 -14 -92 -22 -74 C-34 -44 -26 -14 0 0 Z"/><path d="M0 -4 L0 -80"/><path d="M0 -20 L21 -27 M0 -35 L25 -44 M0 -50 L23 -60 M0 -64 L17 -74 M0 -20 L-21 -27 M0 -35 L-25 -44 M0 -50 L-23 -60 M0 -64 L-17 -74"/></g>
+    <g id="f" fill="none" stroke-linecap="round"><path d="M0 0 C7 22 5 48 -5 72"/><path d="M1 9 l13 -5 M2 18 l14 -3 M2 27 l14 1 M1 36 l13 4 M-1 45 l12 6 M-3 55 l11 7 M1 9 l-13 -7 M2 18 l-14 -5 M2 27 l-14 -2 M1 36 l-13 2 M-1 45 l-12 4 M-3 55 l-11 6"/></g>
+    <g id="c" fill="none" stroke-linecap="round"><path d="M0 0 C11 -13 2 -26 13 -37 C22 -46 15 -57 24 -62"/><path d="M24 -62 C30 -66 36 -62 35 -56 C34 -51 28 -50 26 -54"/></g>
+  </defs>
+  <g id="canopy">
+    <g stroke="none">
+      <use href="#q" fill="#EBF1E0" transform="translate(52 150) rotate(196) scale(1.7)"/>
+      <use href="#q" fill="#F5EFDE" transform="translate(196 120) rotate(168) scale(1.4)"/>
+      <use href="#q" fill="#E8EFDF" transform="translate(348 156) rotate(204) scale(1.6)"/>
+      <use href="#q" fill="#F5EFDE" transform="translate(500 122) rotate(164) scale(1.45)"/>
+      <use href="#q" fill="#EBF1E0" transform="translate(636 152) rotate(190) scale(1.7)"/>
+      <use href="#p" fill="#F2F5E8" transform="translate(120 96) rotate(178) scale(2)"/>
+      <use href="#p" fill="#F4EFE0" transform="translate(276 92) rotate(186) scale(1.8)"/>
+      <use href="#p" fill="#F2F5E8" transform="translate(432 98) rotate(172) scale(1.9)"/>
+      <use href="#p" fill="#F4EFE0" transform="translate(580 90) rotate(196) scale(1.8)"/>
+    </g>
+    <g fill="none" stroke-width="1.2" stroke-linecap="round">
+      <use href="#f" stroke="#CBD9C0" transform="translate(24 -16) rotate(15) scale(1.7)"/>
+      <use href="#f" stroke="#DCD2BC" transform="translate(132 -20) rotate(-12) scale(1.55)"/>
+      <use href="#f" stroke="#CBD9C0" transform="translate(240 -18) rotate(10) scale(1.6)"/>
+      <use href="#f" stroke="#DCD2BC" transform="translate(352 -22) rotate(-15) scale(1.5)"/>
+      <use href="#f" stroke="#CBD9C0" transform="translate(464 -16) rotate(12) scale(1.65)"/>
+      <use href="#f" stroke="#DCD2BC" transform="translate(576 -20) rotate(-11) scale(1.55)"/>
+      <use href="#f" stroke="#CBD9C0" transform="translate(668 -18) rotate(14) scale(1.6)"/>
+      <use href="#f" stroke="#DCD2BC" transform="translate(76 62) rotate(-8) scale(1.2)"/>
+      <use href="#f" stroke="#CBD9C0" transform="translate(304 58) rotate(11) scale(1.15)"/>
+      <use href="#f" stroke="#DCD2BC" transform="translate(528 64) rotate(-9) scale(1.2)"/>
+      <use href="#m" stroke="#CBD9C0" transform="translate(172 196) rotate(184) scale(1.05)"/>
+      <use href="#m" stroke="#DCD2BC" transform="translate(452 190) rotate(176) scale(1)"/>
+      <use href="#v" stroke="#CBD9C0" transform="translate(96 168) rotate(188) scale(1.5)"/>
+      <use href="#v" stroke="#DCD2BC" transform="translate(324 158) rotate(172) scale(1.35)"/>
+      <use href="#v" stroke="#CBD9C0" transform="translate(566 170) rotate(196) scale(1.45)"/>
+      <path stroke="#DCD2BC" d="M-6 44 C60 86 120 28 184 64 S298 26 362 52 S484 22 552 48 S648 28 690 50"/>
+      <path stroke="#CBD9C0" d="M-6 124 C56 156 112 106 168 134 S268 104 324 128 S430 100 492 126 S612 106 690 130"/>
+      <path stroke="#DCD2BC" d="M-6 186 C48 212 104 172 158 196 S256 170 312 190"/>
+      <path stroke="#CBD9C0" d="M376 192 C432 166 486 206 540 180 S638 200 690 178"/>
+    </g>
+    <g fill="none" stroke-width="1.6" stroke-linecap="round">
+      <use href="#f" stroke="#1F7A4C" transform="translate(6 -10) rotate(18) scale(1.6)"/>
+      <use href="#f" stroke="#0E9488" transform="translate(62 -16) rotate(-9) scale(1.35)"/>
+      <use href="#f" stroke="#8FBF3F" transform="translate(112 -8) rotate(23) scale(1.2)"/>
+      <use href="#f" stroke="#1F7A4C" transform="translate(178 -20) rotate(-6) scale(1.3)"/>
+      <use href="#f" stroke="#0E9488" transform="translate(252 -12) rotate(16) scale(1.15)"/>
+      <use href="#f" stroke="#8FBF3F" transform="translate(330 -18) rotate(-13) scale(1.25)"/>
+      <use href="#f" stroke="#1F7A4C" transform="translate(412 -10) rotate(9) scale(1.35)"/>
+      <use href="#f" stroke="#0E9488" transform="translate(492 -16) rotate(-15) scale(1.2)"/>
+      <use href="#f" stroke="#8FBF3F" transform="translate(562 -8) rotate(12) scale(1.3)"/>
+      <use href="#f" stroke="#1F7A4C" transform="translate(634 -18) rotate(-17) scale(1.45)"/>
+      <use href="#f" stroke="#0E9488" transform="translate(40 74) rotate(-20) scale(1)"/>
+      <use href="#f" stroke="#8FBF3F" transform="translate(220 70) rotate(17) scale(.95)"/>
+      <use href="#f" stroke="#0E9488" transform="translate(392 76) rotate(-16) scale(1)"/>
+      <use href="#f" stroke="#8FBF3F" transform="translate(608 72) rotate(19) scale(.95)"/>
+      <use href="#m" stroke="#1F7A4C" transform="translate(70 214) rotate(192) scale(1.15)"/>
+      <use href="#m" stroke="#0E9488" transform="translate(268 206) rotate(174) scale(1)"/>
+      <use href="#m" stroke="#8FBF3F" transform="translate(390 218) rotate(198) scale(1.05)"/>
+      <use href="#m" stroke="#1F7A4C" transform="translate(600 210) rotate(170) scale(1.15)"/>
+      <use href="#v" stroke="#1F7A4C" transform="translate(34 146) rotate(194) scale(1.3)"/>
+      <use href="#v" stroke="#8FBF3F" transform="translate(124 122) rotate(164) scale(1.05)"/>
+      <use href="#v" stroke="#0E9488" transform="translate(208 152) rotate(206) scale(1.2)"/>
+      <use href="#v" stroke="#1F7A4C" transform="translate(290 112) rotate(174) scale(.9)"/>
+      <use href="#v" stroke="#8FBF3F" transform="translate(372 146) rotate(188) scale(1.15)"/>
+      <use href="#v" stroke="#0E9488" transform="translate(458 120) rotate(160) scale(1)"/>
+      <use href="#v" stroke="#1F7A4C" transform="translate(544 150) rotate(200) scale(1.25)"/>
+      <use href="#v" stroke="#8FBF3F" transform="translate(626 126) rotate(170) scale(1.05)"/>
+      <use href="#v" stroke="#0E9488" transform="translate(670 158) rotate(202) scale(1.15)"/>
+      <path stroke="#4A6A5E" d="M-6 66 C54 104 108 52 166 84 S268 50 330 72 S440 48 500 74 S620 52 690 76"/>
+      <path stroke="#C9A24A" d="M-6 26 C46 58 92 14 148 36 S246 8 306 30 S418 6 480 28 S600 10 690 32"/>
+      <path stroke="#0E9488" d="M-6 150 C44 178 92 140 140 164 S212 142 258 160"/>
+      <path stroke="#C9A24A" d="M420 164 C470 138 520 176 570 152 S656 172 690 150"/>
+      <use href="#c" stroke="#8FBF3F" transform="translate(126 244) rotate(6)"/>
+      <use href="#c" stroke="#0E9488" transform="translate(556 248) rotate(-6) scale(-1 1)"/>
+      <use href="#c" stroke="#1F7A4C" transform="translate(292 250) scale(.8)"/>
+      <use href="#c" stroke="#C9A24A" transform="translate(430 246) scale(-0.8 0.8)"/>
+      <g stroke="#B7AB92" stroke-width="1.2"><path d="M60 236 l8 -7 M212 230 l-7 -8 M348 244 l9 6 M498 232 l-8 7 M640 240 l6 8 M180 262 l7 -6 M620 266 l-7 -6"/></g>
+    </g>
+  </g>
+  <use href="#canopy" transform="translate(1272 -22) scale(-1 1)"/>
+</svg>

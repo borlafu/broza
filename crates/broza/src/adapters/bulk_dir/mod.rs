@@ -174,7 +174,7 @@ fn call_bulk(dir: &File, request: &mut libc::attrlist, buffer: &mut [u8]) -> i32
             std::ptr::from_mut(request).cast(),
             buffer.as_mut_ptr().cast(),
             buffer.len(),
-            0,
+            u64::from(libc::FSOPT_ATTR_CMN_EXTENDED),
         )
     }
 }
@@ -201,7 +201,9 @@ fn request_list() -> libc::attrlist {
         volattr: 0,
         dirattr: 0,
         fileattr: parse::FILE_ATTRS,
-        forkattr: 0,
+        // The extended common attributes, which `FSOPT_ATTR_CMN_EXTENDED`
+        // makes this slot mean.
+        forkattr: parse::EXTENDED_ATTRS,
     }
 }
 

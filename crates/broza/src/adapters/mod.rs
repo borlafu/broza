@@ -5,6 +5,7 @@
 //! [`crate::ports`], so the rest of the core stays pure and testable.
 
 pub(crate) mod bulk_dir;
+pub(crate) mod clone_id;
 pub mod diskutil;
 pub(crate) mod io_error;
 pub mod mount_table;

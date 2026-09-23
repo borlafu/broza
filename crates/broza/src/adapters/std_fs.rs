@@ -64,6 +64,7 @@ impl FileOps for StdFileOps {
             is_dataless: meta.st_flags() & SF_DATALESS != 0,
             modified: timestamp(meta.mtime(), meta.mtime_nsec()),
             accessed: timestamp(meta.atime(), meta.atime_nsec()),
+            clone_id: if kind.is_file() { crate::adapters::clone_id::clone_id_of(path) } else { None },
         })
     }
 

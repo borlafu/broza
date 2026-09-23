@@ -19,7 +19,14 @@
 //! - `ATTR_FILE_DATALENGTH` is `st_size` while `ATTR_FILE_TOTALSIZE` adds the
 //!   resource fork, and `ATTR_FILE_ALLOCSIZE` is `st_blocks × 512` while
 //!   `ATTR_FILE_DATAALLOCSIZE` leaves the resource fork out. Broza reports what
-//!   `lstat` reports, so it asks for the first of each pair.
+//!   `lstat` reports, so it asks for the first of each pair;
+//! - `ATTR_CMNEXT_CLONEID` travels in the fork slot of the request when the
+//!   call is made with `FSOPT_ATTR_CMN_EXTENDED`, and is packed after the file
+//!   attributes. It is kept for regular files only: a symlink or a directory
+//!   reports one too, but the plain adapter (`clone_id`) does not ask for it
+//!   there, and the two readers have to describe an entry identically. An
+//!   entry the kernel returns without it is still complete — a filesystem
+//!   without clones has nothing to say — and carries `None`.
 
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
@@ -42,6 +49,8 @@ pub(super) const COMMON_ATTRS: libc::attrgroup_t = libc::ATTR_CMN_RETURNED_ATTRS
 /// `ATTR_FILE_*` bits asked for; only files and symlinks carry them.
 pub(super) const FILE_ATTRS: libc::attrgroup_t =
     libc::ATTR_FILE_LINKCOUNT | libc::ATTR_FILE_ALLOCSIZE | libc::ATTR_FILE_DATALENGTH;
+/// `ATTR_CMNEXT_*` bits asked for, in the fork slot (`FSOPT_ATTR_CMN_EXTENDED`).
+pub(super) const EXTENDED_ATTRS: libc::attrgroup_t = libc::ATTR_CMNEXT_CLONEID;
 /// Common attributes without which an entry cannot be read from the buffer.
 const NEEDED_COMMON: libc::attrgroup_t = COMMON_ATTRS & !ATTR_CMN_ERROR & !libc::ATTR_CMN_RETURNED_ATTRS;
 
@@ -53,9 +62,14 @@ const OFF_LENGTH: usize = 0;
 const OFF_RETURNED_COMMON: usize = 4;
 /// Offset of the file group inside the returned-attributes set.
 const OFF_RETURNED_FILE: usize = 16;
+/// Offset of the fork group — the extended common group, here — inside the
+/// returned-attributes set.
+const OFF_RETURNED_FORK: usize = 20;
 /// Shortest entry that can be read at all: the header plus a name reference.
 pub(super) const MIN_ENTRY_LEN: usize = HEADER_LEN + 8;
 
+/// `VREG`, a regular file.
+const VREG: u32 = 1;
 /// `VDIR`, a directory.
 const VDIR: u32 = 2;
 /// `VLNK`, a symbolic link.
@@ -101,6 +115,8 @@ struct Layout {
     allocated: Option<usize>,
     /// Length of the data fork.
     length: Option<usize>,
+    /// APFS clone id.
+    clone_id: Option<usize>,
 }
 
 /// Parse `count` entries out of `buffer`.
@@ -126,7 +142,8 @@ pub(super) fn parse_batch(buffer: &[u8], count: usize) -> Option<Vec<ParsedEntry
 pub(super) fn parse_entry(entry: &[u8]) -> Option<ParsedEntry> {
     let returned_common = read_u32(entry, OFF_RETURNED_COMMON)?;
     let returned_file = read_u32(entry, OFF_RETURNED_FILE)?;
-    let layout = layout(returned_common, returned_file);
+    let returned_fork = read_u32(entry, OFF_RETURNED_FORK)?;
+    let layout = layout(returned_common, returned_file, returned_fork);
     let name = read_name(entry, layout.name?)?;
     let complete = returned_common & NEEDED_COMMON == NEEDED_COMMON
         && returned_file & FILE_ATTRS == FILE_ATTRS
@@ -146,7 +163,11 @@ pub(super) fn parse_entry(entry: &[u8]) -> Option<ParsedEntry> {
 }
 
 /// Where the attributes of this entry are, given what the kernel returned.
-fn layout(returned_common: libc::attrgroup_t, returned_file: libc::attrgroup_t) -> Layout {
+fn layout(
+    returned_common: libc::attrgroup_t,
+    returned_file: libc::attrgroup_t,
+    returned_fork: libc::attrgroup_t,
+) -> Layout {
     let mut at = HEADER_LEN;
     let mut take = |present: bool, size: usize| {
         if !present {
@@ -168,6 +189,7 @@ fn layout(returned_common: libc::attrgroup_t, returned_file: libc::attrgroup_t) 
     let link_count = take(returned_file & libc::ATTR_FILE_LINKCOUNT != 0, 4);
     let allocated = take(returned_file & libc::ATTR_FILE_ALLOCSIZE != 0, 8);
     let length = take(returned_file & libc::ATTR_FILE_DATALENGTH != 0, 8);
+    let clone_id = take(returned_fork & libc::ATTR_CMNEXT_CLONEID != 0, 8);
     Layout {
         name,
         devid,
@@ -180,6 +202,7 @@ fn layout(returned_common: libc::attrgroup_t, returned_file: libc::attrgroup_t) 
         link_count,
         allocated,
         length,
+        clone_id,
     }
 }
 
@@ -197,6 +220,7 @@ fn metadata_of(entry: &[u8], layout: &Layout) -> Option<EntryMetadata> {
         is_dataless: read_u32(entry, layout.flags?)? & SF_DATALESS != 0,
         modified: read_time(entry, layout.modified?),
         accessed: read_time(entry, layout.accessed?),
+        clone_id: if object_type == VREG { layout.clone_id.and_then(|at| read_u64(entry, at)) } else { None },
     })
 }
 

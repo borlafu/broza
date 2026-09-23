@@ -48,6 +48,8 @@ pub struct FileRecord {
     pub modified_ns: Option<i128>,
     /// Last access time in nanoseconds since the unix epoch.
     pub accessed_ns: Option<i128>,
+    /// APFS clone id, when the filesystem reported one.
+    pub clone_id: Option<u64>,
 }
 
 /// Identity of a directory as the cache sees it.
@@ -111,6 +113,10 @@ pub struct DirRecord {
     pub child_dirs: Vec<ChildDir>,
     /// The files directly inside at or above [`CACHE_FILE_FLOOR_BYTES`].
     pub files: Vec<FileRecord>,
+    /// The clone families whose credited clone is directly inside, as
+    /// `(device, original inode)`: a warm walk that meets another clone of one
+    /// of these discounts it, as the cold walk that wrote the record did.
+    pub kept_clones: Vec<(u64, u64)>,
 }
 
 impl DirRecord {
@@ -157,6 +163,12 @@ impl DirRecord {
         Self { files, ..self }
     }
 
+    /// The same record, knowing which clone families are kept directly inside.
+    #[must_use]
+    pub fn with_kept_clones(self, kept_clones: Vec<(u64, u64)>) -> Self {
+        Self { kept_clones, ..self }
+    }
+
     /// Record of a freshly walked directory.
     ///
     /// `None` for a node that must not be cached: one with no usable
@@ -182,6 +194,7 @@ impl DirRecord {
             recorded_at,
             child_dirs: Vec::new(),
             files: Vec::new(),
+            kept_clones: Vec::new(),
         })
     }
 }

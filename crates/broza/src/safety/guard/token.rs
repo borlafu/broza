@@ -340,6 +340,7 @@ pub(super) fn evidence_for(path: &str, device: u64, inode: u64) -> ApprovedItem 
             is_dataless: false,
             modified: None,
             accessed: None,
+            clone_id: None,
         },
     })
 }

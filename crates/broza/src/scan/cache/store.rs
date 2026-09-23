@@ -236,6 +236,7 @@ impl CacheStore {
     fn rebuild(&self, path: &Path, record: &DirRecord, subtree: &mut CachedSubtree) {
         subtree.nodes.push(node_of(path, record));
         subtree.files.extend(record.files.iter().map(|file| file_of(path, record.key.device, file)));
+        subtree.kept_clones.extend(record.kept_clones.iter().copied());
         for child in &record.child_dirs {
             if let Some(child_record) = child_key(child).and_then(|key| self.lookup(&key)) {
                 self.rebuild(&child_path(path, child), child_record, subtree);

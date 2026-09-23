@@ -44,8 +44,13 @@ pub fn records_of(walk: &WalkResult, recorded_at: Timestamp) -> Vec<DirRecord> {
                 link_count: file.link_count,
                 modified_ns: file.modified.map(Timestamp::as_nanosecond),
                 accessed_ns: file.accessed.map(Timestamp::as_nanosecond),
+                clone_id: file.clone_id,
             });
         }
+    }
+    let mut kept: HashMap<&Path, Vec<(u64, u64)>> = HashMap::new();
+    for (dir, family) in &walk.kept_clones {
+        kept.entry(dir.as_path()).or_default().push(*family);
     }
     walk.nodes
         .iter()
@@ -55,7 +60,9 @@ pub fn records_of(walk: &WalkResult, recorded_at: Timestamp) -> Vec<DirRecord> {
             child_dirs.sort_by(|a, b| a.name.cmp(&b.name));
             let mut own_files = files.remove(node.path.as_path()).unwrap_or_default();
             own_files.sort_by(|a, b| a.name.cmp(&b.name));
-            Some(record.with_child_dirs(child_dirs).with_files(own_files))
+            let mut kept_clones = kept.remove(node.path.as_path()).unwrap_or_default();
+            kept_clones.sort_unstable();
+            Some(record.with_child_dirs(child_dirs).with_files(own_files).with_kept_clones(kept_clones))
         })
         .collect()
 }
@@ -96,6 +103,7 @@ pub(super) fn file_of(dir: &Path, device: u64, record: &FileRecord) -> FileEntry
         link_count: record.link_count,
         modified: record.modified_ns.and_then(|ns| Timestamp::from_nanosecond(ns).ok()),
         accessed: record.accessed_ns.and_then(|ns| Timestamp::from_nanosecond(ns).ok()),
+        clone_id: record.clone_id,
     }
 }
 

@@ -65,13 +65,17 @@ impl Detector for LargeOldFiles {
     }
 }
 
-/// Big enough, with one name, and not on another detector's ground.
+/// Big enough, with one name, freeing something, and not on another
+/// detector's ground.
 ///
 /// Symlinks and cloud placeholders never reach here: the walk reports a
 /// placeholder as nothing but a count, and a symlink's own `lstat` size is
-/// its target path, nowhere near the threshold.
+/// its target path, nowhere near the threshold. A clone whose family is
+/// counted elsewhere arrives with no allocated bytes, and proposing a file
+/// whose removal frees nothing is not a suggestion.
 fn is_candidate(file: &FileEntry, skipped: &[PathBuf]) -> bool {
     file.size_bytes >= LARGE_FILE_MIN_BYTES
+        && file.allocated_bytes > 0
         && file.link_count <= 1
         && !skipped.iter().any(|dir| file.path.starts_with(dir))
 }

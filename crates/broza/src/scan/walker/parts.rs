@@ -4,10 +4,12 @@
 //! the public surface.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::BrozaError;
 use crate::model::Diagnostic;
 use crate::ports::{EntryMetadata, FileOps};
+use crate::scan::walker::clones::{CloneLedger, Originals};
 use crate::scan::walker::top_files::TopFiles;
 use crate::scan::walker::{
     DirIdentity, DirNode, FileEntry, PERMISSION_DENIED_CODE, UNREADABLE_ENTRY_CODE, WalkOptions,
@@ -45,11 +47,13 @@ impl Context<'_> {
     }
 }
 
-/// One name of a file that has several of them.
+/// One name of a file whose bytes other names may share: a hard link, or an
+/// APFS clone.
 ///
 /// The bytes of such a file must count once per walk, and *which* directory gets
 /// them has to be the same on every run — so the walk records every sighting and
-/// the choice is made afterwards, in [`super::dedupe`], by path.
+/// the choice is made afterwards, in [`super::dedupe`] and [`super::clones`],
+/// by path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LinkSighting {
     /// Device of the inode.
@@ -64,6 +68,8 @@ pub(super) struct LinkSighting {
     pub size_bytes: u64,
     /// Allocated bytes counted for it.
     pub allocated_bytes: u64,
+    /// APFS clone id, when the filesystem reports one.
+    pub clone_id: Option<u64>,
 }
 
 /// Aggregate of one subtree, without the identity of the directory it belongs to.
@@ -110,10 +116,11 @@ impl Totals {
             dir_count: 0,
             dataless_count: 0,
             largest_item_bytes: meta.allocated_bytes,
-            // A file with several names may be credited to another directory
-            // once hard links are settled; its size comes back through the
-            // surviving sighting, so it must not be claimed twice here.
-            largest_direct_file_bytes: if meta.link_count > 1 { 0 } else { meta.allocated_bytes },
+            // A file with several names, or a clone, may be credited to
+            // another directory once shared bytes are settled; its size comes
+            // back through the surviving sighting, so it must not be claimed
+            // twice here.
+            largest_direct_file_bytes: if is_shared(meta) { 0 } else { meta.allocated_bytes },
             has_truncation: false,
         }
     }
@@ -159,6 +166,11 @@ impl Totals {
     }
 }
 
+/// `true` when other names may share this entry's blocks: a hard link or a clone.
+fn is_shared(meta: &EntryMetadata) -> bool {
+    meta.link_count > 1 || meta.is_clone()
+}
+
 /// What one recursion step contributes to the walk.
 #[derive(Debug)]
 pub(super) struct Partial {
@@ -180,6 +192,10 @@ pub(super) struct Partial {
     pub hidden: Vec<DirNode>,
     /// Every file above the cache's floor, unbounded, for the scan cache.
     pub cache_files: Vec<FileEntry>,
+    /// Every file that could be the original of a clone family.
+    pub originals: Originals,
+    /// Every clone met, by family and by directory.
+    pub clones: CloneLedger,
 }
 
 impl Partial {
@@ -194,6 +210,8 @@ impl Partial {
             direct_maxima: Vec::new(),
             hidden: Vec::new(),
             cache_files: Vec::new(),
+            originals: Originals::default(),
+            clones: CloneLedger::default(),
         }
     }
 
@@ -214,6 +232,8 @@ impl Partial {
             direct_maxima: self.direct_maxima,
             hidden: self.hidden,
             cache_files: self.cache_files,
+            originals: self.originals.merge(other.originals),
+            clones: self.clones.merge(other.clones),
         }
     }
 }
@@ -231,6 +251,10 @@ pub(super) struct Leaves {
     pub entries: u64,
     /// Every file above the cache's floor, for the scan cache.
     pub cache_files: Vec<FileEntry>,
+    /// Every file that could be the original of a clone family.
+    pub originals: Originals,
+    /// Every clone met, by family and by directory.
+    pub clones: CloneLedger,
 }
 
 impl Leaves {
@@ -242,38 +266,42 @@ impl Leaves {
             links: Vec::new(),
             entries: 0,
             cache_files: Vec::new(),
+            originals: Originals::default(),
+            clones: CloneLedger::default(),
         }
     }
 
-    /// Count one non-directory entry.
+    /// Count one non-directory entry, directly inside `dir`.
     ///
     /// A cloud placeholder counts as an entry and as nothing else: its bytes are
     /// not on this disk (`docs/cli-spec.md` §4.2). A name of a multiply-linked
-    /// file is counted here and recorded, so the duplicates can be taken back
-    /// out once the whole walk is known.
-    pub fn add_leaf(mut self, path: &Path, meta: &EntryMetadata, context: &Context<'_>) -> Self {
+    /// file is counted here and recorded, and so is a clone, in the ledger, so
+    /// the shared bytes can be taken back out once the whole walk is known; a
+    /// file that could be the original of a clone family is remembered by
+    /// inode for the same reason.
+    pub fn add_leaf(
+        mut self,
+        dir: &Arc<Path>,
+        path: PathBuf,
+        meta: &EntryMetadata,
+        context: &Context<'_>,
+    ) -> Self {
         let entries = self.entries.saturating_add(1);
         if meta.is_dataless {
             return Self { entries, totals: self.totals.merge(Totals::leaf(meta)), ..self };
         }
-        if meta.link_count > 1 {
-            self.links.push(LinkSighting {
-                device: meta.device,
-                inode: meta.inode,
-                path: path.to_path_buf(),
-                link_count: meta.link_count,
-                size_bytes: meta.size_bytes,
-                allocated_bytes: meta.allocated_bytes,
-            });
+        if meta.clone_id == Some(meta.inode) {
+            self.originals.record(meta.device, meta.inode);
         }
         // Either size clears the threshold: the readers downstream filter on
         // the one they mean, and a sparse or compressed file is not lost here.
         let reportable = meta.size_bytes.max(meta.allocated_bytes);
         let reported = context.options.report_files_min_size.is_some_and(|min| reportable >= min);
         let cached = context.options.cache_files_min_size.is_some_and(|min| reportable >= min);
+        let (for_entry, for_link) = if is_shared(meta) { (path.clone(), Some(path)) } else { (path, None) };
         if reported || cached {
             let entry = FileEntry {
-                path: path.to_path_buf(),
+                path: for_entry,
                 size_bytes: meta.size_bytes,
                 allocated_bytes: meta.allocated_bytes,
                 device: meta.device,
@@ -281,6 +309,7 @@ impl Leaves {
                 link_count: meta.link_count,
                 modified: meta.modified,
                 accessed: meta.accessed,
+                clone_id: meta.clone_id,
             };
             if cached {
                 self.cache_files.push(entry.clone());
@@ -289,6 +318,21 @@ impl Leaves {
                 self.files = self.files.with(entry);
             }
         }
+        // A clone that also has several names is a hard link first: the names
+        // settle to one, and that one is counted where it stands.
+        match for_link {
+            Some(path) if meta.link_count > 1 => self.links.push(LinkSighting {
+                device: meta.device,
+                inode: meta.inode,
+                path,
+                link_count: meta.link_count,
+                size_bytes: meta.size_bytes,
+                allocated_bytes: meta.allocated_bytes,
+                clone_id: meta.clone_id,
+            }),
+            Some(path) => self.clones.record(dir, path, meta),
+            None => {}
+        }
         Self { entries, totals: self.totals.merge(Totals::leaf(meta)), ..self }
     }
 }
@@ -296,6 +340,8 @@ impl Leaves {
 /// The children of one directory, split into what to descend into and what to count.
 #[derive(Debug)]
 pub(super) struct Children {
+    /// The directory itself, shared with every record that names it.
+    dir: Arc<Path>,
     /// Directories to walk, with the metadata already read.
     pub dirs: Vec<(PathBuf, EntryMetadata)>,
     /// Everything else, already counted.
@@ -307,9 +353,9 @@ pub(super) struct Children {
 }
 
 impl Children {
-    /// No children yet, keeping at most `cap` files.
-    fn empty(cap: usize) -> Self {
-        Self { dirs: Vec::new(), leaves: Leaves::empty(cap), errors: Vec::new(), skipped: false }
+    /// No children of `dir` yet, keeping at most `cap` files.
+    fn empty(dir: Arc<Path>, cap: usize) -> Self {
+        Self { dir, dirs: Vec::new(), leaves: Leaves::empty(cap), errors: Vec::new(), skipped: false }
     }
 
     /// Classify one child and fold it in.
@@ -335,18 +381,20 @@ impl Children {
             return self;
         }
         let skipped = self.skipped || (is_directory && meta.is_dataless);
-        let leaves = self.leaves.add_leaf(&child, &meta, context);
+        let leaves = self.leaves.add_leaf(&self.dir, child, &meta, context);
         Self { leaves, skipped, ..self }
     }
 }
 
 /// Split the children of a directory into subdirectories and counted leaves.
 pub(super) fn split_children(
+    dir: &Path,
     listing: Vec<(PathBuf, Result<EntryMetadata, BrozaError>)>,
     context: &Context<'_>,
 ) -> Children {
     let cap = context.options.report_files_top;
-    listing.into_iter().fold(Children::empty(cap), |acc, (child, meta)| acc.add(child, meta, context))
+    let start = Children::empty(Arc::from(dir), cap);
+    listing.into_iter().fold(start, |acc, (child, meta)| acc.add(child, meta, context))
 }
 
 /// Turn a read failure into the warning the report carries.

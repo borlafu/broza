@@ -16,8 +16,8 @@ majors (26 and 27 today) that:
 4. Exposes a stable JSON contract that the Phase 2 GUI will consume unchanged.
 
 Deferred past v1.0: RF-10 (`launchd` scheduling), treemap rendering, native DiskArbitration adapter,
-APFS clone-aware sizes, per-volume quarantine roots, native Spotlight (MDItem) bindings,
-Docker daemon integration, FAT/exFAT.
+partial-clone accounting (APFS clone families are counted once since 1.1.0, ADR 0009),
+per-volume quarantine roots, native Spotlight (MDItem) bindings, Docker daemon integration, FAT/exFAT.
 
 ## 2. Technology decisions
 
@@ -32,7 +32,7 @@ Research date: 2026-09-21. Versions are the latest observed on crates.io at that
 | Purgeable space | `objc2-foundation` 0.3, `NSURL` resource values | one `unsafe` adapter file |
 | Directory walking | `dua-core` 4.x | `jwalk` archived 2026-08; fallback: `rayon` + `read_dir` (~150 lines) |
 | Hard links | dedupe by `(dev, inode)` | pattern from `dust` / `dua-cli` |
-| APFS clones | `getattrlist` `ATTR_CMNEXT_CLONEID` | best-effort, later; verify bit value on macOS 26/27 |
+| APFS clones | `ATTR_CMNEXT_CLONEID` via `getattrlistbulk` / `getattrlist` | bit `0x100` verified on macOS 26; shipped 1.1.0 (ADR 0009) |
 | Hashing | `blake3` | duplicates; optional quarantine integrity for files < 64 MB |
 | Globs | `globset` | exclusions |
 | Errors | `thiserror` (core), `anyhow` (binary) | one `BrozaError` → `ExitCode` |
@@ -213,8 +213,14 @@ Progress:
 - [x] Cache store, TTL, corruption → exit `9` (`scan/cache/`).
 - [x] Walker wired into `broza scan`: `largest_items`, `--tree`, `PATH` arguments, progress on stderr.
 - [x] Benchmark script for the cold and warm `scan` targets (`scripts/bench-scan.sh`, ADR 0006).
-- [ ] APFS clone accounting (post-1.0): a whole-volume walk that exceeds `used_bytes` warns with
-      `size_exceeds_volume` until then.
+- [x] APFS clone accounting (post-1.0, 1.1.0, ADR 0009): a clone family is counted once, by clone
+      id; the original keeps the bytes, or the first clone by path. Cache layout 4 carries the id.
+      `size_exceeds_volume` stays for what the id cannot settle (cached subtrees, diverged clones).
+      Cold `scan` on the developer's Data volume (1.8 M clones): 37–44 s and 1.4 GB peak against
+      31–39 s and 0.75–0.89 GB for 1.0.0 on the same runs; warm `suggest` 8 s, as before (cache
+      records name the families they keep, so clone-holding directories stay cacheable). The
+      WhatsApp media folder went from 434.6 GB to what deleting it would free. The walker got its
+      own pool with 64 MiB stacks on the way (a 466-level test tree overflowed the default).
 - [x] Homebrew tap publishing: `borlafu/homebrew-broza` receives `Formula/broza.rb` from the
       release workflow (`HOMEBREW_TAP_TOKEN`); first published formula is 1.0.0 (2026-09-22).
 
@@ -457,7 +463,7 @@ device, filed under the `DeviceIdentifier` the recording itself declares
 | Requirement | Milestone |
 |---|---|
 | RF-01 enumeration | M2 |
-| RF-02 real usage, hard links once | M2 (hard links); APFS clones deferred |
+| RF-02 real usage, hard links once | M2 (hard links); APFS clone families post-1.0 (1.1.0) |
 | RF-03 hierarchical scan + cache | M2 |
 | RF-04 plain-language roles | M2 |
 | RF-05 tree + usage bars (treemap deferred) | M2 |
@@ -484,7 +490,8 @@ Carried into milestone work; each becomes a fixture-backed test, not an assumpti
 
 1. `dua-core` 4.x: confirm per-entry `dev` / `ino` and subtree skipping for cache hits.
 2. `statfs.f_mntonname` behavior for firmlinked paths on macOS 26 / 27.
-3. `ATTR_CMNEXT_CLONEID` bit value on macOS 26 / 27 (`0x100` observed vs `0x40` documented).
+3. ~~`ATTR_CMNEXT_CLONEID` bit value on macOS 26 / 27~~ — `0x100`, verified on macOS 26 by
+   `tests/fakes_behave_like_std.rs` against `cp -c` (ADR 0009); `0x40` is `ATTR_CMNEXT_REALDEVID`.
 4. Whether `tmutil deletelocalsnapshots` needs root on macOS 26 / 27.
 5. `xcrun simctl list -j` needs Xcode command-line tools; can be slow on first run. Enforce a timeout and warn when it fails.
 6. Accuracy of the NSURL purgeable estimate versus Disk Utility; label as an estimate.

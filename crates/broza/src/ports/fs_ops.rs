@@ -67,6 +67,24 @@ pub struct EntryMetadata {
     pub modified: Option<Timestamp>,
     /// Last access time.
     pub accessed: Option<Timestamp>,
+    /// The APFS clone id of a regular file (`ATTR_CMNEXT_CLONEID`).
+    ///
+    /// Files that were cloned from one another share it; a file that was
+    /// never cloned carries its own inode number. `None` for directories,
+    /// symlinks, and filesystems that have no such notion, so a caller can
+    /// tell "not a clone" from "cannot know". See [`EntryMetadata::is_clone`].
+    pub clone_id: Option<u64>,
+}
+
+impl EntryMetadata {
+    /// `true` when this file shares its blocks with the file it was cloned from.
+    ///
+    /// The original keeps a clone id equal to its inode, so it reads as an
+    /// ordinary file here; only the copies answer `true`. Deciding which of
+    /// them holds the bytes is the walker's job (`scan::walker::clones`).
+    pub fn is_clone(&self) -> bool {
+        self.clone_id.is_some_and(|id| id != self.inode)
+    }
 }
 
 /// The BLAKE3 hash of a file's whole contents.

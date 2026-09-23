@@ -32,6 +32,7 @@ pub(super) fn subtree(identity: &DirIdentity, size_bytes: u64) -> CachedSubtree 
             from_cache: true,
         }],
         files: Vec::new(),
+        kept_clones: Vec::new(),
     }
 }
 
@@ -79,6 +80,25 @@ fn every_directory_becomes_a_node_carrying_its_whole_subtree() {
     assert_eq!(node(&result, "/vol/a/sub").file_count, 1);
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert!(!root.children_truncated);
+}
+
+#[test]
+fn a_tree_hundreds_of_levels_deep_is_walked_to_the_bottom() {
+    // Deeper than a thread's default stack survives in a debug build, so the
+    // walker's own pool is what makes this pass. A macOS path allows 512
+    // levels; half of that keeps the in-memory tree, whose lookups cost a
+    // path comparison per node, under a second here.
+    const DEPTH: usize = 256;
+    let fs = FakeFileOps::new().with_root("/vol", 1);
+    let leaf = format!("/vol{}/leaf", "/d".repeat(DEPTH));
+    fs.add_file(&leaf, b"x");
+
+    let result = walk(Path::new("/vol"), &WalkOptions::default(), &fs);
+
+    assert_eq!(result.nodes.len(), DEPTH + 1, "one node per level and the root");
+    assert_eq!(node(&result, "/vol").file_count, 1);
+    assert_eq!(node(&result, "/vol").dir_count, DEPTH as u64);
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
 }
 
 #[test]

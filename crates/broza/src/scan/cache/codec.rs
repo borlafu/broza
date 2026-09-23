@@ -12,11 +12,13 @@ use crate::scan::cache::key::DirRecord;
 pub const MAGIC: &[u8; 4] = b"BRZC";
 /// Layout version of the store; bumped whenever [`DirRecord`] changes shape.
 ///
+/// Version 4 (ADR 0009): each file record carries its APFS clone id, so a
+/// subtree served from the store tells its clones apart the way a walk does.
 /// Version 3 (ADR 0008): records carry their child directories (with their
 /// device) and their big files, so a subtree can be rebuilt from the store.
 /// Version 2 was the same without the child's device and never shipped; a
-/// file in either older layout is replaced, not refused.
-pub const STORE_VERSION: u8 = 3;
+/// file in any older layout is replaced, not refused.
+pub const STORE_VERSION: u8 = 4;
 /// What the user can do about a cache Broza refuses to read.
 pub const NO_CACHE_HINT: &str = "retry with --no-cache";
 /// Bytes of the header: the magic plus the version byte.
@@ -93,6 +95,7 @@ mod tests {
 
     fn record(inode: u64) -> DirRecord {
         DirRecord {
+            kept_clones: Vec::new(),
             key: CacheKey { device: 1, inode, mtime_ns: 1_700_000_000_000_000_000 },
             size_bytes: 4096,
             allocated_bytes: 8192,

@@ -36,6 +36,9 @@ pub struct CachedSubtree {
     pub nodes: Vec<DirNode>,
     /// The files the cache keeps, anywhere in the subtree.
     pub files: Vec<FileEntry>,
+    /// The clone families whose credited clone lives in the subtree, as
+    /// `(device, original inode)`.
+    pub kept_clones: Vec<(u64, u64)>,
 }
 
 /// What the scan cache keys a directory by (`docs/implementation-plan.md` §3.4).
@@ -152,7 +155,8 @@ pub struct FileEntry {
     pub path: PathBuf,
     /// Apparent size in bytes.
     pub size_bytes: u64,
-    /// Allocated size in bytes.
+    /// Allocated size in bytes: the blocks removing the file would free. Zero
+    /// for a clone whose family is counted elsewhere (`clones.rs`).
     pub allocated_bytes: u64,
     /// Device id (`st_dev`).
     pub device: u64,
@@ -164,9 +168,17 @@ pub struct FileEntry {
     pub modified: Option<Timestamp>,
     /// Last access time, before any detector read the file.
     pub accessed: Option<Timestamp>,
+    /// APFS clone id; files of one family share it, and one that was never
+    /// cloned carries its own inode. `None` where the filesystem has none.
+    pub clone_id: Option<u64>,
 }
 
 impl FileEntry {
+    /// `true` when this file shares its blocks with the file it was cloned from.
+    pub fn is_clone(&self) -> bool {
+        self.clone_id.is_some_and(|id| id != self.inode)
+    }
+
     /// A file of `size_bytes` with one name and no known dates, for tests.
     #[cfg(test)]
     pub(crate) fn sized(path: &str, size_bytes: u64) -> Self {
@@ -179,6 +191,7 @@ impl FileEntry {
             link_count: 1,
             modified: None,
             accessed: None,
+            clone_id: None,
         }
     }
 }
@@ -268,6 +281,12 @@ pub struct WalkResult {
     pub cache_files: Vec<FileEntry>,
     /// Warnings about what could not be read, sorted by path.
     pub errors: Vec<Diagnostic>,
+    /// The clone families that keep their bytes in each directory: the
+    /// directory of the clone credited with them, and the family's
+    /// `(device, original inode)`. Sorted. The cache records them so that a
+    /// warm walk discounts the family's other clones wherever it meets them
+    /// (`clones.rs`).
+    pub kept_clones: Vec<(PathBuf, (u64, u64))>,
 }
 
 impl WalkResult {

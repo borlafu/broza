@@ -28,6 +28,7 @@ fn key(inode: u64) -> CacheKey {
 
 fn record(inode: u64, recorded_at: Timestamp) -> DirRecord {
     DirRecord {
+        kept_clones: Vec::new(),
         key: key(inode),
         size_bytes: 1000 + inode,
         allocated_bytes: 2000,
@@ -87,6 +88,7 @@ fn record_with(
             link_count: 1,
             modified_ns: Some(1),
             accessed_ns: Some(2),
+            clone_id: None,
         })
         .collect();
     DirRecord { child_dirs, files, ..record(inode, recorded_at) }

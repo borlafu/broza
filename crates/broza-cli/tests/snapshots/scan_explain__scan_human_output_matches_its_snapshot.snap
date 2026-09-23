@@ -79,7 +79,7 @@ Physical disk  disk8  —  Disk Image  (1.3 GB)  (external)
    Volumes in this container:
    └ Kiro CLI          Unknown  1.1 GB
 
-Sizes below are upper bounds: this volume holds APFS clones, which are counted separately (see the warning on stderr).
+Sizes below are upper bounds: the walk measured more than this volume holds (see the warning on stderr).
 
 Largest consumers on Data:
   212.4 GB  ~/Library/Developer/Xcode/DerivedData/App/Build/app.o

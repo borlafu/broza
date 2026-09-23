@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use super::{ATTR_CMN_ERROR, COMMON_ATTRS, FILE_ATTRS, MIN_ENTRY_LEN, device_of, parse_batch, parse_entry};
+use super::{
+    ATTR_CMN_ERROR, COMMON_ATTRS, EXTENDED_ATTRS, FILE_ATTRS, MIN_ENTRY_LEN, device_of, parse_batch,
+    parse_entry,
+};
 
 /// Inode used by the entries built here.
 const INODE: u64 = 42;
@@ -12,6 +15,12 @@ const DEVICE: u32 = 16_777_232;
 const LENGTH: u64 = 1234;
 /// Allocated size of the entry built here.
 const ALLOCATED: u64 = 8192;
+/// Clone id of the entry built here: another file's inode, so it is a clone.
+const CLONE_ID: u64 = 7;
+/// `VREG`, a regular file.
+const REGULAR: u32 = 1;
+/// `VLNK`, a symbolic link.
+const SYMLINK: u32 = 5;
 
 /// A `u32` that a `usize` fits into, or a test failure.
 fn small(value: usize) -> u32 {
@@ -23,6 +32,19 @@ fn small(value: usize) -> u32 {
 /// `returned_common` and `returned_file` decide which fields are present, so a
 /// test can build the buffer a directory or a broken entry would produce.
 fn entry(returned_common: u32, returned_file: u32, name: &[u8], inode: u64, error: u32) -> Vec<u8> {
+    entry_of(returned_common, returned_file, EXTENDED_ATTRS, REGULAR, name, inode, error)
+}
+
+/// [`entry`], choosing the fork group and the object type as well.
+fn entry_of(
+    returned_common: u32,
+    returned_file: u32,
+    returned_fork: u32,
+    object_type: u32,
+    name: &[u8],
+    inode: u64,
+    error: u32,
+) -> Vec<u8> {
     let mut body = Vec::new();
     let mut push_if = |present: bool, bytes: &[u8]| {
         if present {
@@ -32,7 +54,7 @@ fn entry(returned_common: u32, returned_file: u32, name: &[u8], inode: u64, erro
     // The name reference comes first; its offset is filled in below.
     push_if(returned_common & libc::ATTR_CMN_NAME != 0, &[0_u8; 8]);
     push_if(returned_common & libc::ATTR_CMN_DEVID != 0, &DEVICE.to_ne_bytes());
-    push_if(returned_common & libc::ATTR_CMN_OBJTYPE != 0, &1_u32.to_ne_bytes());
+    push_if(returned_common & libc::ATTR_CMN_OBJTYPE != 0, &object_type.to_ne_bytes());
     push_if(returned_common & libc::ATTR_CMN_MODTIME != 0, &[0_u8; 16]);
     push_if(returned_common & libc::ATTR_CMN_ACCTIME != 0, &[0_u8; 16]);
     push_if(returned_common & libc::ATTR_CMN_FLAGS != 0, &0_u32.to_ne_bytes());
@@ -41,6 +63,7 @@ fn entry(returned_common: u32, returned_file: u32, name: &[u8], inode: u64, erro
     push_if(returned_file & libc::ATTR_FILE_LINKCOUNT != 0, &1_u32.to_ne_bytes());
     push_if(returned_file & libc::ATTR_FILE_ALLOCSIZE != 0, &ALLOCATED.to_ne_bytes());
     push_if(returned_file & libc::ATTR_FILE_DATALENGTH != 0, &LENGTH.to_ne_bytes());
+    push_if(returned_fork & libc::ATTR_CMNEXT_CLONEID != 0, &CLONE_ID.to_ne_bytes());
 
     let mut bytes = Vec::new();
     let length = super::HEADER_LEN + body.len() + name.len() + 1;
@@ -49,7 +72,7 @@ fn entry(returned_common: u32, returned_file: u32, name: &[u8], inode: u64, erro
     bytes.extend_from_slice(&0_u32.to_ne_bytes()); // volattr
     bytes.extend_from_slice(&0_u32.to_ne_bytes()); // dirattr
     bytes.extend_from_slice(&returned_file.to_ne_bytes());
-    bytes.extend_from_slice(&0_u32.to_ne_bytes()); // forkattr
+    bytes.extend_from_slice(&returned_fork.to_ne_bytes());
     bytes.extend_from_slice(&body);
     bytes.extend_from_slice(name);
     bytes.push(0);
@@ -79,6 +102,31 @@ fn an_entry_with_every_attribute_is_read_out_of_the_buffer() {
     assert_eq!(meta.device, u64::from(DEVICE));
     assert!(!meta.is_dir);
     assert!(!meta.is_dataless);
+    assert_eq!(meta.clone_id, Some(CLONE_ID), "packed after the file attributes");
+    assert!(meta.is_clone());
+}
+
+#[test]
+fn a_symlink_carries_no_clone_id_even_when_the_kernel_returned_one() {
+    let link =
+        entry_of(COMMON_ATTRS & !ATTR_CMN_ERROR, FILE_ATTRS, EXTENDED_ATTRS, SYMLINK, b"link", INODE, 0);
+
+    let parsed = parse_entry(&link).unwrap_or_else(|| panic!("a symlink parses"));
+
+    let meta = parsed.meta.unwrap_or_else(|| panic!("a symlink is read from the buffer"));
+    assert!(meta.is_symlink);
+    assert_eq!(meta.clone_id, None, "the plain adapter asks for regular files only");
+}
+
+#[test]
+fn an_entry_returned_without_the_clone_id_is_complete_and_knows_nothing_about_clones() {
+    let plain = entry_of(COMMON_ATTRS & !ATTR_CMN_ERROR, FILE_ATTRS, 0, REGULAR, b"file", INODE, 0);
+
+    let parsed = parse_entry(&plain).unwrap_or_else(|| panic!("a plain entry parses"));
+
+    let meta = parsed.meta.unwrap_or_else(|| panic!("no clone id is not a reason to lstat"));
+    assert_eq!(meta.clone_id, None);
+    assert!(!meta.is_clone());
 }
 
 #[test]

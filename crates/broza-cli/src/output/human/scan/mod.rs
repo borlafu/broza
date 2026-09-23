@@ -63,9 +63,10 @@ pub struct Folders<'a> {
 /// What is printed when the selection left nothing Broza may walk.
 const NOTHING_WALKED: &str =
     "No folder scan: none of the selected volumes is one Broza may walk (only data and user volumes are).";
-/// The line that keeps the consumers list honest under clone overcount.
-const UPPER_BOUNDS_NOTE: &str = "Sizes below are upper bounds: this volume holds APFS clones, which are \
-                                 counted separately (see the warning on stderr).";
+/// The line that keeps the consumers list honest when the walk measured more
+/// than the volume holds.
+const UPPER_BOUNDS_NOTE: &str = "Sizes below are upper bounds: the walk measured more than this volume \
+                                 holds (see the warning on stderr).";
 
 /// The disk map followed by the folder half: consumers list, or trees with `--tree`.
 pub fn render_with_folders(report: &ScanReport, folders: &Folders<'_>, policy: ColorPolicy) -> String {

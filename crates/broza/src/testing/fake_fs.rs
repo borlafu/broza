@@ -48,6 +48,9 @@ pub struct FakeFileOps {
     pub(super) locks: Arc<Mutex<BTreeSet<PathBuf>>>,
     /// Prefixes whose filesystem has no `renamex_np`, as exFAT does not.
     pub(super) no_exclusive_rename: Mutex<Vec<PathBuf>>,
+    /// Directories whose open handle reports a wrong identity, as if the
+    /// directory had been swapped between the listing and the open.
+    pub(super) misreported_identity: Mutex<Vec<PathBuf>>,
 }
 
 impl Default for FakeFileOps {
@@ -56,6 +59,7 @@ impl Default for FakeFileOps {
             tree: Mutex::new(Tree::new()),
             locks: Arc::new(Mutex::new(BTreeSet::new())),
             no_exclusive_rename: Mutex::new(Vec::new()),
+            misreported_identity: Mutex::new(Vec::new()),
         }
     }
 }
@@ -110,6 +114,17 @@ impl FileOps for FakeFileOps {
             return Err(errno_error(format!("open directory {}", path.display()), ENOTDIR));
         }
         Ok(Box::new(PathDirHandle(path.to_path_buf())))
+    }
+
+    fn dir_identity(&self, dir: &dyn DirHandle) -> Option<(u64, u64)> {
+        let path = &dir.as_any().downcast_ref::<PathDirHandle>()?.0;
+        if lock(&self.misreported_identity).iter().any(|swapped| swapped == path) {
+            return Some((0, 0));
+        }
+        let tree = lock(&self.tree);
+        let resolved = resolve_parent(&tree, path).ok()?;
+        let node = tree.get(&resolved)?;
+        Some((tree.device_for(&resolved), node.inode))
     }
 
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, BrozaError> {

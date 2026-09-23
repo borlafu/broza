@@ -31,29 +31,38 @@ four warnings. That design is not the one recorded here.
    the handle a descriptor and lists through it: `getattrlistbulk` on the descriptor, entries the
    buffer leaves out stated with `fstatat(dir_fd, name, AT_SYMLINK_NOFOLLOW)` and `getattrlistat`
    for the clone id, and — when the bulk reader will not answer — `readdir` on a fresh descriptor
-   of the same directory (`openat(fd, ".")`: a duplicate would share the offset the bulk reader
-   moved to the end, and list nothing) plus `fstatat` per entry; a `readdir` error is an error,
-   never a shorter directory. Nothing in the listing hands the kernel a path
+   of the same directory (`openat(fd, ".")`: a duplicate shares the position the bulk reader
+   moved to the end, and rewinding it does not move what `readdir` sees, so it lists nothing;
+   measured and pinned by a test) plus `fstatat` per entry; a `readdir` error is an error, never a
+   shorter directory. Reopening `.` needs search permission on the directory, which every
+   `fstatat` below would need as well, so a directory without it is one warning instead of one
+   per entry. Nothing in the listing hands the kernel a path
    (`adapters/dir_fd.rs`, `adapters/std_fs_dirs.rs`).
 2. Each directory is opened on its own, by path, with `O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK |
    O_CLOEXEC`. When the kernel answers `ENAMETOOLONG`, the deepest ancestor that does open is found
-   by asking the kernel, ancestor by ancestor, and the rest of the way is opened one relative name
-   at a time through the previous descriptor, closing it. The depth costs calls — a few hundred
-   short `open`s for a directory a few hundred levels past the limit — never descriptors.
+   by asking the kernel, ancestor by ancestor (strings of 1024 bytes or more are skipped without
+   a call), and the rest of the way is opened relative to it: one `openat` with `O_NOFOLLOW_ANY`
+   per stretch of the relative path shorter than `PATH_MAX`, so thirty-two names cost one call, no
+   symlink is followed anywhere, and the depth costs calls, never descriptors.
 3. The walker opens a directory, lists it, and drops the handle before descending into the
-   children (`walker.rs walk_dir`). The walk therefore holds one descriptor per directory being
-   listed, as the path-based walk did; `tests/deep_paths.rs` passes under `ulimit -n 256`, in CI
-   too. No descriptor limit is raised, and the library has no process-global side effect.
+   children (`walker.rs walk_dir`), so on an ordinary tree the walk holds one descriptor per
+   directory being listed, as the path-based walk did — plus the anchors of item 4 on a deep one,
+   and, in fallback mode only, whatever a thread waiting on the parallel `fstatat`s picks up.
+   `tests/deep_paths.rs` passes under `ulimit -n 256`, in CI too. No descriptor limit is raised,
+   and the library has no process-global side effect.
 4. Reaching each deep directory from the top would cost steps quadratic in the depth past the
    limit (a review measured 35 s for 8 chains of 600 levels, 289 s for 64). So once a path is 768
    bytes long, the walker keeps one handle open every 32 levels as the anchor the directories
-   below are opened from (`FileOps::open_dir_below`): at most 32 relative steps per directory,
-   one extra descriptor per 32 levels on each chain being walked, none on an ordinary tree.
+   below are opened from (`FileOps::open_dir_below`, `walker/anchor.rs`): at most 32 names per
+   directory, opened in one call, one extra descriptor per 32 levels on each chain being walked,
+   none on an ordinary tree.
 5. After opening, the descriptor's `(device, inode)` is compared with the listing that named the
    directory (`FileOps::dir_identity`, `fstat`). Opening by path follows symlinks in every
    component but the last, so an ancestor swapped for a link between the listing and the open
    would otherwise be walked under the wrong identity — and cached under it. A mismatch is a
-   warning and the directory is left unwalked.
+   warning and the directory is left unwalked. On a filesystem whose inode numbers are not
+   stable across a vnode reclaim (some FUSE and network filesystems, outside the supported APFS
+   and HFS+) that would drop the subtree with the same warning.
 6. The plain adapter's `read_dir_with_metadata(path)`, used by the detectors on shallow paths, is
    unchanged. The in-memory fake's `open_dir` refuses what `open(O_DIRECTORY | O_NOFOLLOW)`
    refuses — a symlink to a directory included — so the two agree in the contract test.

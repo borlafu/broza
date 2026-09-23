@@ -150,23 +150,26 @@ fn collect(dir: &File) -> Collected {
     loop {
         let read = BUFFER.with(|buffer| {
             let mut buffer = buffer.borrow_mut();
-            let count = call_bulk(dir, &mut request, &mut buffer);
+            let count = match call_bulk(dir, &mut request, &mut buffer) {
+                Ok(count) => count,
+                Err(error) => return (Err(error), None),
+            };
             let parsed = usize::try_from(count)
                 .ok()
                 .map_or(Some(Vec::new()), |count| parse::parse_batch(&buffer, count));
-            (count, parsed)
+            (Ok(count), parsed)
         });
         match read {
-            (count, _) if count < 0 => return failed_call(),
-            (0, _) => return Collected::Entries(entries),
-            (_, None) => return Collected::Unsupported,
-            (_, Some(parsed)) => entries.extend(parsed),
+            (Err(error), _) => return failed_call(&error),
+            (Ok(0), _) => return Collected::Entries(entries),
+            (Ok(_), None) => return Collected::Unsupported,
+            (Ok(_), Some(parsed)) => entries.extend(parsed),
         }
     }
 }
 
-/// One `getattrlistbulk` call; negative means the kernel refused.
-fn call_bulk(dir: &File, request: &mut libc::attrlist, buffer: &mut [u8]) -> i32 {
+/// One `getattrlistbulk` call: how many entries it wrote, or why it refused.
+fn call_bulk(dir: &File, request: &mut libc::attrlist, buffer: &mut [u8]) -> std::io::Result<i32> {
     // SAFETY: `request` is the fixed-size struct libc declares and `buffer` is
     // a live allocation of `buffer.len()` bytes; the kernel writes no more than
     // that. The descriptor belongs to a `File` that outlives the call. An
@@ -180,7 +183,6 @@ fn call_bulk(dir: &File, request: &mut libc::attrlist, buffer: &mut [u8]) -> i32
             u64::from(libc::FSOPT_ATTR_CMN_EXTENDED),
         )
     })
-    .unwrap_or(-1)
 }
 
 /// The attribute list handed to the kernel.
@@ -246,13 +248,13 @@ fn agrees_with_lstat(dir: &File, parent: &Path, parsed: &[ParsedEntry]) -> Optio
     Some(verified)
 }
 
-/// Read the errno of a failed call: a kernel that cannot do this at all is a
+/// Classify a failed call: a kernel that cannot do this at all is a
 /// different thing from one directory that went wrong.
 ///
 /// `ENOTSUP` means the filesystem does not implement the call, and no other
 /// directory on it will either.
-fn failed_call() -> Collected {
-    if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP) {
+fn failed_call(error: &std::io::Error) -> Collected {
+    if error.raw_os_error() == Some(libc::ENOTSUP) {
         return Collected::Unsupported;
     }
     Collected::Unavailable

@@ -11,8 +11,9 @@
 //! `getattrlistbulk` already works on a descriptor; this file supplies the
 //! rest: `openat`, `fstatat`, `fdopendir` (ADR 0010).
 //!
-//! One descriptor is held per directory being listed, never a chain: the
-//! walk's descriptor use is what it was when it opened by path.
+//! One descriptor is held per directory being listed, plus one anchor every
+//! few dozen levels once paths grow past what the kernel can name: the walk's
+//! descriptor use is what it was when it opened by path, within a handful.
 
 #![allow(unsafe_code)]
 
@@ -21,7 +22,7 @@ use std::fs::{File, OpenOptions};
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
@@ -43,6 +44,12 @@ pub(crate) const PATH_MAX_BYTES: usize = 1024;
 /// never blocking, never inherited by a child process.
 const DIRECTORY_FLAGS: libc::c_int =
     libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+/// Flags a relative path below an open directory is opened with: as above,
+/// but no symlink is followed in *any* component (`O_NOFOLLOW_ANY`, which the
+/// kernel refuses together with `O_NOFOLLOW`), so a chain of names never
+/// leaves the directory it started from.
+const RELATIVE_FLAGS: libc::c_int =
+    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW_ANY | libc::O_NONBLOCK | libc::O_CLOEXEC;
 
 /// Open the directory at `path`, and only a directory, without blocking on anything.
 ///
@@ -53,13 +60,13 @@ const DIRECTORY_FLAGS: libc::c_int =
 /// one relative name at a time, each step through the previous descriptor and
 /// closing it. So the depth costs calls, never descriptors.
 pub(crate) fn open_directory(path: &Path) -> std::io::Result<File> {
-    let (anchor, mut dir) = open_deepest_ancestor(path)?;
+    let (anchor, dir) = open_deepest_ancestor(path)?;
     let rest =
         path.strip_prefix(anchor).map_err(|_| std::io::Error::from_raw_os_error(libc::ENAMETOOLONG))?;
-    for step in rest.components() {
-        dir = open_directory_in(&dir, step.as_os_str())?;
+    if rest.as_os_str().is_empty() {
+        return Ok(dir);
     }
-    Ok(dir)
+    open_directory_below(&dir, rest)
 }
 
 /// `path` itself when it opens; otherwise the deepest ancestor that does, when
@@ -88,14 +95,34 @@ fn open_by_path(path: &Path) -> std::io::Result<File> {
     OpenOptions::new().read(true).custom_flags(DIRECTORY_FLAGS).open(path)
 }
 
-/// Open the directory `name` directly inside `parent`, the same way.
-fn open_directory_in(parent: &File, name: &OsStr) -> std::io::Result<File> {
-    let c_name = CString::new(name.as_bytes())?;
-    // SAFETY: `c_name` is a valid NUL-terminated string that outlives the
+/// Open the directory `relative` steps below the open `anchor`, in as few
+/// calls as the kernel allows: one `openat` per stretch of the relative path
+/// shorter than `PATH_MAX`, no symlink followed anywhere, each intermediate
+/// descriptor closed. Thirty-two names cost one call, not thirty-two.
+pub(crate) fn open_directory_below(anchor: &File, relative: &Path) -> std::io::Result<File> {
+    let mut dir: Option<File> = None;
+    let mut stretch = PathBuf::new();
+    for step in relative.components() {
+        let name = step.as_os_str();
+        let would_be = stretch.as_os_str().len().saturating_add(1).saturating_add(name.len());
+        if !stretch.as_os_str().is_empty() && would_be >= PATH_MAX_BYTES {
+            dir = Some(open_relative(dir.as_ref().unwrap_or(anchor), &stretch)?);
+            stretch = PathBuf::new();
+        }
+        stretch.push(name);
+    }
+    if stretch.as_os_str().is_empty() {
+        stretch.push(".");
+    }
+    open_relative(dir.as_ref().unwrap_or(anchor), &stretch)
+}
+
+/// One `openat` of the directory `relative` below `parent`.
+fn open_relative(parent: &File, relative: &Path) -> std::io::Result<File> {
+    let c_path = CString::new(relative.as_os_str().as_bytes())?;
+    // SAFETY: `c_path` is a valid NUL-terminated string that outlives the
     // call, and `parent` is an open descriptor for as long as the borrow.
-    let fd = retrying(|| unsafe {
-        libc::openat(parent.as_raw_fd(), c_name.as_ptr(), libc::O_RDONLY | DIRECTORY_FLAGS)
-    })?;
+    let fd = retrying(|| unsafe { libc::openat(parent.as_raw_fd(), c_path.as_ptr(), RELATIVE_FLAGS) })?;
     // SAFETY: `fd` was just returned by `openat` and is owned by nobody else.
     Ok(unsafe { File::from_raw_fd(fd) })
 }
@@ -140,11 +167,11 @@ pub(crate) fn metadata_in(parent: &File, name: &OsStr, path: &Path) -> Result<En
 /// [`EntryMetadata`] from a `struct stat`, field for field as `std` reads it.
 #[expect(
     clippy::cast_sign_loss,
-    reason = "matching std::os::unix::fs::MetadataExt, which widens the signed st_dev and reads st_size/st_blocks as u64"
+    reason = "matching std::os::unix::fs::MetadataExt, which reads st_size and st_blocks as u64"
 )]
 fn entry_metadata(stat: &libc::stat, kind: libc::mode_t, clone_id: Option<u64>) -> EntryMetadata {
     EntryMetadata {
-        device: i64::from(stat.st_dev) as u64,
+        device: device_of(stat),
         inode: stat.st_ino,
         size_bytes: stat.st_size as u64,
         allocated_bytes: (stat.st_blocks as u64).saturating_mul(STAT_BLOCK_BYTES),
@@ -170,10 +197,14 @@ fn timestamp(seconds: i64, nanoseconds: i64) -> Option<Timestamp> {
 /// reads through a duplicate of the descriptor (`fdopendir` takes ownership of
 /// the one it is given) and never hands the kernel a path.
 pub(crate) fn read_dir_names_in(dir: &File) -> std::io::Result<Vec<OsString>> {
-    // A duplicate would share the offset the bulk reader may have moved to the
-    // end; `openat(".")` gives a fresh descriptor on the same directory, with
-    // its own offset at the start and close-on-exec from the first instant.
-    let fresh = open_directory_in(dir, OsStr::new("."))?.into_raw_fd();
+    // `fdopendir` takes ownership of the descriptor it is given and reads
+    // from where that descriptor stands, which the bulk reader has moved to
+    // the end; a duplicate shares that position and `lseek` does not move
+    // what `readdir` sees (measured, pinned by `bulk_dir::tests`). Opening
+    // `.` below the descriptor gives a fresh one at the start, close-on-exec
+    // from the first instant. It needs search permission on the directory,
+    // which every `fstatat` below would need as well.
+    let fresh = open_relative(dir, Path::new("."))?.into_raw_fd();
     // SAFETY: `fresh` is a descriptor this call owns; `fdopendir` takes it
     // over on success and leaves it to us on failure.
     let stream = unsafe { libc::fdopendir(fresh) };
@@ -189,13 +220,31 @@ pub(crate) fn read_dir_names_in(dir: &File) -> std::io::Result<Vec<OsString>> {
     names
 }
 
+/// `(device, inode)` of the open directory, to check it is the one the
+/// listing named: opening by path follows symlinks in every component but the
+/// last, so an ancestor swapped for a link between the listing and the open
+/// would otherwise be walked under the wrong identity.
+pub(crate) fn identity_of(dir: &File) -> Option<(u64, u64)> {
+    // SAFETY: an all-zero `struct stat` is a valid value of a plain C struct.
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `dir` is open and `stat` is a live, correctly sized struct.
+    retrying(|| unsafe { libc::fstat(dir.as_raw_fd(), &raw mut stat) }).ok()?;
+    Some((device_of(&stat), stat.st_ino))
+}
+
+/// A device id the way `std` widens it: `dev_t` is signed.
+#[expect(clippy::cast_sign_loss, reason = "matching std::os::unix::fs::MetadataExt::dev")]
+fn device_of(stat: &libc::stat) -> u64 {
+    i64::from(stat.st_dev) as u64
+}
+
 /// Every name in the stream but `.` and `..`; an error partway through is an
 /// error, not a shorter directory (`readdir` reports one as NULL with errno
 /// set, and NULL with errno clear at the end).
 fn read_names(stream: *mut libc::DIR) -> std::io::Result<Vec<OsString>> {
     let mut names = Vec::new();
     loop {
-        // SAFETY: setting errno is always allowed; `errno_location` is valid.
+        // SAFETY: `__error()` is the thread's errno slot; writing it is allowed.
         unsafe { *libc::__error() = 0 };
         // SAFETY: `stream` is a live `DIR*` until the caller's `closedir`; the
         // returned entry is valid until the next call on the same stream.
@@ -220,45 +269,13 @@ fn read_names(stream: *mut libc::DIR) -> std::io::Result<Vec<OsString>> {
     }
 }
 
-/// `(device, inode)` of the open directory, to check it is the one the
-/// listing named: opening by path follows symlinks in every component but the
-/// last, so an ancestor swapped for a link between the listing and the open
-/// would otherwise be walked under the wrong identity.
-pub(crate) fn identity_of(dir: &File) -> Option<(u64, u64)> {
-    // SAFETY: an all-zero `struct stat` is a valid value of a plain C struct.
-    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: `dir` is open and `stat` is a live, correctly sized struct.
-    retrying(|| unsafe { libc::fstat(dir.as_raw_fd(), &raw mut stat) }).ok()?;
-    Some((device_of(&stat), stat.st_ino))
-}
-
-/// A device id the way `std` widens it: `dev_t` is signed.
-#[expect(clippy::cast_sign_loss, reason = "matching std::os::unix::fs::MetadataExt::dev")]
-fn device_of(stat: &libc::stat) -> u64 {
-    i64::from(stat.st_dev) as u64
-}
-
-/// Open the directory `relative` steps below the open `anchor`, one relative
-/// name at a time, closing each intermediate descriptor.
-pub(crate) fn open_directory_below(anchor: &File, relative: &Path) -> std::io::Result<File> {
-    let mut steps = relative.components();
-    let Some(first) = steps.next() else {
-        return open_directory_in(anchor, OsStr::new("."));
-    };
-    let mut dir = open_directory_in(anchor, first.as_os_str())?;
-    for step in steps {
-        dir = open_directory_in(&dir, step.as_os_str())?;
-    }
-    Ok(dir)
-}
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
     use std::os::unix::fs::MetadataExt;
     use std::path::Path;
 
-    use super::{metadata_in, open_directory, open_directory_in, read_dir_names_in};
+    use super::{identity_of, metadata_in, open_directory, open_directory_below, read_dir_names_in};
     use crate::adapters::StdFileOps;
     use crate::ports::FileOps;
 
@@ -269,7 +286,7 @@ mod tests {
         std::fs::write(dir.path().join("sub/file"), b"hello").unwrap_or_else(|e| panic!("write: {e}"));
         std::os::unix::fs::symlink("file", dir.path().join("sub/link")).unwrap_or_else(|e| panic!("ln: {e}"));
         let root = open_directory(dir.path()).unwrap_or_else(|e| panic!("open: {e}"));
-        let sub = open_directory_in(&root, OsStr::new("sub")).unwrap_or_else(|e| panic!("openat: {e}"));
+        let sub = open_directory_below(&root, Path::new("sub")).unwrap_or_else(|e| panic!("openat: {e}"));
 
         for name in ["file", "link"] {
             let path = dir.path().join("sub").join(name);
@@ -285,7 +302,7 @@ mod tests {
             std::fs::metadata(dir.path().join("sub")).unwrap_or_else(|e| panic!("{e}")).ino()
         );
         assert!(metadata_in(&sub, OsStr::new("missing"), Path::new("/x/missing")).is_err());
-        assert!(open_directory_in(&sub, OsStr::new("file")).is_err(), "a file is not a directory");
+        assert!(open_directory_below(&sub, Path::new("file")).is_err(), "a file is not a directory");
         let mut names = read_dir_names_in(&sub).unwrap_or_else(|e| panic!("readdir: {e}"));
         names.sort();
         assert_eq!(names, vec![OsStr::new("file"), OsStr::new("link")]);
@@ -296,28 +313,18 @@ mod tests {
         assert_eq!(again, names);
         assert!(metadata_in(&sub, OsStr::new("file"), Path::new("/x/file")).is_ok());
         assert_eq!(
-            super::identity_of(&sub),
+            identity_of(&sub),
             Some((sub_meta.device, sub_meta.inode)),
             "the descriptor is the directory the listing named"
         );
-        let below = super::open_directory_below(&root, Path::new("sub")).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(super::identity_of(&below), super::identity_of(&sub));
-    }
-
-    #[test]
-    fn a_listing_after_the_bulk_reader_read_to_the_end_is_still_complete() {
-        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
-        for i in 0..50 {
-            std::fs::write(dir.path().join(format!("f{i}")), b"x").unwrap_or_else(|e| panic!("write: {e}"));
-        }
-        let handle = open_directory(dir.path()).unwrap_or_else(|e| panic!("open: {e}"));
-        // Move the descriptor's own offset to the end, as `getattrlistbulk` does.
-        let bulk = crate::adapters::bulk_dir::read_dir_with_attributes(dir.path());
-        assert!(bulk.is_none_or(|listing| listing.len() == 50));
-        let _ = crate::adapters::bulk_dir::read_dir_in(&handle, dir.path());
-
-        let names = read_dir_names_in(&handle).unwrap_or_else(|e| panic!("readdir: {e}"));
-
-        assert_eq!(names.len(), 50, "{names:?}");
+        std::fs::create_dir_all(dir.path().join("sub/x/y")).unwrap_or_else(|e| panic!("mkdir: {e}"));
+        std::os::unix::fs::symlink("y", dir.path().join("sub/x/ylink")).unwrap_or_else(|e| panic!("ln: {e}"));
+        let deep = open_directory_below(&root, Path::new("sub/x/y")).unwrap_or_else(|e| panic!("{e}"));
+        let by_path = open_directory(&dir.path().join("sub/x/y")).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(identity_of(&deep), identity_of(&by_path), "several names in one step");
+        assert!(
+            open_directory_below(&root, Path::new("sub/x/ylink")).is_err(),
+            "no symlink is followed anywhere in a relative open"
+        );
     }
 }

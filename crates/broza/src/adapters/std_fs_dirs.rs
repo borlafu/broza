@@ -71,9 +71,10 @@ pub(super) fn dir_identity(dir: &dyn DirHandle) -> Option<(u64, u64)> {
 /// The bulk reader answers when it can; otherwise the plain pair, through the
 /// same descriptor: `readdir` on a fresh descriptor of the same directory,
 /// `fstatat` per entry, spread over the pool because each `fstatat` waits on
-/// the disk. That spreading lets a waiting thread pick up another directory's
-/// work while this descriptor is held, so in fallback mode descriptors can
-/// nest on one thread; the bulk path, the ordinary one, is sequential.
+/// the disk. That
+/// spreading lets a waiting thread pick up another directory's work while this
+/// descriptor is held, so in fallback mode descriptors can nest on one thread;
+/// the bulk path, the ordinary one, is sequential.
 pub(super) fn list_dir(
     dir: &dyn DirHandle,
     path: &Path,

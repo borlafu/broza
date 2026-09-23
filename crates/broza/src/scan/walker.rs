@@ -41,6 +41,7 @@
 //! Below that, an unchanged directory is taken from its [`crate::scan::DirRecord`] whole —
 //! bytes, counts and all — and its subtree is not walked.
 
+mod anchor;
 mod clones;
 mod dedupe;
 mod leaves;
@@ -60,7 +61,7 @@ pub use types::{
 };
 
 use crate::BrozaError;
-use crate::ports::{DirHandle, EntryMetadata, FileOps};
+use crate::ports::{EntryMetadata, FileOps};
 use leaves::{Children, Leaves};
 use parts::{Context, Partial, Totals};
 use top_files::TopFiles;
@@ -125,24 +126,17 @@ fn walk_dir(
     path: &Path,
     meta: &EntryMetadata,
     depth: usize,
-    anchor: Option<Arc<Anchor>>,
+    anchor: Option<Arc<anchor::Anchor>>,
     context: &Context<'_>,
 ) -> Partial {
     let identity = DirIdentity::of(path, meta);
     if let Some(subtree) = cached(&identity, depth, context).filter(|subtree| !subtree.nodes.is_empty()) {
         return cached_dir(&identity, subtree, depth, context);
     }
-    let dir = match open_below(path, anchor.as_deref(), context) {
+    let dir = match anchor::open_checked(path, meta, anchor.as_deref(), context) {
         Ok(dir) => dir,
         Err(error) => return unreadable_dir(&identity, &error, context),
     };
-    if let Some(found) = context.fs.dir_identity(dir.as_ref())
-        && found != (meta.device, meta.inode)
-    {
-        // Not the directory the listing named: something on the way was
-        // replaced between the listing and the open. Left unwalked, said so.
-        return unreadable_dir(&identity, &replaced(path), context);
-    }
     let listing = match context.fs.list_dir(dir.as_ref(), path) {
         Ok(listing) => listing,
         Err(error) => return unreadable_dir(&identity, &error, context),
@@ -152,11 +146,10 @@ fn walk_dir(
     let child_dirs = dirs.len() as u64;
     let cap = context.options.report_files_top;
     // The handle is not needed once the listing is in hand — children open
-    // their own, so the walk holds one descriptor per directory being listed —
-    // unless the path has grown past what the kernel can name: then every
-    // few dozen levels one handle stays open as the anchor the children are
-    // reached from, so a deep directory costs a bounded number of steps.
-    let anchor = Anchor::for_children(path, dir, anchor);
+    // their own — unless the path has grown past what the kernel can name:
+    // then every few dozen levels one stays open as the anchor the children
+    // are reached from (`anchor.rs`).
+    let anchor = anchor::Anchor::for_children(path, dir, anchor);
     let below = dirs
         .into_par_iter()
         .map(|(child, child_meta)| {
@@ -200,66 +193,6 @@ fn walk_dir(
         originals: leaves.originals.merge(below.originals),
         clones: leaves.clones.merge(below.clones),
         served_keepers: below.served_keepers,
-    }
-}
-
-/// Open `path`: by path, or below the nearest anchor when there is one.
-fn open_below(
-    path: &Path,
-    anchor: Option<&Anchor>,
-    context: &Context<'_>,
-) -> Result<Box<dyn DirHandle>, BrozaError> {
-    match anchor.and_then(|anchor| path.strip_prefix(&anchor.path).ok().map(|relative| (anchor, relative))) {
-        Some((anchor, relative)) => context.fs.open_dir_below(anchor.handle.as_ref(), relative, path),
-        None => context.fs.open_dir(path),
-    }
-}
-
-/// The error a directory earns when the descriptor opened for it is not the
-/// one the listing named.
-fn replaced(path: &Path) -> BrozaError {
-    BrozaError::Io {
-        context: format!("open directory {}", path.display()),
-        source: std::io::Error::other("replaced while scanning"),
-    }
-}
-
-/// An open directory kept as the starting point for the directories below it.
-///
-/// Paths longer than the kernel can name (`PATH_MAX`, 1024 bytes) are opened
-/// by relative steps; from the top of the tree each time that is quadratic in
-/// the depth past the limit (a review measured 35 s for 8 chains of 600
-/// levels). One handle kept every [`ANCHOR_EVERY_LEVELS`] levels bounds the
-/// steps per directory and costs one descriptor per that many levels on each
-/// chain being walked.
-struct Anchor {
-    /// The open directory.
-    handle: Box<dyn DirHandle>,
-    /// Its path, which every directory below it starts with.
-    path: PathBuf,
-    /// How many levels deep it is.
-    depth: usize,
-}
-
-/// Paths from this many bytes on are opened below an anchor: enough room
-/// before the kernel's limit that a symlink on the way does not push a path
-/// that looked short over it.
-const ANCHOR_FROM_BYTES: usize = 768;
-/// A new anchor is kept this many levels below the previous one.
-const ANCHOR_EVERY_LEVELS: usize = 32;
-
-impl Anchor {
-    /// The anchor the children of `path` are opened from: `dir` itself when
-    /// the path has grown long and the previous anchor is far enough up,
-    /// otherwise the previous one (or none, which drops `dir` here).
-    fn for_children(path: &Path, dir: Box<dyn DirHandle>, previous: Option<Arc<Self>>) -> Option<Arc<Self>> {
-        if path.as_os_str().len() < ANCHOR_FROM_BYTES {
-            return None;
-        }
-        let depth = path.components().count();
-        let due =
-            previous.as_ref().is_none_or(|anchor| depth.saturating_sub(anchor.depth) >= ANCHOR_EVERY_LEVELS);
-        if due { Some(Arc::new(Self { handle: dir, path: path.to_path_buf(), depth })) } else { previous }
     }
 }
 

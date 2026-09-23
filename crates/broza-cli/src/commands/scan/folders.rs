@@ -285,6 +285,7 @@ mod tests {
             warnings: Vec::new(),
             nodes: Vec::new(),
             files: Vec::new(),
+            clone_families: Vec::new(),
             root_refused: false,
         }
     }
@@ -356,6 +357,7 @@ mod tests {
             warnings: Vec::new(),
             nodes: Vec::new(),
             files: Vec::new(),
+            clone_families: Vec::new(),
             root_refused: false,
         };
         let scans = vec![scan(vec![item("/a", 5), item("/b", 4)]), scan(vec![item("/c", 3), item("/d", 2)])];

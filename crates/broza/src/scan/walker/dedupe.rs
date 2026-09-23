@@ -34,23 +34,18 @@ use crate::scan::walker::{DirNode, FileEntry};
 
 /// Settle every hard link: count it once, and mark who may not be cached.
 ///
-/// The sightings with one name — clones, which [`super::clones`] settles next —
-/// pass straight through as credited: a million of them is the ordinary case
-/// on a disk with a cloned media folder, and grouping them by inode would
-/// find a million groups of one.
+/// Every sighting here has more than one name; clones with one name go to the
+/// ledger [`super::clones`] settles next.
 pub(super) fn settle_hard_links(
     nodes: Vec<DirNode>,
     files: Vec<FileEntry>,
     links: Vec<LinkSighting>,
 ) -> Settled {
-    let (linked, single): (Vec<LinkSighting>, Vec<LinkSighting>) =
-        links.into_iter().partition(|link| link.link_count > 1);
-    if linked.is_empty() {
-        return Settled { nodes, files, credited: single, dropped: Vec::new() };
+    if links.is_empty() {
+        return Settled { nodes, files, credited: Vec::new(), dropped: Vec::new() };
     }
-    let nodes = mark_uncacheable(nodes, &hiders(&linked));
-    let (duplicates, mut credited) = partition_names(linked);
-    credited.extend(single);
+    let nodes = mark_uncacheable(nodes, &hiders(&links));
+    let (duplicates, credited) = partition_names(links);
     if duplicates.is_empty() {
         return Settled { nodes, files, credited, dropped: Vec::new() };
     }
@@ -82,29 +77,11 @@ pub(super) struct Settled {
 /// the walk never saw — another volume, an excluded path, a subtree that was
 /// itself served from the cache — no directory can be sure it holds them all.
 pub(super) fn hiders(links: &[LinkSighting]) -> HashSet<PathBuf> {
-    hiders_of(
-        links,
-        |link| (link.device, link.inode),
-        |group| {
-            u64::try_from(group.len())
-                .is_ok_and(|seen| Some(seen) == group.first().map(|link| link.link_count))
-        },
-    )
-}
-
-/// [`hiders`] over any grouping: `key` says which sightings share their bytes,
-/// `complete` whether a group is known to be the whole set.
-///
-/// Borrows the sightings rather than re-keying a copy of them: a folder of a
-/// million clones is exactly where a second copy would hurt.
-pub(super) fn hiders_of(
-    links: &[LinkSighting],
-    key: impl Fn(&LinkSighting) -> (u64, u64),
-    complete: impl Fn(&[&LinkSighting]) -> bool,
-) -> HashSet<PathBuf> {
     let mut hiders: HashSet<PathBuf> = HashSet::new();
-    for (_, group) in group_by(links, key) {
-        let whole_set = complete(&group).then(|| lowest_common_directory(&group)).flatten();
+    for (_, group) in group_by_inode(links) {
+        let complete = u64::try_from(group.len())
+            .is_ok_and(|seen| Some(seen) == group.first().map(|link| link.link_count));
+        let whole_set = complete.then(|| lowest_common_directory(&group)).flatten();
         for link in &group {
             for ancestor in link.path.ancestors().skip(1) {
                 if whole_set.as_deref() == Some(ancestor) {
@@ -119,13 +96,10 @@ pub(super) fn hiders_of(
     hiders
 }
 
-/// The sightings sharing each key, grouped.
-fn group_by(
-    links: &[LinkSighting],
-    key: impl Fn(&LinkSighting) -> (u64, u64),
-) -> HashMap<(u64, u64), Vec<&LinkSighting>> {
+/// The sightings of each inode, grouped.
+fn group_by_inode(links: &[LinkSighting]) -> HashMap<(u64, u64), Vec<&LinkSighting>> {
     links.iter().fold(HashMap::new(), |mut groups, link| {
-        groups.entry(key(link)).or_insert_with(Vec::new).push(link);
+        groups.entry((link.device, link.inode)).or_insert_with(Vec::new).push(link);
         groups
     })
 }
@@ -291,7 +265,6 @@ mod tests {
             link_count,
             size_bytes,
             allocated_bytes: size_bytes,
-            clone_id: None,
         }
     }
 

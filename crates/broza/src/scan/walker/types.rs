@@ -287,6 +287,11 @@ pub struct WalkResult {
     /// warm walk discounts the family's other clones wherever it meets them
     /// (`clones.rs`).
     pub kept_clones: Vec<(PathBuf, (u64, u64))>,
+    /// Every clone family the walk knows of, as `(device, original inode)`,
+    /// sorted: the families of the clones it met, those subtrees served from
+    /// the cache keep, and those of the clones in the file lists. A file whose
+    /// `(device, inode)` is here has a clone holding its blocks.
+    pub clone_families: Vec<(u64, u64)>,
 }
 
 impl WalkResult {

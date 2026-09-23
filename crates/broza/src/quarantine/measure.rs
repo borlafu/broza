@@ -63,8 +63,9 @@ pub fn exceeds_cap(already_moved: u64, size_bytes: u64, max_size: Option<u64>) -
 }
 
 /// Allocated bytes a removal of `root` actually frees: every file with a single
-/// name, once. A file with more than one hard link keeps its blocks alive
-/// through the other names, so it frees nothing here (`AGENTS.md` §2.7).
+/// name and no clone family, once. A file with more than one hard link keeps
+/// its blocks alive through the other names, and an APFS clone through the
+/// rest of its family, so neither frees anything here (`AGENTS.md` §2.7).
 ///
 /// # Errors
 ///
@@ -78,7 +79,7 @@ pub fn measure_freed_bytes(fs: &dyn FileOps, root: &Path) -> Result<u64, BrozaEr
             pending.extend(fs.read_dir(&path)?);
             continue;
         }
-        if entry.link_count <= 1 {
+        if entry.link_count <= 1 && !entry.is_clone() {
             total = total.saturating_add(entry.allocated_bytes);
         }
     }

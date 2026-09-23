@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 
-use crate::detect::detector::{DetectContext, DetectPorts};
+use crate::detect::detector::{DetectContext, DetectPorts, HomeWalk};
 use crate::scan::{DirNode, FileEntry, FileReport, MountTable, WalkOptions, default_excludes, walk};
 use crate::testing::{FakeFileOps, FakeRunner, FakeSnapshots, mac_mount_table};
 
@@ -24,6 +24,7 @@ pub struct World<'a> {
     mounts: MountTable,
     nodes: Vec<DirNode>,
     files: Vec<FileEntry>,
+    clone_families: Vec<(u64, u64)>,
     snapshots: FakeSnapshots,
     process: FakeRunner,
 }
@@ -37,8 +38,7 @@ impl World<'_> {
             &self.mounts,
             "2026-09-21T10:00:00Z".parse::<Timestamp>().unwrap_or_default(),
             Duration::from_secs(365 * 24 * 60 * 60),
-            &self.nodes,
-            &self.files,
+            HomeWalk { nodes: &self.nodes, files: &self.files, clone_families: &self.clone_families },
         )
     }
 
@@ -84,6 +84,7 @@ pub fn context_over(fs: &FakeFileOps, home: PathBuf) -> World<'_> {
         mounts: mac_mount_table(),
         nodes: walked.nodes,
         files: walked.files,
+        clone_families: walked.clone_families,
         snapshots: FakeSnapshots::new(),
         process: FakeRunner::new(),
     }

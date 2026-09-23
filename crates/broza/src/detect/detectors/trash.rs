@@ -149,7 +149,7 @@ fn list_trash(
             }
         };
         if !meta.is_dir {
-            paths.push(path_with(&path, meta.allocated_bytes, meta.modified));
+            paths.push(path_with(&path, context.settled_allocated(&path, &meta), meta.modified));
             continue;
         }
         // A directory Broza cannot measure is not listed at zero bytes: that

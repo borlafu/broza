@@ -14,7 +14,10 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
   gone. The scan cache carries each file's clone id (layout 4; an older store is rebuilt on the
   next scan), and `duplicates` proposes neither a clone nor a file that has one, since
   quarantining either frees nothing. `size_exceeds_volume` keeps firing for what the clone id
-  cannot settle and no longer says clones are counted separately.
+  cannot settle and no longer says clones are counted separately. `clean --purge` counts a
+  purged clone as reclaiming nothing, like a hard link.
+- The walker runs on its own thread pool with 64 MiB stacks: a directory tree 466 levels deep
+  overflowed the default and aborted the scan.
 
 ## [1.0.0] — 2026-09-22
 

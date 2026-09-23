@@ -68,8 +68,6 @@ pub(super) struct LinkSighting {
     pub size_bytes: u64,
     /// Allocated bytes counted for it.
     pub allocated_bytes: u64,
-    /// APFS clone id, when the filesystem reports one.
-    pub clone_id: Option<u64>,
 }
 
 /// Aggregate of one subtree, without the identity of the directory it belongs to.
@@ -178,6 +176,10 @@ pub(super) struct Partial {
     pub nodes: Vec<DirNode>,
     /// The biggest files seen, bounded by the caller's limit.
     pub files: TopFiles,
+    /// The biggest files whose bytes other names may share (hard links,
+    /// clones), bounded on their own: a folder of a million clones must not
+    /// push the real files out of the report before the clones are settled.
+    pub shared_files: TopFiles,
     /// Names of files that have more than one.
     pub links: Vec<LinkSighting>,
     /// Warnings collected on the way.
@@ -196,6 +198,8 @@ pub(super) struct Partial {
     pub originals: Originals,
     /// Every clone met, by family and by directory.
     pub clones: CloneLedger,
+    /// The families subtrees served from the cache keep, as `(device, original inode)`.
+    pub served_families: Vec<(u64, u64)>,
 }
 
 impl Partial {
@@ -204,6 +208,7 @@ impl Partial {
         Self {
             nodes: Vec::new(),
             files: TopFiles::new(cap),
+            shared_files: TopFiles::new(cap),
             links: Vec::new(),
             errors: Vec::new(),
             totals: Totals::default(),
@@ -212,12 +217,14 @@ impl Partial {
             cache_files: Vec::new(),
             originals: Originals::default(),
             clones: CloneLedger::default(),
+            served_families: Vec::new(),
         }
     }
 
     /// Concatenate two partial results; the totals add up.
     pub fn merge(mut self, mut other: Self) -> Self {
         self.nodes.append(&mut other.nodes);
+        self.served_families.append(&mut other.served_families);
         self.links.append(&mut other.links);
         self.errors.append(&mut other.errors);
         self.direct_maxima.append(&mut other.direct_maxima);
@@ -225,6 +232,7 @@ impl Partial {
         self.cache_files.append(&mut other.cache_files);
         Self {
             files: self.files.merge(other.files),
+            shared_files: self.shared_files.merge(other.shared_files),
             totals: self.totals.merge(other.totals),
             nodes: self.nodes,
             links: self.links,
@@ -234,6 +242,7 @@ impl Partial {
             cache_files: self.cache_files,
             originals: self.originals.merge(other.originals),
             clones: self.clones.merge(other.clones),
+            served_families: self.served_families,
         }
     }
 }
@@ -245,6 +254,8 @@ pub(super) struct Leaves {
     pub totals: Totals,
     /// The biggest of them.
     pub files: TopFiles,
+    /// The biggest of those whose bytes other names may share.
+    pub shared_files: TopFiles,
     /// Names of files that have more than one.
     pub links: Vec<LinkSighting>,
     /// How many entries were looked at.
@@ -263,6 +274,7 @@ impl Leaves {
         Self {
             totals: Totals::default(),
             files: TopFiles::new(cap),
+            shared_files: TopFiles::new(cap),
             links: Vec::new(),
             entries: 0,
             cache_files: Vec::new(),
@@ -298,7 +310,8 @@ impl Leaves {
         let reportable = meta.size_bytes.max(meta.allocated_bytes);
         let reported = context.options.report_files_min_size.is_some_and(|min| reportable >= min);
         let cached = context.options.cache_files_min_size.is_some_and(|min| reportable >= min);
-        let (for_entry, for_link) = if is_shared(meta) { (path.clone(), Some(path)) } else { (path, None) };
+        let shared = is_shared(meta);
+        let (for_entry, for_link) = if shared { (path.clone(), Some(path)) } else { (path, None) };
         if reported || cached {
             let entry = FileEntry {
                 path: for_entry,
@@ -314,7 +327,9 @@ impl Leaves {
             if cached {
                 self.cache_files.push(entry.clone());
             }
-            if reported {
+            if reported && shared {
+                self.shared_files = self.shared_files.with(entry);
+            } else if reported {
                 self.files = self.files.with(entry);
             }
         }
@@ -328,7 +343,6 @@ impl Leaves {
                 link_count: meta.link_count,
                 size_bytes: meta.size_bytes,
                 allocated_bytes: meta.allocated_bytes,
-                clone_id: meta.clone_id,
             }),
             Some(path) => self.clones.record(dir, path, meta),
             None => {}

@@ -782,7 +782,7 @@ the volume.
 |---|---|
 | `planned_bytes` | Sum of `size_bytes` of every item in the plan, regardless of outcome; allocated bytes, like every other counter (a file item takes the allocated size the safety check saw). |
 | `quarantined_bytes` | Bytes moved into quarantine in this run, **allocated** size like every other byte counter (for a file, what `stat` reported at the safety check; for a directory, the scan's aggregate, re-measured only under `--max-size`). **Pending**: still occupying disk until expiry or purge. |
-| `reclaimed_bytes` | Bytes actually freed in this run: `purge` items, `tmutil_delete` items, and sessions expired in the pre-execution step. For a `purge` item the figure is measured immediately before removal, allocated, counting only files with a single hard link (a file that keeps another name frees nothing). |
+| `reclaimed_bytes` | Bytes actually freed in this run: `purge` items, `tmutil_delete` items, and sessions expired in the pre-execution step. For a `purge` item the figure is measured immediately before removal, allocated, counting only files with a single hard link and no APFS clone family (a file that keeps another name, or whose blocks a clone shares, frees nothing certain). |
 
 | Mode | `quarantined_bytes` | `reclaimed_bytes` | Item `status` |
 |---|---|---|---|
@@ -1128,8 +1128,9 @@ Everything below ships with 1.0.0; the milestone that produced each change is in
 
 ## 12. Changelog 1.3 → 1.4
 
-Everything below ships with 1.1.0.
+Unreleased: everything below ships with the next minor version.
 
 - §4.2 and §7 (post-1.0): APFS clone accounting. A clone family is counted once, by clone id (`ATTR_CMNEXT_CLONEID`): the original keeps the bytes when the walk saw it, otherwise the clone whose path sorts first; the cache records carry each file's clone id and the families whose credited clone they hold (store layout 4), so a warm walk discounts a family's other clones as the cold walk did. The `size_exceeds_volume` warning stays for the cases the clone id cannot settle (a family split across a cached subtree, diverged clones) and its message no longer says clones are counted separately. [ADR 0009](adr/0009-apfs-clone-accounting-by-clone-id.md).
-- §3.3 (post-1.0): `duplicates` leaves out a clone and any file that has a clone among the reported files; quarantining either frees nothing. The `reasoning` states the rule.
+- §3.3 (post-1.0): `duplicates` leaves out a clone and any file that has a clone among the families the walk knows of; quarantining either frees nothing. The `reasoning` states the rule. `large-old-files` leaves out a file whose removal frees nothing; `trash`, `user-cache` and `build-cache` size a file as the walk settled it.
+- §4.3 (post-1.0): `reclaimed_bytes` counts a purged clone as nothing, like a hard link: whether its family is all gone is not knowable at purge time.
 - §8.2: "APFS clone-aware sizes" leaves the deferred list; what remains deferred is the accounting of the blocks a diverged clone owns.

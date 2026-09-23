@@ -121,6 +121,49 @@ fn a_discounted_clone_is_reported_as_freeing_nothing_and_leaves_the_largest_item
 }
 
 #[test]
+fn clones_never_push_a_real_file_out_of_the_file_report() {
+    // Two slots; the clone family is bigger than the real file, and the copy
+    // is worth nothing once settled. The real file has to survive.
+    let fs = FakeFileOps::new()
+        .with_root("/vol", 1)
+        .with_sized_file("/vol/big", 5000)
+        .with_clone("/vol/big", "/vol/big-copy")
+        .with_sized_file("/vol/real", 4000);
+    let options =
+        WalkOptions { report_files_min_size: Some(1), report_files_top: 2, ..WalkOptions::default() };
+
+    let result = walk_sample(&fs, &options);
+
+    let reported: Vec<(&str, u64)> =
+        result.files.iter().map(|file| (file.path.to_str().unwrap_or(""), file.allocated_bytes)).collect();
+    assert_eq!(reported, vec![("/vol/big", 8192), ("/vol/big-copy", 0), ("/vol/real", 4096)]);
+    assert!(!result.files_truncated);
+}
+
+#[test]
+fn the_families_the_walk_knows_of_come_from_the_ledger_the_cache_and_the_file_lists() {
+    use super::tests::subtree;
+    use crate::scan::walker::{CachedSubtree, DirIdentity};
+
+    let fs = with_family(true);
+    let cold = walk_sample(&fs, &WalkOptions::default());
+    let original = fs.metadata(Path::new("/vol/a/f1")).unwrap_or_else(|e| panic!("{e}")).inode;
+    assert_eq!(cold.clone_families, vec![(1, original)], "met in the walk");
+
+    // Served subtree keeping another family, and a walk that meets no clone.
+    let hook = |identity: &DirIdentity| {
+        (identity.path == Path::new("/vol/b"))
+            .then(|| CachedSubtree { kept_clones: vec![(1, 99)], ..subtree(identity, 5000) })
+    };
+    let quiet = sample();
+    let options = WalkOptions { skip_hook: Some(&hook), ..WalkOptions::default() };
+
+    let warm = walk_sample(&quiet, &options);
+
+    assert_eq!(warm.clone_families, vec![(1, 99)], "handed back by the cache");
+}
+
+#[test]
 fn a_hard_linked_clone_is_settled_as_a_hard_link_only() {
     // Two names of one clone: the names settle to one, and that one is counted
     // where it stands, beside the original. Rare enough to be documented

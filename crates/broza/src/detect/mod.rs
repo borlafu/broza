@@ -19,7 +19,7 @@ pub mod spotlight;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-pub use detector::{DetectContext, DetectPorts, Detected, Detector, LOCATION_UNREADABLE_CODE};
+pub use detector::{DetectContext, DetectPorts, Detected, Detector, HomeWalk, LOCATION_UNREADABLE_CODE};
 pub use explain::{
     ExplainKind, ExplainReport, Explanation, category_summary, explain_category, explain_volume,
 };

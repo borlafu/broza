@@ -149,6 +149,7 @@ impl DirRecord {
             && self.has_truncation == other.has_truncation
             && self.child_dirs == other.child_dirs
             && self.files == other.files
+            && self.kept_clones == other.kept_clones
     }
 
     /// The same record, knowing which directories are directly inside.

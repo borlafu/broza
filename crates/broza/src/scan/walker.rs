@@ -158,6 +158,7 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     Partial {
         nodes,
         files: leaves.files.merge(below.files),
+        shared_files: leaves.shared_files.merge(below.shared_files),
         links,
         errors: all_errors,
         totals: totals.as_child(),
@@ -166,6 +167,7 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
         cache_files,
         originals: leaves.originals.merge(below.originals),
         clones: leaves.clones.merge(below.clones),
+        served_families: below.served_families,
     }
 }
 
@@ -200,6 +202,7 @@ fn cached_dir(
             originals.record(*device, *inode);
             originals
         });
+    let served_families = kept_clones;
     let totals = Totals {
         size_bytes: root.size_bytes,
         allocated_bytes: root.allocated_bytes,
@@ -227,7 +230,15 @@ fn cached_dir(
             context.options.report_files_min_size.is_some_and(|min| reportable >= min)
         })
         .fold(TopFiles::new(cap), TopFiles::with);
-    Partial { nodes, hidden, files: top, totals: totals.as_child(), originals, ..Partial::empty(cap) }
+    Partial {
+        nodes,
+        hidden,
+        files: top,
+        totals: totals.as_child(),
+        originals,
+        served_families,
+        ..Partial::empty(cap)
+    }
 }
 
 /// A directory Broza may not read: a warning, an empty node, and the walk goes on.
@@ -250,6 +261,7 @@ fn walk_leaf_root(root: &Path, meta: &EntryMetadata, context: &Context<'_>) -> P
     context.report(leaves.entries, leaves.totals.size_bytes);
     Partial {
         files: leaves.files,
+        shared_files: leaves.shared_files,
         cache_files: leaves.cache_files,
         totals: leaves.totals,
         originals: leaves.originals,
@@ -303,6 +315,7 @@ fn sorted(partial: Partial) -> WalkResult {
     let Partial {
         mut nodes,
         files,
+        shared_files,
         links,
         mut errors,
         mut direct_maxima,
@@ -310,16 +323,23 @@ fn sorted(partial: Partial) -> WalkResult {
         mut cache_files,
         originals,
         clones: ledger,
+        served_families,
         ..
     } = partial;
     let hidden_paths: HashSet<PathBuf> = hidden.iter().map(|node| node.path.clone()).collect();
     nodes.extend(hidden);
-    let files_truncated = files.is_truncated();
-    let settled = dedupe::settle_hard_links(nodes, files.into_vec(), links);
+    let files_truncated = files.is_truncated() || shared_files.is_truncated();
+    let mut all_files = files.into_vec();
+    all_files.extend(shared_files.into_vec());
+    let settled = dedupe::settle_hard_links(nodes, all_files, links);
     let dropped: HashSet<&Path> = settled.dropped.iter().map(PathBuf::as_path).collect();
     cache_files.retain(|file| !dropped.contains(file.path.as_path()));
-    let clones::Settlement { nodes, mut files, mut cache_files, credited, mut kept_clones } =
+    let clones::Settlement { nodes, mut files, mut cache_files, credited, mut kept_clones, families } =
         clones::settle_clones(settled.nodes, settled.files, cache_files, ledger, originals);
+    // A family the cache kept below `max_depth` has no node to be recorded
+    // under; the record it would belong to is never written either.
+    kept_clones.retain(|(dir, _)| !hidden_paths.contains(dir));
+    let clone_families = clones::families_of(families, served_families, &files, &cache_files);
     // The surviving name of every multiply-linked file or clone is a direct
     // file of the directory it is credited to; the discounted names count
     // nowhere.
@@ -335,7 +355,7 @@ fn sorted(partial: Partial) -> WalkResult {
     cache_files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));
     kept_clones.sort_unstable();
-    WalkResult { nodes, files, files_truncated, cache_files, errors, kept_clones }
+    WalkResult { nodes, files, files_truncated, cache_files, errors, kept_clones, clone_families }
 }
 
 #[cfg(test)]

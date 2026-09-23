@@ -15,6 +15,7 @@ use jiff::Timestamp;
 
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, Finding};
+use crate::ports::EntryMetadata;
 use crate::ports::{FileOps, ProcessRunner, SnapshotProvider};
 use crate::scan::{DirNode, FileEntry, MountTable};
 
@@ -103,6 +104,9 @@ pub struct DetectContext<'a> {
     /// The big files under the home the walk reported one by one
     /// ([`crate::scan::FileReport::for_detectors`]), sorted by path.
     pub home_files: &'a [FileEntry],
+    /// Every APFS clone family the home walk knows of, as
+    /// `(device, original inode)`, sorted ([`crate::scan::WalkResult::clone_families`]).
+    pub home_clone_families: &'a [(u64, u64)],
     /// APFS local snapshots, for the `snapshots` detector.
     pub snapshots: &'a dyn SnapshotProvider,
     /// External commands (`xcrun simctl`, `mdls`), always with a timeout.
@@ -135,6 +139,17 @@ impl<'a> NodeIndex<'a> {
     }
 }
 
+/// What the home walk produced, as the detectors read it.
+#[derive(Clone, Copy)]
+pub struct HomeWalk<'a> {
+    /// Every directory under the home, as the scanner measured it.
+    pub nodes: &'a [DirNode],
+    /// The big files under the home, one by one, sorted by path.
+    pub files: &'a [FileEntry],
+    /// Every APFS clone family the walk knows of, sorted.
+    pub clone_families: &'a [(u64, u64)],
+}
+
 /// The adapters a detection run reads through.
 #[derive(Clone, Copy)]
 pub struct DetectPorts<'a> {
@@ -154,8 +169,7 @@ impl<'a> DetectContext<'a> {
         mounts: &'a MountTable,
         now: Timestamp,
         unused_after: Duration,
-        home_nodes: &'a [DirNode],
-        home_files: &'a [FileEntry],
+        walk: HomeWalk<'a>,
     ) -> Self {
         Self {
             home,
@@ -163,12 +177,38 @@ impl<'a> DetectContext<'a> {
             mounts,
             now,
             unused_after,
-            home_nodes,
-            home_files,
+            home_nodes: walk.nodes,
+            home_files: walk.files,
+            home_clone_families: walk.clone_families,
             snapshots: ports.snapshots,
             process: ports.process,
-            index: NodeIndex::of(home_nodes),
+            index: NodeIndex::of(walk.nodes),
         }
+    }
+
+    /// `true` when a clone of the file at `(device, inode)` holds its blocks:
+    /// removing the file frees nothing while the clone stands.
+    pub fn has_clones(&self, device: u64, inode: u64) -> bool {
+        self.home_clone_families.binary_search(&(device, inode)).is_ok()
+    }
+
+    /// `true` when `file` shares its blocks with another file: a hard link, a
+    /// clone, or the original of a family the walk saw a clone of.
+    pub fn shares_blocks(&self, file: &FileEntry) -> bool {
+        file.link_count > 1 || file.is_clone() || self.has_clones(file.device, file.inode)
+    }
+
+    /// The allocated bytes removing the file at `path` would free, as the walk
+    /// settled them: the walk's own figure when it reported the file, else
+    /// `meta`'s — or nothing for a clone, whose family keeps the blocks.
+    pub fn settled_allocated(&self, path: &Path, meta: &EntryMetadata) -> u64 {
+        if let Ok(at) = self.home_files.binary_search_by(|file| file.path.as_path().cmp(path)) {
+            return self.home_files.get(at).map_or(meta.allocated_bytes, |file| file.allocated_bytes);
+        }
+        if meta.link_count > 1 || meta.is_clone() || self.has_clones(meta.device, meta.inode) {
+            return 0;
+        }
+        meta.allocated_bytes
     }
 
     /// The measured node for `path`, when the walk reached it.

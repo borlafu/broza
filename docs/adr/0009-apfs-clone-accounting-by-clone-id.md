@@ -45,8 +45,16 @@ therefore read alike, and only the clones announce the family.
    had been seen, so any other clone the warm walk meets is discounted as the cold walk discounted
    it. Cache records also carry each file's clone id (store layout 4; older stores are replaced),
    so a subtree served from the cache gives the detectors the same files a walk would.
-   `duplicates` proposes neither a clone nor a file that has one among the reported files;
-   `large-old-files` proposes no file whose removal frees nothing.
+   `duplicates` proposes neither a clone nor a file that has one among the families the walk
+   knows of (`WalkResult::clone_families`: the clones met, the families served subtrees keep,
+   and the clones in the file lists); `large-old-files` proposes no file whose removal frees
+   nothing; `trash`, `user-cache` and `build-cache` size a file the way the walk settled it.
+   The file report keeps shared-bytes files (hard links, clones) in a heap of their own, so a
+   folder of a million clones cannot push real files out of the top-N before settlement.
+6. What `clean --purge` counts as reclaimed follows the same rule as a hard link: a clone
+   frees nothing certain, so it counts for nothing (`reclaimed_bytes` is never more than what
+   was freed, AGENTS.md §2.7). Whether a clone's family is all gone is not knowable at purge
+   time; the figure stays what is certain.
 5. The walk runs on its own thread pool with 64 MiB stacks. The recursion is one frame per
    directory level, a macOS path allows 512 levels, and the ledger made the frames large enough
    to overflow the default 2 MiB at 466 levels on a test tree. Reserved, not committed.
@@ -58,6 +66,9 @@ therefore read alike, and only the clones announce the family.
   clone id says "family", not "how much is shared". Such a directory can measure less than it
   holds. Partial-clone accounting (`fcntl F_LOG2PHYS_EXT` per extent) is the remaining deferred
   item in `docs/cli-spec.md` §8.2.
+- Purging the *original* of a family that still has clones reports its blocks as freed: the
+  executor sees a plain file, and the family is not known at purge time. `reclaimed_bytes`
+  overstates by that file in that one case.
 - The records say where a family's credited clone is, not where its original is: a family whose
   original sits in a cached subtree while one of its clones is walked counts once per side, and a
   family whose original was deleted after its clones' directories were recorded stays discounted

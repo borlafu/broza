@@ -257,6 +257,7 @@ fn assemble(entry: &MountEntry, root_path: &Path, walked: WalkResult, request: &
         volume_id,
         nodes: walked.nodes,
         files: walked.files,
+        clone_families: walked.clone_families,
         root_refused,
     }
 }

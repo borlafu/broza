@@ -233,13 +233,21 @@ fn stat(path: &Path) -> Result<EntryMetadata, BrozaError> {
 /// Entries the parser left to `lstat` are skipped: comparing them against the
 /// call they came from proves nothing. An entry that has vanished since the
 /// listing is skipped too — a race is not a reason to distrust the kernel.
+/// Neither is a file that changed between the two calls: the plain reader is
+/// itself two calls (`lstat`, then `getattrlist` for the clone id), so a
+/// disagreement is stated a second time and only counts when it holds.
 fn agrees_with_lstat(parent: &Path, parsed: &[ParsedEntry]) -> Option<usize> {
     let mut verified = 0_usize;
     for entry in parsed {
         let Some(meta) = &entry.meta else { continue };
-        let Ok(stated) = stat(&parent.join(&entry.name)) else { continue };
+        let path = parent.join(&entry.name);
+        let Ok(stated) = stat(&path) else { continue };
         if &stated != meta {
-            return None;
+            let Ok(again) = stat(&path) else { continue };
+            if &again != meta && again == stated {
+                return None;
+            }
+            continue;
         }
         verified += 1;
     }

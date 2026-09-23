@@ -23,9 +23,10 @@
 //! An APFS clone holds the same bytes as its original and shares its blocks,
 //! so it reads as a duplicate whose removal frees nothing — and neither does
 //! removing the original while a clone of it stands. A clone, and a file with
-//! a clone among the reported files, are no candidates, like a hard link.
+//! a clone among the families the walk knows of, are no candidates, like a
+//! hard link.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use crate::BrozaError;
@@ -78,9 +79,8 @@ impl Detector for Duplicates {
     }
 
     fn detect(&self, context: &DetectContext<'_>) -> Result<Detected, BrozaError> {
-        let families = families_with_clones(context.home_files);
         let mut by_size: BTreeMap<u64, Vec<&FileEntry>> = BTreeMap::new();
-        for file in context.home_files.iter().filter(|file| is_candidate(file, &families)) {
+        for file in context.home_files.iter().filter(|file| is_candidate(file, context)) {
             by_size.entry(file.size_bytes).or_default().push(file);
         }
         // One size group at a time: the detectors already run in parallel with
@@ -109,24 +109,12 @@ impl Detector for Duplicates {
     }
 }
 
-/// In the size window, with one name, sharing its blocks with nothing, and not
-/// somewhere identical files are meant to be.
-fn is_candidate(file: &FileEntry, families: &HashSet<(u64, u64)>) -> bool {
+/// In the size window, sharing its blocks with nothing, and not somewhere
+/// identical files are meant to be.
+fn is_candidate(file: &FileEntry, context: &DetectContext<'_>) -> bool {
     (DUPLICATE_MIN_BYTES..DUPLICATE_MAX_BYTES).contains(&file.size_bytes)
-        && file.link_count <= 1
-        && !file.is_clone()
-        && !families.contains(&(file.device, file.inode))
+        && !context.shares_blocks(file)
         && !file.path.components().any(is_skipped_component)
-}
-
-/// The `(device, original inode)` of every clone family with a clone among
-/// `files`: an original in one of them still has a clone holding its blocks.
-fn families_with_clones(files: &[FileEntry]) -> HashSet<(u64, u64)> {
-    files
-        .iter()
-        .filter(|file| file.is_clone())
-        .filter_map(|file| Some((file.device, file.clone_id?)))
-        .collect()
 }
 
 fn is_skipped_component(component: Component<'_>) -> bool {

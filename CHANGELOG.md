@@ -18,6 +18,9 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
   purged clone as reclaiming nothing, like a hard link.
 - The walker runs on its own thread pool with 64 MiB stacks: a directory tree 466 levels deep
   overflowed the default and aborted the scan.
+- The walk descends by directory descriptor (ADR 0010). A tree deeper than a path can name
+  (macOS refuses paths of 1024 bytes or more) is now measured to the bottom instead of ending in
+  `stat …: File name too long (os error 63)` for every entry past the limit.
 
 ## [1.0.0] — 2026-09-22
 

@@ -18,7 +18,9 @@
 //! a real exFAT volume cannot be mounted from a test, so that path is verified
 //! against the documented errno rather than against hardware.
 
-use std::fs::{self, Permissions};
+use std::any::Any;
+use std::ffi::OsStr;
+use std::fs::{self, File, Permissions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::os::macos::fs::MetadataExt as MacMetadataExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -28,9 +30,10 @@ use jiff::Timestamp;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::BrozaError;
+use crate::adapters::dir_fd;
 use crate::adapters::io_error::from_io;
 use crate::adapters::std_fs_exclusive as exclusive;
-use crate::ports::{ContentHash, DirListing, EntryMetadata, FileOps, FsLock, RenameMode};
+use crate::ports::{ContentHash, DirHandle, DirListing, EntryMetadata, FileOps, FsLock, RenameMode};
 
 /// Size of the blocks `st_blocks` counts, fixed at 512 bytes by POSIX.
 const STAT_BLOCK_BYTES: u64 = 512;
@@ -45,8 +48,41 @@ const SF_DATALESS: u32 = 0x4000_0000;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StdFileOps;
 
+/// An open directory descriptor, the handle the walker descends by.
+#[derive(Debug)]
+struct FdDirHandle(File);
+
+impl DirHandle for FdDirHandle {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// The descriptor behind a handle this adapter handed out; `None` for one
+/// another adapter made, which no caller does but which must not be an
+/// `unwrap`.
+fn descriptor(handle: &dyn DirHandle) -> Option<&File> {
+    handle.as_any().downcast_ref::<FdDirHandle>().map(|handle| &handle.0)
+}
+
 /// How much of a file each read of the hasher asks for.
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
+
+impl StdFileOps {
+    /// `readdir` plus one `lstat` per child, the `lstat`s spread over the pool:
+    /// they are independent, and on a cold cache each waits on the disk rather
+    /// than on a core.
+    fn read_dir_the_plain_way(self, path: &Path) -> Result<DirListing, BrozaError> {
+        let children = self.read_dir(path)?;
+        Ok(children
+            .into_par_iter()
+            .map(|child| {
+                let meta = self.metadata(&child);
+                (child, meta)
+            })
+            .collect())
+    }
+}
 
 impl FileOps for StdFileOps {
     fn metadata(&self, path: &Path) -> Result<EntryMetadata, BrozaError> {
@@ -84,18 +120,39 @@ impl FileOps for StdFileOps {
         if let Some(listing) = crate::adapters::bulk_dir::read_dir_with_attributes(path) {
             return Ok(listing);
         }
-        // The kernel would not answer in bulk here: pair up `readdir` and
-        // `lstat` like everybody else, but spread the `lstat`s over the pool.
-        // They are independent, and on a cold cache each one waits on the disk
-        // rather than on a core.
-        let children = self.read_dir(path)?;
-        Ok(children
-            .into_par_iter()
-            .map(|child| {
-                let meta = self.metadata(&child);
-                (child, meta)
-            })
-            .collect())
+        self.read_dir_the_plain_way(path)
+    }
+
+    fn open_dir(&self, path: &Path) -> Result<Box<dyn DirHandle>, BrozaError> {
+        let dir = dir_fd::open_directory(path)
+            .map_err(|source| from_io(format!("open directory {}", path.display()), path, source))?;
+        Ok(Box::new(FdDirHandle(dir)))
+    }
+
+    fn open_dir_in(
+        &self,
+        parent: &dyn DirHandle,
+        name: &OsStr,
+        path: &Path,
+    ) -> Result<Box<dyn DirHandle>, BrozaError> {
+        let Some(parent) = descriptor(parent) else {
+            return self.open_dir(path);
+        };
+        let dir = dir_fd::open_directory_in(parent, name)
+            .map_err(|source| from_io(format!("open directory {}", path.display()), path, source))?;
+        Ok(Box::new(FdDirHandle(dir)))
+    }
+
+    fn list_dir(&self, dir: &dyn DirHandle, path: &Path) -> Result<DirListing, BrozaError> {
+        let Some(dir) = descriptor(dir) else {
+            return self.read_dir_with_metadata(path);
+        };
+        if let Some(listing) = crate::adapters::bulk_dir::read_dir_in(dir, path) {
+            return Ok(listing);
+        }
+        // Without the bulk reader the plain pair is path-based, and stops
+        // where paths stop (`PATH_MAX`); that is the fallback's known limit.
+        self.read_dir_the_plain_way(path)
     }
 
     fn exists(&self, path: &Path) -> bool {

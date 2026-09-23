@@ -1006,6 +1006,8 @@ Scanning is parallel per volume. The scan cache lives in `~/.cache/broza/v1/<vol
 
 `suggest` walks the home with the file report's floor (1 MB) as its `--min-size`, so every unchanged subtree comes from the cache with its directory nodes and its files: the detectors see what a walk would have given them, at the warm rate. Measured on a developer's home of a few million entries: 36 s cold, under 9 s warm. What `suggest` shows may be up to `cache-ttl` old for files that grew in place; `--no-cache` walks cold. `clean` serves nothing from the cache: its plan is checked against the disk item by item (§3.4), and a size the cache remembered from before a file grew would be refused there and abort the run, so it walks cold. It still loads the store to refresh it, so `scan`'s records for the rest of the volume survive; a store `clean` cannot read is replaced rather than reported, since nothing it does depends on it.
 
+The walk descends by directory descriptor (`openat`, `getattrlistbulk` on the descriptor, `fstatat`), so a tree deeper than a path can name — macOS refuses paths of 1024 bytes or more — is measured to the bottom ([ADR 0010](adr/0010-walk-by-directory-descriptor.md)); items below that depth appear in the report and can never be plan items, because every write is a path call the kernel refuses.
+
 Cloud-provider roots (`~/Library/Mobile Documents`, `~/Library/CloudStorage`, and the legacy `~/Dropbox`, `~/OneDrive`, `~/Google Drive`) are excluded from the walk by default: `lstat` on a file the provider has not downloaded blocks on that provider, and a scan that walks into them measures the network rather than the disk. They can be scanned explicitly by passing the path.
 
 ---
@@ -1134,3 +1136,4 @@ Unreleased: everything below ships with the next minor version.
 - §3.3 (post-1.0): `duplicates` leaves out a clone and any file that has a clone among the families the walk knows of; quarantining either frees nothing. The `reasoning` states the rule. `large-old-files` leaves out a file whose removal frees nothing; `trash`, `user-cache` and `build-cache` size a file as the walk settled it.
 - §4.3 (post-1.0): `reclaimed_bytes` counts a purged clone as nothing, like a hard link: whether its family is all gone is not knowable at purge time.
 - §8.2: "APFS clone-aware sizes" leaves the deferred list; what remains deferred is the accounting of the blocks a diverged clone owns.
+- §7 (post-1.0): the walk descends by directory descriptor, so a tree deeper than `PATH_MAX` allows is measured to the bottom instead of ending in one `unreadable_entry` warning per blocked entry. [ADR 0010](adr/0010-walk-by-directory-descriptor.md).

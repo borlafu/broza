@@ -213,6 +213,9 @@ Progress:
 - [x] Cache store, TTL, corruption → exit `9` (`scan/cache/`).
 - [x] Walker wired into `broza scan`: `largest_items`, `--tree`, `PATH` arguments, progress on stderr.
 - [x] Benchmark script for the cold and warm `scan` targets (`scripts/bench-scan.sh`, ADR 0006).
+- [x] Deep trees (post-1.0, ADR 0010): the walk opens each directory from its parent's descriptor
+      and states the bulk reader's leftovers with `fstatat`, so `PATH_MAX` no longer ends a scan
+      subtree; `tests/deep_paths.rs` walks 520 levels on the real filesystem.
 - [x] APFS clone accounting (post-1.0, 1.1.0, ADR 0009): a clone family is counted once, by clone
       id; the original keeps the bytes, or the first clone by path. Cache layout 5 carries the id.
       `size_exceeds_volume` stays for what the id cannot settle (cached subtrees, diverged clones).

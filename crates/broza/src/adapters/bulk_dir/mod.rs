@@ -30,14 +30,14 @@
 
 mod parse;
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::BrozaError;
-use crate::ports::{DirListing, EntryMetadata, FileOps};
+use crate::adapters::dir_fd::{metadata_in, open_directory};
+use crate::ports::{DirListing, EntryMetadata};
 use parse::ParsedEntry;
 
 /// What came back from trying to read one directory in bulk.
@@ -86,13 +86,20 @@ pub fn reset_bulk_state_for_tests() {
 /// the kernel, another thread still deciding whether the reader can be trusted,
 /// or a buffer that did not read the way [`parse`] expects.
 pub(crate) fn read_dir_with_attributes(path: &Path) -> Option<DirListing> {
+    let dir = open_directory(path).ok()?;
+    read_dir_in(&dir, path)
+}
+
+/// [`read_dir_with_attributes`] over an already open directory: nothing here
+/// hands `path` to the kernel, so the depth of the tree does not matter.
+pub(crate) fn read_dir_in(dir: &File, path: &Path) -> Option<DirListing> {
     match BULK_STATE.load(Ordering::Acquire) {
-        STATE_TRUSTED => match collect(path) {
-            Collected::Entries(parsed) => Some(resolve(path, parsed)),
+        STATE_TRUSTED => match collect(dir) {
+            Collected::Entries(parsed) => Some(resolve(dir, path, parsed)),
             Collected::Unavailable => None,
             Collected::Unsupported => refuse(),
         },
-        STATE_UNTESTED => try_first_directory(path),
+        STATE_UNTESTED => try_first_directory(dir, path),
         // Refused for good, or somebody else is deciding right now.
         _ => None,
     }
@@ -102,14 +109,14 @@ pub(crate) fn read_dir_with_attributes(path: &Path) -> Option<DirListing> {
 ///
 /// Only the thread that wins the claim does this; the rest fall back, because
 /// waiting for it would cost more than the `lstat`s they are avoiding.
-fn try_first_directory(path: &Path) -> Option<DirListing> {
+fn try_first_directory(dir: &File, path: &Path) -> Option<DirListing> {
     if BULK_STATE
         .compare_exchange(STATE_UNTESTED, STATE_TESTING, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         return None;
     }
-    let parsed = match collect(path) {
+    let parsed = match collect(dir) {
         Collected::Entries(parsed) => parsed,
         // One directory Broza may not read says nothing about the kernel.
         Collected::Unavailable => {
@@ -118,7 +125,7 @@ fn try_first_directory(path: &Path) -> Option<DirListing> {
         }
         Collected::Unsupported => return refuse(),
     };
-    let Some(verified) = agrees_with_lstat(path, &parsed) else {
+    let Some(verified) = agrees_with_lstat(dir, path, &parsed) else {
         return refuse();
     };
     let from_buffer = parsed.iter().filter(|entry| entry.meta.is_some()).count();
@@ -133,22 +140,17 @@ fn try_first_directory(path: &Path) -> Option<DirListing> {
     // every entry was stated the plain way — so leave the question open.
     let settled = if verified > 0 { STATE_TRUSTED } else { STATE_UNTESTED };
     let _ = BULK_STATE.compare_exchange(STATE_TESTING, settled, Ordering::AcqRel, Ordering::Acquire);
-    Some(resolve(path, parsed))
+    Some(resolve(dir, path, parsed))
 }
 
-/// Every entry of `path` as the buffer described it.
-fn collect(path: &Path) -> Collected {
-    let Ok(dir) = open_directory(path) else {
-        // No permission, not a directory, gone between listing and opening:
-        // all of them are about this path, not about `getattrlistbulk`.
-        return Collected::Unavailable;
-    };
+/// Every entry of the open directory as the buffer described it.
+fn collect(dir: &File) -> Collected {
     let mut request = request_list();
     let mut entries = Vec::new();
     loop {
         let read = BUFFER.with(|buffer| {
             let mut buffer = buffer.borrow_mut();
-            let count = call_bulk(&dir, &mut request, &mut buffer);
+            let count = call_bulk(dir, &mut request, &mut buffer);
             let parsed = usize::try_from(count)
                 .ok()
                 .map_or(Some(Vec::new()), |count| parse::parse_batch(&buffer, count));
@@ -179,19 +181,6 @@ fn call_bulk(dir: &File, request: &mut libc::attrlist, buffer: &mut [u8]) -> i32
     }
 }
 
-/// Open a directory, and only a directory, without blocking on anything.
-///
-/// `O_DIRECTORY` keeps a FIFO from turning an open into a wait for a writer,
-/// `O_NOFOLLOW` keeps a symlink from redirecting the walk, `O_NONBLOCK` is the
-/// belt to that braces, and `O_CLOEXEC` keeps the descriptor out of any child
-/// process Broza spawns.
-fn open_directory(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(path)
-}
-
 /// The attribute list handed to the kernel.
 fn request_list() -> libc::attrlist {
     libc::attrlist {
@@ -207,24 +196,25 @@ fn request_list() -> libc::attrlist {
     }
 }
 
-/// Turn parsed entries into a listing, stating whatever the buffer left out.
-fn resolve(parent: &Path, parsed: Vec<ParsedEntry>) -> DirListing {
+/// Turn parsed entries into a listing, stating whatever the buffer left out —
+/// by name inside the open directory, never by path.
+fn resolve(dir: &File, parent: &Path, parsed: Vec<ParsedEntry>) -> DirListing {
     parsed
         .into_iter()
         .map(|entry| {
             let path = parent.join(&entry.name);
             let meta = match entry.meta {
                 Some(meta) => Ok(meta),
-                None => stat(&path),
+                None => stat(dir, &entry.name, &path),
             };
             (path, meta)
         })
         .collect()
 }
 
-/// Metadata of `path` the plain way, through the adapter everything else uses.
-fn stat(path: &Path) -> Result<EntryMetadata, BrozaError> {
-    crate::adapters::StdFileOps.metadata(path)
+/// Metadata of the entry `name` inside `dir` the plain way (`fstatat`).
+fn stat(dir: &File, name: &Path, path: &Path) -> Result<EntryMetadata, BrozaError> {
+    metadata_in(dir, name.as_os_str(), path)
 }
 
 /// How many entries the buffer described and `lstat` confirms; `None` on any
@@ -236,14 +226,14 @@ fn stat(path: &Path) -> Result<EntryMetadata, BrozaError> {
 /// Neither is a file that changed between the two calls: the plain reader is
 /// itself two calls (`lstat`, then `getattrlist` for the clone id), so a
 /// disagreement is stated a second time and only counts when it holds.
-fn agrees_with_lstat(parent: &Path, parsed: &[ParsedEntry]) -> Option<usize> {
+fn agrees_with_lstat(dir: &File, parent: &Path, parsed: &[ParsedEntry]) -> Option<usize> {
     let mut verified = 0_usize;
     for entry in parsed {
         let Some(meta) = &entry.meta else { continue };
         let path = parent.join(&entry.name);
-        let Ok(stated) = stat(&path) else { continue };
+        let Ok(stated) = stat(dir, &entry.name, &path) else { continue };
         if &stated != meta {
-            let Ok(again) = stat(&path) else { continue };
+            let Ok(again) = stat(dir, &entry.name, &path) else { continue };
             if &again != meta && again == stated {
                 return None;
             }

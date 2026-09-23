@@ -179,6 +179,8 @@ pub struct VolumeScan {
     pub nodes: Vec<DirNode>,
     /// The files the request asked to see one by one, sorted by path.
     pub files: Vec<FileEntry>,
+    /// Every APFS clone family the walk knows of, as `(device, original inode)`, sorted.
+    pub clone_families: Vec<(u64, u64)>,
     /// `true` when macOS refused to list the scan's own root for lack of
     /// permission: the whole scan was impossible, not merely incomplete.
     pub root_refused: bool,

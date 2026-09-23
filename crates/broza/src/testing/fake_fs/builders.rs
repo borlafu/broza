@@ -60,6 +60,35 @@ impl FakeFileOps {
         self
     }
 
+    /// Add `copy` as an APFS clone of the file at `existing`.
+    ///
+    /// Same contents and sizes, its own inode, and the original's clone id —
+    /// what `clonefile(2)`, `cp -c` and the Finder's Duplicate produce.
+    ///
+    /// # Panics
+    ///
+    /// When `existing` is missing or is not a regular file.
+    pub fn add_clone(&self, existing: impl AsRef<Path>, copy: impl AsRef<Path>) {
+        let (existing, copy) = (existing.as_ref(), copy.as_ref());
+        let mut tree = lock(&self.tree);
+        if let Some(parent) = copy.parent() {
+            expect_buildable(parent, tree.create_dir_all(parent));
+        }
+        assert!(
+            tree.clone_file(existing, copy),
+            "cannot clone {} to {}: not an existing regular file",
+            existing.display(),
+            copy.display()
+        );
+    }
+
+    /// Builder form of [`FakeFileOps::add_clone`].
+    #[must_use]
+    pub fn with_clone(self, existing: impl AsRef<Path>, copy: impl AsRef<Path>) -> Self {
+        self.add_clone(existing, copy);
+        self
+    }
+
     /// Add a cloud placeholder of `size_bytes`, as iCloud Drive leaves behind.
     ///
     /// Its apparent size is what it would take once downloaded; none of it is

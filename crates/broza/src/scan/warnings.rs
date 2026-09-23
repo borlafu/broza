@@ -89,11 +89,11 @@ pub const OVERCOUNT_CODE: &str = "size_exceeds_volume";
 /// The warning a whole-volume walk earns when its total exceeds what macOS says
 /// is in use.
 ///
-/// Allocated blocks are summed per file, and an APFS clone reports the blocks it
-/// shares with its original as its own, so a folder of cloned media can measure
-/// bigger than the disk. Broza says so rather than letting the list imply more
-/// space is freeable than exists (`AGENTS.md` §2.7; clone accounting is
-/// post-1.0, PRD RF-02).
+/// Allocated blocks are summed per file. Hard links and APFS clone families are
+/// counted once where the walk can see them whole, but a family split across a
+/// subtree served from the cache, or one whose clones have diverged, still adds
+/// up to more than the disk holds. Broza says so rather than letting the list
+/// imply more space is freeable than exists (`AGENTS.md` §2.7, PRD RF-02).
 pub(super) fn overcount_warning(root: &DirNode, entry: &MountEntry) -> Option<Diagnostic> {
     let used = entry.volume.used_bytes;
     if root.path != entry.mount_point || used == 0 || root.allocated_bytes <= used {
@@ -102,9 +102,10 @@ pub(super) fn overcount_warning(root: &DirNode, entry: &MountEntry) -> Option<Di
     Some(Diagnostic {
         code: OVERCOUNT_CODE.to_owned(),
         message: format!(
-            "{} measures {} bytes but macOS reports {} in use on the volume. Each APFS clone is \
-             counted separately, so the sizes listed are upper bounds until clone accounting \
-             lands; the volume figure also includes snapshots and metadata a walk never sees.",
+            "{} measures {} bytes but macOS reports {} in use on the volume. Clones and hard links \
+             are counted once where the walk sees every copy, but not across a subtree served \
+             from the cache, so the sizes listed are upper bounds; the volume figure also \
+             includes snapshots and metadata a walk never sees.",
             entry.volume.name, root.allocated_bytes, used
         ),
         path: Some(entry.mount_point.clone()),

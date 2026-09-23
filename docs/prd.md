@@ -173,7 +173,7 @@ Layout: Cargo workspace with `crates/broza` (core library, published on crates.i
 | ID | Requirement |
 |---|---|
 | **RF-01** | Enumerate physical disks, APFS containers, volumes (with role), partitions and snapshots by parsing `diskutil … -plist` output (`diskutil list`, `diskutil apfs list`, `diskutil info`, `diskutil apfs listSnapshots`) behind a `DiskEnumerator` trait. A native DiskArbitration adapter may be added later without changing callers. Purgeable space is estimated via Foundation `NSURL` `volumeAvailableCapacityForImportantUsage` (purgeable = important-usage capacity minus available capacity, clamped at 0) and reported as an estimate. |
-| **RF-02** | Compute real usage per volume and container, distinguishing real free space from purgeable. **Count hard links only once** (dedupe by device + inode). APFS clones are also counted once where detectable; clone-aware accounting is best-effort in v1 and completed post-1.0 (see §16). |
+| **RF-02** | Compute real usage per volume and container, distinguishing real free space from purgeable. **Count hard links only once** (dedupe by device + inode). APFS clone families are counted once by clone id (`ATTR_CMNEXT_CLONEID`): the original keeps the bytes, or the first clone by path when the original is gone (ADR 0009). What remains best-effort is a clone that diverged from its original, which is discounted whole. |
 | **RF-03** | Hierarchical scan by folder and type, with a cache for fast re-scans. |
 | **RF-04** | Translate technical volume roles into plain-language explanations. |
 | **RF-05** | Tree view with colors and usage bars per container. (Unicode treemap deferred to the GUI, see D15.) |
@@ -409,7 +409,7 @@ Evaluate real traction against the §9 threshold **before** investing in the GUI
 | ID | Milestone | Notes | Covered by |
 |---|---|---|---|
 | RF-01 | M2 | `diskutil` plist adapters + NSURL purgeable estimate | `crates/broza/tests/diskutil_*.rs`, `adapters/nsurl_space.rs` tests |
-| RF-02 | M2 | Hard-link dedupe by `(dev, inode)`; APFS clone accounting best-effort, completed post-1.0 | `scan/walker/dedupe.rs` tests, `tests/scan_cache_pipeline.rs::hard_links_*` |
+| RF-02 | M2, post-1.0 | Hard-link dedupe by `(dev, inode)`; APFS clone families once by `(dev, clone_id)` (ADR 0009) | `scan/walker/dedupe.rs` and `scan/walker/clones.rs` tests, `scan/walker/clone_tests.rs`, `tests/fakes_behave_like_std.rs::a_clone_reports_*`, `tests/scan_cache_pipeline.rs::hard_links_*` |
 | RF-03 | M2 | Walker + scan cache | `tests/scan_pipeline.rs`, `tests/scan_cache_pipeline.rs` |
 | RF-04 | M2 | `explain` texts for roles, paths, categories | `detect/explain.rs` tests, `crates/broza-cli/tests/scan_explain.rs` |
 | RF-05 | M2 | Tree + usage bars; treemap deferred (D15) | `scan/aggregate/tree.rs` tests, `output/human/scan` tests |

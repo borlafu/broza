@@ -387,7 +387,7 @@ expression: "json_of(&[\"scan\", \"--json\"])"
     },
     {
       "code": "size_exceeds_volume",
-      "message": "Data measures 435400019968 bytes but macOS reports 409422745600 in use on the volume. Each APFS clone is counted separately, so the sizes listed are upper bounds until clone accounting lands; the volume figure also includes snapshots and metadata a walk never sees.",
+      "message": "Data measures 435400019968 bytes but macOS reports 409422745600 in use on the volume. Clones and hard links are counted once where the walk sees every copy, but not across a subtree served from the cache, so the sizes listed are upper bounds; the volume figure also includes snapshots and metadata a walk never sees.",
       "path": "/System/Volumes/Data"
     }
   ]

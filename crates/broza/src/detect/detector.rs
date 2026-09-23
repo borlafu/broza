@@ -15,6 +15,7 @@ use jiff::Timestamp;
 
 use crate::BrozaError;
 use crate::model::{Category, Diagnostic, Finding};
+use crate::ports::EntryMetadata;
 use crate::ports::{FileOps, ProcessRunner, SnapshotProvider};
 use crate::scan::{DirNode, FileEntry, MountTable};
 
@@ -103,6 +104,9 @@ pub struct DetectContext<'a> {
     /// The big files under the home the walk reported one by one
     /// ([`crate::scan::FileReport::for_detectors`]), sorted by path.
     pub home_files: &'a [FileEntry],
+    /// Every APFS clone family the home walk knows of, as
+    /// `(device, original inode)`, sorted ([`crate::scan::WalkResult::clone_families`]).
+    pub home_clone_families: &'a [(u64, u64)],
     /// APFS local snapshots, for the `snapshots` detector.
     pub snapshots: &'a dyn SnapshotProvider,
     /// External commands (`xcrun simctl`, `mdls`), always with a timeout.
@@ -135,6 +139,17 @@ impl<'a> NodeIndex<'a> {
     }
 }
 
+/// What the home walk produced, as the detectors read it.
+#[derive(Clone, Copy)]
+pub struct HomeWalk<'a> {
+    /// Every directory under the home, as the scanner measured it.
+    pub nodes: &'a [DirNode],
+    /// The big files under the home, one by one, sorted by path.
+    pub files: &'a [FileEntry],
+    /// Every APFS clone family the walk knows of, sorted.
+    pub clone_families: &'a [(u64, u64)],
+}
+
 /// The adapters a detection run reads through.
 #[derive(Clone, Copy)]
 pub struct DetectPorts<'a> {
@@ -154,8 +169,7 @@ impl<'a> DetectContext<'a> {
         mounts: &'a MountTable,
         now: Timestamp,
         unused_after: Duration,
-        home_nodes: &'a [DirNode],
-        home_files: &'a [FileEntry],
+        walk: HomeWalk<'a>,
     ) -> Self {
         Self {
             home,
@@ -163,12 +177,46 @@ impl<'a> DetectContext<'a> {
             mounts,
             now,
             unused_after,
-            home_nodes,
-            home_files,
+            home_nodes: walk.nodes,
+            home_files: walk.files,
+            home_clone_families: walk.clone_families,
             snapshots: ports.snapshots,
             process: ports.process,
-            index: NodeIndex::of(home_nodes),
+            index: NodeIndex::of(walk.nodes),
         }
+    }
+
+    /// `true` when a clone of the file at `(device, inode)` holds its blocks:
+    /// removing the file frees nothing while the clone stands.
+    pub fn has_clones(&self, device: u64, inode: u64) -> bool {
+        self.home_clone_families.binary_search(&(device, inode)).is_ok()
+    }
+
+    /// `true` when `file` shares its blocks with another file: a hard link, a
+    /// clone, or the original of a family the walk saw a clone of.
+    pub fn shares_blocks(&self, file: &FileEntry) -> bool {
+        file.is_shared() || self.has_clones(file.device, file.inode)
+    }
+
+    /// The allocated bytes removing the file at `path` would free.
+    ///
+    /// `meta` was just read, so it is the figure for a file that shares
+    /// nothing. For one that does — a hard link, a clone, the original of a
+    /// family — the walk's settled figure is used when the walk reported the
+    /// file, and nothing otherwise: the blocks stay with the rest of the family.
+    pub fn settled_allocated(&self, path: &Path, meta: &EntryMetadata) -> u64 {
+        let reported = self
+            .home_files
+            .binary_search_by(|file| file.path.as_path().cmp(path))
+            .ok()
+            .and_then(|at| self.home_files.get(at));
+        if let Some(file) = reported.filter(|file| self.shares_blocks(file)) {
+            return file.allocated_bytes;
+        }
+        if meta.link_count > 1 || meta.is_clone() || self.has_clones(meta.device, meta.inode) {
+            return 0;
+        }
+        meta.allocated_bytes
     }
 
     /// The measured node for `path`, when the walk reached it.
@@ -217,4 +265,67 @@ pub(crate) fn first_line(text: &str) -> String {
     }
     let cut: String = line.chars().take(REASON_MAX_CHARS).collect();
     format!("{cut}…")
+}
+
+#[cfg(test)]
+mod settled_tests {
+    use std::path::Path;
+
+    use crate::detect::test_support::{context_over, home};
+    use crate::ports::FileOps;
+    use crate::testing::FakeFileOps;
+
+    const ORIGINAL: &str = "/System/Volumes/Data/Users/dana/Movies/original.mov";
+    const CLONE: &str = "/System/Volumes/Data/Users/dana/Movies/clone.mov";
+    const PLAIN: &str = "/System/Volumes/Data/Users/dana/Movies/plain.mov";
+    const UNREPORTED: &str = "/System/Volumes/Data/Users/dana/Movies/small.txt";
+
+    fn fs() -> FakeFileOps {
+        let fs = FakeFileOps::new().with_root("/System/Volumes/Data", 2);
+        fs.add_dir(home());
+        fs.add_file(ORIGINAL, &vec![1_u8; 2_000_000]);
+        fs.add_clone(ORIGINAL, CLONE);
+        fs.add_file(PLAIN, &vec![2_u8; 2_000_000]);
+        fs.add_file(UNREPORTED, b"tiny");
+        fs
+    }
+
+    #[test]
+    fn a_reported_file_that_shares_blocks_is_sized_as_the_walk_settled_it() {
+        let fs = fs();
+        let world = context_over(&fs, home());
+        let context = world.context();
+        let original = fs.metadata(Path::new(ORIGINAL)).unwrap_or_else(|e| panic!("{e}"));
+        let clone = fs.metadata(Path::new(CLONE)).unwrap_or_else(|e| panic!("{e}"));
+
+        assert!(context.has_clones(original.device, original.inode));
+        assert_eq!(
+            context.settled_allocated(Path::new(ORIGINAL), &original),
+            original.allocated_bytes,
+            "keeps the bytes"
+        );
+        assert_eq!(context.settled_allocated(Path::new(CLONE), &clone), 0, "discounted by the walk");
+    }
+
+    #[test]
+    fn a_plain_file_is_sized_from_the_fresh_metadata_and_an_unreported_clone_frees_nothing() {
+        let fs = fs();
+        let world = context_over(&fs, home());
+        let context = world.context();
+        let grown = crate::ports::EntryMetadata {
+            allocated_bytes: 9_000_000,
+            ..fs.metadata(Path::new(PLAIN)).unwrap_or_else(|e| panic!("{e}"))
+        };
+        let unreported = fs.metadata(Path::new(UNREPORTED)).unwrap_or_else(|e| panic!("{e}"));
+        let unreported_clone =
+            crate::ports::EntryMetadata { clone_id: Some(unreported.inode + 1000), ..unreported.clone() };
+
+        assert_eq!(
+            context.settled_allocated(Path::new(PLAIN), &grown),
+            9_000_000,
+            "the walk's figure may be stale"
+        );
+        assert_eq!(context.settled_allocated(Path::new(UNREPORTED), &unreported), unreported.allocated_bytes);
+        assert_eq!(context.settled_allocated(Path::new(UNREPORTED), &unreported_clone), 0);
+    }
 }

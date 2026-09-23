@@ -133,7 +133,7 @@ fn incomplete_downloads(context: &DetectContext<'_>) -> Result<Detected, BrozaEr
         .into_iter()
         .filter(|(path, _)| is_incomplete(path))
         .filter_map(|(path, meta)| {
-            meta.ok().map(|meta| path_with(&path, meta.allocated_bytes, meta.modified))
+            meta.ok().map(|meta| path_with(&path, context.settled_allocated(&path, &meta), meta.modified))
         })
         .collect();
     paths.sort_by(by_size_then_path);

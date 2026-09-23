@@ -289,7 +289,7 @@ expression: envelope
             "size_bytes": 800002048
           }
         ],
-        "reasoning": "1 group(s) of files with identical contents; the copy modified first is kept and the others are proposed. An APFS clone reads as a duplicate but shares its blocks with the original, so removing it frees nothing.",
+        "reasoning": "1 group(s) of files with identical contents; the copy modified first is kept and the others are proposed. APFS clones share their blocks, so removing one frees nothing: neither a clone nor a file that has one is proposed.",
         "reclaimable_bytes": 800002048,
         "risk": "amber",
         "title": "Duplicate files"

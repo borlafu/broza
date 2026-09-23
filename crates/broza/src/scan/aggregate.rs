@@ -201,7 +201,7 @@ mod tests {
     }
 
     fn result(nodes: Vec<DirNode>, files: Vec<FileEntry>) -> WalkResult {
-        WalkResult { nodes, files, files_truncated: false, cache_files: Vec::new(), errors: Vec::new() }
+        WalkResult { nodes, files, ..WalkResult::default() }
     }
 
     fn reported(walk: &WalkResult, top: usize, min_size: u64) -> Vec<(String, u64, ItemKind)> {

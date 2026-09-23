@@ -93,6 +93,7 @@ impl FileOps for FakeFileOps {
             is_dataless: node.is_dataless,
             modified: node.modified,
             accessed: node.accessed,
+            clone_id: tree.clone_id(&resolved),
         })
     }
 

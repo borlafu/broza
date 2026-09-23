@@ -162,7 +162,10 @@ fn purge_one(
             Ok(bytes) => bytes,
             Err(error) => return (ItemStatus::Failed, Some(io_code(&error)), 0),
         }
-    } else if current.link_count > 1 {
+    } else if current.link_count > 1 || current.is_clone() {
+        // Another name, or another member of the clone family, keeps the
+        // blocks alive; whether a clone's family is all gone is not knowable
+        // here, so the figure stays what is certain (`AGENTS.md` §2.7).
         0
     } else {
         current.allocated_bytes

@@ -9,7 +9,7 @@ use super::{CacheStore, STORE_FILE_NAME, Verdicts, store_path};
 use crate::BrozaError;
 use crate::ExitCode;
 use crate::ports::{Clock, FileOps};
-use crate::scan::cache::key::{CacheKey, DirRecord};
+use crate::scan::cache::key::{CacheKey, DirRecord, KeptClone};
 use crate::scan::walker::DirIdentity;
 use crate::testing::{FakeFileOps, FixedClock};
 
@@ -28,6 +28,7 @@ fn key(inode: u64) -> CacheKey {
 
 fn record(inode: u64, recorded_at: Timestamp) -> DirRecord {
     DirRecord {
+        kept_clones: Vec::new(),
         key: key(inode),
         size_bytes: 1000 + inode,
         allocated_bytes: 2000,
@@ -87,6 +88,7 @@ fn record_with(
             link_count: 1,
             modified_ns: Some(1),
             accessed_ns: Some(2),
+            clone_id: None,
         })
         .collect();
     DirRecord { child_dirs, files, ..record(inode, recorded_at) }
@@ -99,6 +101,32 @@ fn identity_of(inode: u64) -> DirIdentity {
         inode,
         mtime: Timestamp::from_nanosecond(42).ok(),
     }
+}
+
+#[test]
+fn a_served_subtree_names_its_kept_clones_by_path_and_refuses_a_name_that_is_not_one() {
+    let clock = FixedClock::default();
+    let now = clock.now();
+    let kept = |name: &[u8]| KeptClone { family: (1, 77), name: name.to_vec() };
+    let store = CacheStore::empty(&clock, TTL).with_records([
+        DirRecord { kept_clones: vec![kept(b"keeper.mov")], ..record_with(1, &[("sub", 2)], &[], now) },
+        DirRecord { kept_clones: vec![kept(b"deep.mov")], ..record_with(2, &[], &[], now) },
+    ]);
+    let escaping = CacheStore::empty(&clock, TTL).with_records([DirRecord {
+        kept_clones: vec![kept(b"../keeper.mov")],
+        ..record_with(1, &[], &[], now)
+    }]);
+
+    let served = store.subtree(&identity_of(1), &Verdicts::new()).unwrap_or_else(|| panic!("servable"));
+
+    assert_eq!(
+        served.kept_clones,
+        vec![(PathBuf::from("/vol/a/keeper.mov"), (1, 77)), (PathBuf::from("/vol/a/sub/deep.mov"), (1, 77))]
+    );
+    assert!(
+        escaping.subtree(&identity_of(1), &Verdicts::new()).is_none(),
+        "a keeper name with a slash is refused"
+    );
 }
 
 #[test]

@@ -5,6 +5,8 @@
 //! mutable map.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
@@ -204,7 +206,8 @@ impl CacheStore {
             return Check::Refused;
         };
         let names_are_plain = record.child_dirs.iter().map(|child| child.name.as_slice()).all(is_plain_name)
-            && record.files.iter().map(|file| file.name.as_slice()).all(is_plain_name);
+            && record.files.iter().map(|file| file.name.as_slice()).all(is_plain_name)
+            && record.kept_clones.iter().map(|kept| kept.name.as_slice()).all(is_plain_name);
         if !names_are_plain {
             verdicts.record(key, false);
             return Check::Refused;
@@ -236,6 +239,9 @@ impl CacheStore {
     fn rebuild(&self, path: &Path, record: &DirRecord, subtree: &mut CachedSubtree) {
         subtree.nodes.push(node_of(path, record));
         subtree.files.extend(record.files.iter().map(|file| file_of(path, record.key.device, file)));
+        subtree.kept_clones.extend(
+            record.kept_clones.iter().map(|kept| (path.join(OsStr::from_bytes(&kept.name)), kept.family)),
+        );
         for child in &record.child_dirs {
             if let Some(child_record) = child_key(child).and_then(|key| self.lookup(&key)) {
                 self.rebuild(&child_path(path, child), child_record, subtree);

@@ -157,7 +157,7 @@ fn docker_raw(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaError
                     .to_owned(),
             ],
         });
-    finish(builder, vec![path_with(&path, meta.allocated_bytes, meta.modified)])
+    finish(builder, vec![path_with(&path, context.settled_allocated(&path, &meta), meta.modified)])
 }
 
 #[cfg(test)]

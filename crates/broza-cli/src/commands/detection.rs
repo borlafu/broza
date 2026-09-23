@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use broza::BrozaError;
-use broza::detect::{DetectContext, DetectPorts, Registry};
+use broza::detect::{DetectContext, DetectPorts, HomeWalk, Registry};
 use broza::model::{Category, Finding, Warning};
 use broza::ports::Ports;
 use broza::scan::{CacheUse, MountTable, ScanRequest, VolumeScan, scan_paths};
@@ -71,8 +71,7 @@ pub fn detect(request: &DetectionRequest<'_>) -> Result<Detection, BrozaError> {
         &mount.table,
         request.now,
         request.unused_after,
-        &walked.nodes,
-        &walked.files,
+        HomeWalk { nodes: &walked.nodes, files: &walked.files, clone_families: &walked.clone_families },
     );
     let report = Registry::builtin().restricted_to(request.categories).run(&context);
     let warnings = [enumeration.warnings, mount.warnings, walked.warnings, report.warnings].concat();

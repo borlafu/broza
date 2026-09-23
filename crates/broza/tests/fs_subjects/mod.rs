@@ -71,6 +71,9 @@ type SymlinkFn = Box<dyn Fn(&Path, &Path)>;
 /// Creates a hard link at the second path for the entry at the first.
 type HardLinkFn = Box<dyn Fn(&Path, &Path)>;
 
+/// Creates an APFS clone at the second path of the file at the first.
+type CloneFn = Box<dyn Fn(&Path, &Path)>;
+
 /// Adds the shapes only a real filesystem has: a FIFO, a resource fork.
 type SpecialsFn = Box<dyn Fn(&Path)>;
 
@@ -86,6 +89,8 @@ pub struct Subject {
     symlink: SymlinkFn,
     /// Creates a hard link, which [`FileOps`] deliberately cannot do.
     hard_link: HardLinkFn,
+    /// Clones a file, which [`FileOps`] deliberately cannot do.
+    clone_file: CloneFn,
     /// Fills [`SPECIAL_DIR`]; does nothing on the in-memory subject.
     specials: SpecialsFn,
     /// Kept alive so the temporary directory outlives the test.
@@ -113,6 +118,11 @@ impl Subject {
     /// Give the entry at `relative` a second name at `link`.
     pub fn hard_link(&self, relative: &str, link: &str) {
         (self.hard_link)(&self.path(relative), &self.path(link));
+    }
+
+    /// Clone the file at `relative` to `copy`, sharing its blocks.
+    pub fn clone_file(&self, relative: &str, copy: &str) {
+        (self.clone_file)(&self.path(relative), &self.path(copy));
     }
 
     /// Fail the test unless `result` is the errno the real filesystem returns.
@@ -180,12 +190,14 @@ pub fn fake_subject() -> Subject {
     );
     let for_symlink = Arc::clone(&fake);
     let for_link = Arc::clone(&fake);
+    let for_clone = Arc::clone(&fake);
     Subject {
         name: "FakeFileOps",
         fs: Arc::clone(&fake) as Arc<dyn FileOps>,
         root: PathBuf::from(FAKE_ROOT),
         symlink: Box::new(move |path, target| for_symlink.add_symlink(path, target)),
         hard_link: Box::new(move |existing, link| for_link.add_hard_link(existing, link)),
+        clone_file: Box::new(move |existing, copy| for_clone.add_clone(existing, copy)),
         // A FIFO and a resource fork are filesystem shapes, not tree shapes:
         // the in-memory subject has nowhere to put them.
         specials: Box::new(|_root| {}),
@@ -208,6 +220,17 @@ pub fn std_subject() -> Subject {
         hard_link: Box::new(|existing, link| {
             std::fs::hard_link(existing, link)
                 .unwrap_or_else(|e| panic!("hard link {}: {e}", link.display()));
+        }),
+        // `cp -c` calls `clonefile(2)`; an integration test is outside
+        // `adapters/`, where `unsafe` is denied, so it cannot call it itself.
+        clone_file: Box::new(|existing, copy| {
+            let cloned = std::process::Command::new("cp")
+                .arg("-c")
+                .arg(existing)
+                .arg(copy)
+                .status()
+                .unwrap_or_else(|e| panic!("cp -c: {e}"));
+            assert!(cloned.success(), "cp -c {} failed: {cloned}", copy.display());
         }),
         specials: Box::new(|root| {
             let forked = root.join(FORKED_FILE);

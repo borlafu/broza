@@ -27,11 +27,38 @@
 //! asked about, never deletes anything, and a lost cache costs one slow scan — so
 //! it needs no `Approved` token. Any *other* writer outside the list above is a bug.
 
+use std::any::Any;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
 use crate::BrozaError;
+
+/// An open directory, held for as long as its children are being listed or
+/// opened.
+///
+/// The walker descends by handle rather than by path: a path of `PATH_MAX`
+/// (1024) bytes or more cannot be opened or stated at all, while a directory
+/// can be created that deep with short relative names. With a handle to the
+/// parent, a child is one name away whatever the depth. The trait is empty
+/// because the handle is the adapter's business: a descriptor for the real
+/// filesystem, the path itself for the in-memory one. [`DirHandle::as_any`]
+/// lets the adapter that made a handle get it back.
+pub trait DirHandle: Send + Sync {
+    /// The handle as `Any`, so its adapter can downcast it.
+    fn as_any(&self) -> &dyn Any;
+}
+
+/// The handle the path-based defaults hand out: the directory's own path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathDirHandle(pub PathBuf);
+
+impl DirHandle for PathDirHandle {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
 
 /// One directory listing: every child with the metadata read for it.
 ///
@@ -67,6 +94,24 @@ pub struct EntryMetadata {
     pub modified: Option<Timestamp>,
     /// Last access time.
     pub accessed: Option<Timestamp>,
+    /// The APFS clone id of a regular file (`ATTR_CMNEXT_CLONEID`).
+    ///
+    /// Files that were cloned from one another share it; a file that was
+    /// never cloned carries its own inode number. `None` for directories,
+    /// symlinks, and filesystems that have no such notion, so a caller can
+    /// tell "not a clone" from "cannot know". See [`EntryMetadata::is_clone`].
+    pub clone_id: Option<u64>,
+}
+
+impl EntryMetadata {
+    /// `true` when this file shares its blocks with the file it was cloned from.
+    ///
+    /// The original keeps a clone id equal to its inode, so it reads as an
+    /// ordinary file here; only the copies answer `true`. Deciding which of
+    /// them holds the bytes is the walker's job (`scan::walker::clones`).
+    pub fn is_clone(&self) -> bool {
+        self.clone_id.is_some_and(|id| id != self.inode)
+    }
 }
 
 /// The BLAKE3 hash of a file's whole contents.
@@ -118,6 +163,34 @@ pub trait FileOps: Send + Sync {
                 (child, meta)
             })
             .collect())
+    }
+    /// Open the directory at `path`, so its children can be listed and opened
+    /// by name ([`FileOps::list_dir`], [`FileOps::open_dir_in`]).
+    ///
+    /// The default is path-based and never fails here: whatever is wrong with
+    /// the path surfaces when the directory is listed.
+    fn open_dir(&self, path: &Path) -> Result<Box<dyn DirHandle>, BrozaError> {
+        Ok(Box::new(PathDirHandle(path.to_path_buf())))
+    }
+    /// Open the directory `name` directly inside `parent`. `path` is the
+    /// child's full path, for the listing's names and for errors; an adapter
+    /// that works by descriptor never hands it to the kernel.
+    fn open_dir_in(
+        &self,
+        parent: &dyn DirHandle,
+        name: &OsStr,
+        path: &Path,
+    ) -> Result<Box<dyn DirHandle>, BrozaError> {
+        let _ = (parent, name);
+        Ok(Box::new(PathDirHandle(path.to_path_buf())))
+    }
+    /// Direct children of the open directory `dir`, each with the metadata of
+    /// a `lstat`, their names joined to `path`.
+    ///
+    /// The default is [`FileOps::read_dir_with_metadata`] on the path.
+    fn list_dir(&self, dir: &dyn DirHandle, path: &Path) -> Result<DirListing, BrozaError> {
+        let _ = dir;
+        self.read_dir_with_metadata(path)
     }
     /// `true` when something exists at `path` (symlinks are not followed).
     fn exists(&self, path: &Path) -> bool;

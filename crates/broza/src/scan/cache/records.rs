@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 
-use crate::scan::cache::key::{CACHE_FILE_FLOOR_BYTES, CacheKey, ChildDir, DirRecord, FileRecord};
+use crate::scan::cache::key::{CACHE_FILE_FLOOR_BYTES, CacheKey, ChildDir, DirRecord, FileRecord, KeptClone};
 use crate::scan::walker::{DirNode, FileEntry, WalkResult};
 
 /// The records of every directory the walk measured itself.
@@ -44,7 +44,16 @@ pub fn records_of(walk: &WalkResult, recorded_at: Timestamp) -> Vec<DirRecord> {
                 link_count: file.link_count,
                 modified_ns: file.modified.map(Timestamp::as_nanosecond),
                 accessed_ns: file.accessed.map(Timestamp::as_nanosecond),
+                clone_id: file.clone_id,
             });
+        }
+    }
+    let mut kept: HashMap<&Path, Vec<KeptClone>> = HashMap::new();
+    for (keeper, family) in &walk.kept_clones {
+        if let (Some(parent), Some(name)) = (keeper.parent(), keeper.file_name()) {
+            kept.entry(parent)
+                .or_default()
+                .push(KeptClone { family: *family, name: name.as_bytes().to_vec() });
         }
     }
     walk.nodes
@@ -55,7 +64,9 @@ pub fn records_of(walk: &WalkResult, recorded_at: Timestamp) -> Vec<DirRecord> {
             child_dirs.sort_by(|a, b| a.name.cmp(&b.name));
             let mut own_files = files.remove(node.path.as_path()).unwrap_or_default();
             own_files.sort_by(|a, b| a.name.cmp(&b.name));
-            Some(record.with_child_dirs(child_dirs).with_files(own_files))
+            let mut kept_clones = kept.remove(node.path.as_path()).unwrap_or_default();
+            kept_clones.sort_by(|a, b| a.family.cmp(&b.family).then_with(|| a.name.cmp(&b.name)));
+            Some(record.with_child_dirs(child_dirs).with_files(own_files).with_kept_clones(kept_clones))
         })
         .collect()
 }
@@ -96,6 +107,7 @@ pub(super) fn file_of(dir: &Path, device: u64, record: &FileRecord) -> FileEntry
         link_count: record.link_count,
         modified: record.modified_ns.and_then(|ns| Timestamp::from_nanosecond(ns).ok()),
         accessed: record.accessed_ns.and_then(|ns| Timestamp::from_nanosecond(ns).ok()),
+        clone_id: record.clone_id,
     }
 }
 
@@ -124,8 +136,36 @@ mod tests {
     use jiff::Timestamp;
 
     use super::records_of;
+    use crate::scan::cache::key::KeptClone;
     use crate::scan::walker::{WalkOptions, walk};
     use crate::testing::FakeFileOps;
+
+    #[test]
+    fn a_record_names_the_clone_that_keeps_its_family_s_bytes() {
+        // The original is gone, so the first clone by path keeps the bytes:
+        // `a/keeper.mov`, and its record has to say so by name.
+        let fs = FakeFileOps::new().with_root("/vol", 1).with_sized_file("/vol/b/source.mov", 2_000_000);
+        fs.add_clone("/vol/b/source.mov", "/vol/a/keeper.mov");
+        fs.add_clone("/vol/b/source.mov", "/vol/b/other.mov");
+        crate::ports::FileOps::remove_tree(&fs, Path::new("/vol/b/source.mov"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let walked = walk(Path::new("/vol"), &WalkOptions::default(), &fs);
+        assert_eq!(walked.kept_clones.len(), 1, "{:?}", walked.kept_clones);
+        let family = walked.kept_clones[0].1;
+
+        let records = records_of(&walked, Timestamp::UNIX_EPOCH);
+
+        let node_of = |path: &str| {
+            walked.nodes.iter().find(|node| node.path == Path::new(path)).unwrap_or_else(|| panic!("{path}"))
+        };
+        let record_of = |path: &str| {
+            let node = node_of(path);
+            records.iter().find(|record| record.key.inode == node.inode).unwrap_or_else(|| panic!("{path}"))
+        };
+        assert_eq!(record_of("/vol/a").kept_clones, vec![KeptClone { family, name: b"keeper.mov".to_vec() }]);
+        assert!(record_of("/vol/b").kept_clones.is_empty(), "b's clone is discounted");
+        assert!(record_of("/vol").kept_clones.is_empty());
+    }
 
     #[test]
     fn a_record_names_its_child_directories_and_its_big_files_in_name_order() {

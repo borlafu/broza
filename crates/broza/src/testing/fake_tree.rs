@@ -45,6 +45,11 @@ pub(crate) struct Node {
     pub accessed: Option<Timestamp>,
     /// `true` for a cloud placeholder whose contents are not on this disk.
     pub is_dataless: bool,
+    /// Inode of the file this one was cloned from, as APFS records it.
+    ///
+    /// `None` for a file that was never cloned, which reports its own inode
+    /// as its clone id, and for anything that is not a regular file.
+    pub cloned_from: Option<u64>,
 }
 
 impl Node {
@@ -167,8 +172,44 @@ impl Tree {
             modified: now,
             accessed: now,
             is_dataless: false,
+            cloned_from: None,
         };
         self.nodes.insert(path.to_path_buf(), node);
+    }
+
+    /// The clone id of `path`, as `ATTR_CMNEXT_CLONEID` reports it.
+    ///
+    /// Regular files only: a fresh file answers its own inode, a clone the
+    /// inode of the file it was cloned from, and a clone of a clone the same
+    /// (APFS keeps one id per family, not a chain).
+    pub fn clone_id(&self, path: &Path) -> Option<u64> {
+        let node = self.get(path)?;
+        match node.kind {
+            NodeKind::File(_) => Some(node.cloned_from.unwrap_or(node.inode)),
+            NodeKind::Dir | NodeKind::Symlink(_) => None,
+        }
+    }
+
+    /// Add `copy` as a clone of the file at `existing`, as `clonefile(2)` does.
+    ///
+    /// The copy has the same contents and sizes, its own inode, and the clone
+    /// id of the original's family. Only regular files can be cloned here; a
+    /// missing source or a directory reports `false`.
+    pub fn clone_file(&mut self, existing: &Path, copy: &Path) -> bool {
+        let Some(source) = self.nodes.get(existing).cloned() else { return false };
+        if !matches!(source.kind, NodeKind::File(_)) {
+            return false;
+        }
+        let family = source.cloned_from.unwrap_or(source.inode);
+        self.insert(copy, source.kind.clone());
+        if let Some(node) = self.nodes.get_mut(copy) {
+            node.size_override = source.size_override;
+            node.allocated_override = source.allocated_override;
+            node.modified = source.modified;
+            node.accessed = source.accessed;
+            node.cloned_from = Some(family);
+        }
+        true
     }
 
     /// Create `path` and every missing ancestor as a directory.

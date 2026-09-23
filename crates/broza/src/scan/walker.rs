@@ -14,10 +14,11 @@
 //!   and symlinks do, so a tree of empty directories is 0 bytes everywhere.
 //! - A file with several hard links is counted **once per walk**, and always in
 //!   the directory of the name that sorts first, so two runs agree (`dedupe.rs`
-//!   settles that once the walk is done). **APFS clones are not deduplicated in
-//!   v1**: two clones read as two ordinary files and are counted twice. That is
-//!   best-effort work deferred to after 1.0 (PRD RF-02, `docs/cli-spec.md`
-//!   §4.2), and it errs towards reporting more space in use than there is.
+//!   settles that once the walk is done). An APFS clone family is counted once
+//!   too, where its original stands or, failing that, at its first path
+//!   (`clones.rs`); a clone that has diverged from its original is discounted
+//!   whole, which is the best the clone id allows (PRD RF-02,
+//!   `docs/cli-spec.md` §4.2).
 //! - A cloud placeholder (`SF_DATALESS`: iCloud Drive, Files On-Demand) counts
 //!   as an entry and as zero bytes, because none of its bytes are on this disk.
 //!   A dataless *directory* is not opened at all: doing so blocks on the
@@ -25,6 +26,9 @@
 //! - Symlinks count as their own size and are never followed. There is no
 //!   option to follow them: a cleanup tool that follows links walks out of the
 //!   volume it was asked about.
+//! - Directories are opened from their parent's handle by name
+//!   ([`FileOps::open_dir_in`]), so a tree deeper than `PATH_MAX` allows is
+//!   walked to the bottom (ADR 0010).
 //! - `max_depth` limits what is **reported**, never what is aggregated: a node
 //!   at the depth limit still carries the bytes of everything below it and says
 //!   so with `children_truncated`.
@@ -37,13 +41,16 @@
 //! Below that, an unchanged directory is taken from its [`crate::scan::DirRecord`] whole —
 //! bytes, counts and all — and its subtree is not walked.
 
+mod clones;
 mod dedupe;
+mod leaves;
 mod parts;
 mod top_files;
 mod types;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -53,15 +60,42 @@ pub use types::{
 };
 
 use crate::BrozaError;
-use crate::ports::{EntryMetadata, FileOps};
-use parts::{Children, Context, Leaves, Partial, Totals};
+use crate::ports::{DirHandle, EntryMetadata, FileOps};
+use leaves::{Children, Leaves};
+use parts::{Context, Partial, Totals};
 use top_files::TopFiles;
+
+/// Stack of each walker thread.
+///
+/// The walk recurses once per directory level, and a macOS path holds up to
+/// `PATH_MAX / 2` levels (512). The two megabytes a thread gets by default ran
+/// out at 466 levels once the frames grew, and a walker that aborts on a deep
+/// tree reports nothing at all. Reserved, not committed: the pages are only
+/// touched as deep as the tree goes.
+const WALK_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// The pool every walk runs on, built once.
+///
+/// `None` when the pool could not be built, in which case the walk runs on
+/// whatever pool the caller is on: slower to fail on a deep tree, never wrong.
+fn pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().stack_size(WALK_STACK_BYTES).build().ok()).as_ref()
+}
 
 /// Walk `root`, aggregating every directory below it.
 ///
 /// Never fails: a root that cannot be read comes back as a single warning in
 /// [`WalkResult::errors`], and so does every unreadable subtree found on the way.
 pub fn walk(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -> WalkResult {
+    match pool() {
+        Some(pool) => pool.install(|| walk_on_this_pool(root, options, fs)),
+        None => walk_on_this_pool(root, options, fs),
+    }
+}
+
+/// [`walk`], on whatever pool the caller is on.
+fn walk_on_this_pool(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -> WalkResult {
     // The root is never subject to the exclusions: naming an excluded folder
     // explicitly is how the user asks to see inside it (`docs/cli-spec.md` §7).
     // Exclusions apply to what is *met* below the root.
@@ -74,7 +108,7 @@ pub fn walk(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -> WalkRes
     let exclude = options.exclude.iter().filter(|prefix| !root.starts_with(prefix)).cloned().collect();
     let context = Context { fs, options, root_device: meta.device, exclude };
     let partial = if meta.is_dir && !meta.is_symlink && !meta.is_dataless {
-        walk_dir(root, &meta, 0, &context)
+        walk_dir(root, &meta, 0, None, &context)
     } else {
         walk_leaf_root(root, &meta, &context)
     };
@@ -83,24 +117,42 @@ pub fn walk(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -> WalkRes
 
 /// Walk one directory and, in parallel, everything below it.
 ///
-/// The totals handed back to the caller count this subtree as an item in its
-/// own right ([`Totals::as_child`]); the node keeps the view from inside.
-fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'_>) -> Partial {
+/// The directory is opened from its parent's handle by name, so no call sees
+/// the full path: a tree deeper than `PATH_MAX` allows is walked like any
+/// other (ADR 0010). The totals handed back to the caller count this subtree
+/// as an item in its own right ([`Totals::as_child`]); the node keeps the view
+/// from inside.
+fn walk_dir(
+    path: &Path,
+    meta: &EntryMetadata,
+    depth: usize,
+    parent: Option<&dyn DirHandle>,
+    context: &Context<'_>,
+) -> Partial {
     let identity = DirIdentity::of(path, meta);
     if let Some(subtree) = cached(&identity, depth, context).filter(|subtree| !subtree.nodes.is_empty()) {
         return cached_dir(&identity, subtree, depth, context);
     }
-    let listing = match context.fs.read_dir_with_metadata(path) {
+    let opened = match (parent, path.file_name()) {
+        (Some(parent), Some(name)) => context.fs.open_dir_in(parent, name, path),
+        _ => context.fs.open_dir(path),
+    };
+    let dir = match opened {
+        Ok(dir) => dir,
+        Err(error) => return unreadable_dir(&identity, &error, context),
+    };
+    let listing = match context.fs.list_dir(dir.as_ref(), path) {
         Ok(listing) => listing,
         Err(error) => return unreadable_dir(&identity, &error, context),
     };
-    let Children { dirs, leaves, errors, skipped } = parts::split_children(listing, context);
+    let Children { dirs, leaves, errors, skipped, .. } = leaves::split_children(path, listing, context);
     context.report(leaves.entries.saturating_add(1), leaves.totals.size_bytes);
     let child_dirs = dirs.len() as u64;
     let cap = context.options.report_files_top;
+    let dir: &dyn DirHandle = dir.as_ref();
     let below = dirs
         .into_par_iter()
-        .map(|(child, child_meta)| walk_dir(&child, &child_meta, depth.saturating_add(1), context))
+        .map(|(child, child_meta)| walk_dir(&child, &child_meta, depth.saturating_add(1), Some(dir), context))
         .reduce(|| Partial::empty(cap), Partial::merge);
     let reports_children = context.options.max_depth.is_none_or(|max| depth < max);
     let truncated = skipped || !reports_children;
@@ -129,12 +181,16 @@ fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'
     Partial {
         nodes,
         files: leaves.files.merge(below.files),
+        shared_files: leaves.shared_files.merge(below.shared_files),
         links,
         errors: all_errors,
         totals: totals.as_child(),
         direct_maxima,
         hidden,
         cache_files,
+        originals: leaves.originals.merge(below.originals),
+        clones: leaves.clones.merge(below.clones),
+        served_keepers: below.served_keepers,
     }
 }
 
@@ -157,10 +213,14 @@ fn cached_dir(
     depth: usize,
     context: &Context<'_>,
 ) -> Partial {
-    let CachedSubtree { nodes, files } = subtree;
+    let CachedSubtree { nodes, files, kept_clones } = subtree;
     let Some(root) = nodes.first() else {
         return Partial::empty(context.options.report_files_top);
     };
+    // A family whose credited clone lives in this subtree is spoken for: any
+    // other clone of it the walk meets is discounted, as the cold walk that
+    // wrote the record did, and the credited one keeps its bytes.
+    let served_keepers = kept_clones;
     let totals = Totals {
         size_bytes: root.size_bytes,
         allocated_bytes: root.allocated_bytes,
@@ -179,16 +239,25 @@ fn cached_dir(
     };
     let (nodes, hidden): (Vec<DirNode>, Vec<DirNode>) = nodes.into_iter().partition(reported);
     // The served files are already in the store under the records they came
-    // from, so none is collected for it again; only the report wants them.
+    // from, so none is collected for it again; only the report wants them —
+    // shared-bytes files in their own heap, as walked ones are.
     let cap = context.options.report_files_top;
-    let top = files
+    let (shared, plain): (Vec<FileEntry>, Vec<FileEntry>) = files
         .into_iter()
         .filter(|file| {
             let reportable = file.size_bytes.max(file.allocated_bytes);
             context.options.report_files_min_size.is_some_and(|min| reportable >= min)
         })
-        .fold(TopFiles::new(cap), TopFiles::with);
-    Partial { nodes, hidden, files: top, totals: totals.as_child(), ..Partial::empty(cap) }
+        .partition(FileEntry::is_shared);
+    Partial {
+        nodes,
+        hidden,
+        files: plain.into_iter().fold(TopFiles::new(cap), TopFiles::with),
+        shared_files: shared.into_iter().fold(TopFiles::new(cap), TopFiles::with),
+        totals: totals.as_child(),
+        served_keepers,
+        ..Partial::empty(cap)
+    }
 }
 
 /// A directory Broza may not read: a warning, an empty node, and the walk goes on.
@@ -206,12 +275,16 @@ fn unreadable_dir(identity: &DirIdentity, error: &BrozaError, context: &Context<
 /// A root that is not a directory: reported as a file, with no node.
 fn walk_leaf_root(root: &Path, meta: &EntryMetadata, context: &Context<'_>) -> Partial {
     let cap = context.options.report_files_top;
-    let leaves = Leaves::empty(cap).add_leaf(root, meta, context);
+    let dir: Arc<Path> = Arc::from(root.parent().unwrap_or(root));
+    let leaves = Leaves::empty(cap).add_leaf(&dir, root.to_path_buf(), meta, context);
     context.report(leaves.entries, leaves.totals.size_bytes);
     Partial {
         files: leaves.files,
+        shared_files: leaves.shared_files,
         cache_files: leaves.cache_files,
         totals: leaves.totals,
+        originals: leaves.originals,
+        clones: leaves.clones,
         ..Partial::empty(cap)
     }
 }
@@ -253,37 +326,60 @@ fn recompute_largest_items(mut nodes: Vec<DirNode>, direct_maxima: &[(PathBuf, u
     nodes
 }
 
-/// Settle the hard links and put everything in a deterministic order.
+/// Settle the shared bytes and put everything in a deterministic order.
 ///
 /// Parallel walks finish in whatever order the threads happen to take, and a report
 /// that changes between two identical scans is a report nobody can diff.
 fn sorted(partial: Partial) -> WalkResult {
-    let Partial { mut nodes, files, links, mut errors, mut direct_maxima, hidden, mut cache_files, .. } =
-        partial;
+    let Partial {
+        mut nodes,
+        files,
+        shared_files,
+        links,
+        mut errors,
+        mut direct_maxima,
+        hidden,
+        mut cache_files,
+        originals,
+        clones: ledger,
+        served_keepers,
+        ..
+    } = partial;
     let hidden_paths: HashSet<PathBuf> = hidden.iter().map(|node| node.path.clone()).collect();
     nodes.extend(hidden);
-    let files_truncated = files.is_truncated();
-    let settled = dedupe::settle_hard_links(nodes, files.into_vec(), links);
-    let mut files = settled.files;
-    // The surviving name of every multiply-linked file is a direct file of the
-    // directory it is credited to; the discounted names count nowhere.
-    for link in &settled.credited {
+    let files_truncated = files.is_truncated() || shared_files.is_truncated();
+    let mut all_files = files.into_vec();
+    all_files.extend(shared_files.into_vec());
+    let settled = dedupe::settle_hard_links(nodes, all_files, links);
+    let dropped: HashSet<&Path> = settled.dropped.iter().map(PathBuf::as_path).collect();
+    cache_files.retain(|file| !dropped.contains(file.path.as_path()));
+    let clones::Settlement { nodes, mut files, mut cache_files, credited, mut kept_clones, families } =
+        clones::settle_clones(settled.nodes, settled.files, cache_files, ledger, originals, served_keepers);
+    // A family the cache kept below `max_depth` has no node to be recorded
+    // under; the record it would belong to is never written either.
+    kept_clones.retain(|(keeper, _)| keeper.parent().is_none_or(|dir| !hidden_paths.contains(dir)));
+    let clone_families = clones::families_of(families, &files, &cache_files);
+    // The surviving name of every multiply-linked file or clone is a direct
+    // file of the directory it is credited to; the discounted names count
+    // nowhere.
+    for link in settled.credited.iter().chain(&credited) {
         if let Some(parent) = link.path.parent() {
             direct_maxima.push((parent.to_path_buf(), link.allocated_bytes));
         }
     }
-    let dropped: HashSet<&Path> = settled.dropped.iter().map(PathBuf::as_path).collect();
-    cache_files.retain(|file| !dropped.contains(file.path.as_path()));
-    let mut nodes = recompute_largest_items(settled.nodes, &direct_maxima);
+    let mut nodes = recompute_largest_items(nodes, &direct_maxima);
     nodes.retain(|node| !hidden_paths.contains(&node.path));
     nodes.sort_by(|left, right| left.path.cmp(&right.path));
     files.sort_by(|left, right| left.path.cmp(&right.path));
     cache_files.sort_by(|left, right| left.path.cmp(&right.path));
     errors.sort_by(|left, right| left.path.cmp(&right.path).then_with(|| left.code.cmp(&right.code)));
-    WalkResult { nodes, files, files_truncated, cache_files, errors }
+    kept_clones.sort_unstable();
+    WalkResult { nodes, files, files_truncated, cache_files, errors, kept_clones, clone_families }
 }
 
 #[cfg(test)]
 mod cache_tests;
+#[cfg(test)]
+mod clone_tests;
 #[cfg(test)]
 mod tests;

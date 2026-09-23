@@ -51,6 +51,27 @@ fn a_hard_link_shares_the_inode_and_raises_the_link_count() {
 }
 
 #[test]
+fn a_clone_reports_the_original_s_inode_as_its_clone_id_and_a_fresh_file_its_own() {
+    for subject in subjects() {
+        subject.clone_file(FILE, "dir/copy.txt");
+
+        let original = subject.metadata(FILE);
+        let copy = subject.metadata("dir/copy.txt");
+        let other = subject.metadata("other.txt");
+
+        assert_eq!(original.clone_id, Some(original.inode), "{}: never cloned from anything", subject.name);
+        assert_ne!(copy.inode, original.inode, "{}: a clone is its own file", subject.name);
+        assert_eq!(copy.clone_id, Some(original.inode), "{}: the family is the original", subject.name);
+        assert_eq!(copy.size_bytes, original.size_bytes, "{}", subject.name);
+        assert!(copy.is_clone(), "{}", subject.name);
+        assert!(!original.is_clone(), "{}: the original reads as an ordinary file", subject.name);
+        assert!(!other.is_clone(), "{}", subject.name);
+        assert_eq!(subject.metadata("dir").clone_id, None, "{}: directories carry none", subject.name);
+        assert_eq!(subject.metadata(FILE_LINK).clone_id, None, "{}: symlinks carry none", subject.name);
+    }
+}
+
+#[test]
 fn a_listing_with_metadata_says_the_same_as_stating_every_child() {
     for subject in subjects() {
         let listing = subject

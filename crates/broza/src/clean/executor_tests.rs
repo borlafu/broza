@@ -357,6 +357,20 @@ fn the_size_cap_applies_to_purges_and_counts_what_was_quarantined_first() {
 }
 
 #[test]
+fn a_cloned_file_frees_nothing_when_purged() {
+    const COPY: &str = "/Users/dana/.Trash/old-movie copy.mp4";
+    let fs = fs();
+    fs.add_clone(TRASH, COPY);
+    let findings = vec![finding("trash.home", Category::Trash, &[COPY], &fs)];
+    let token = approved(&fs, &findings, false);
+
+    let executed = run(&token, &fs, None);
+
+    assert_eq!(status_of(&executed.plan, COPY), (ItemStatus::Purged, None));
+    assert_eq!(executed.plan.reclaimed_bytes(), 0, "the original keeps the blocks");
+}
+
+#[test]
 fn a_hard_linked_file_frees_nothing_when_purged() {
     let fs = fs();
     fs.add_hard_link(TRASH, "/Users/dana/Documents/still-here.mp4");

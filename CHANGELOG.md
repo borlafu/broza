@@ -4,6 +4,24 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
+## [Unreleased]
+
+### Fixed
+
+- APFS clone families are counted once (ADR 0009). A folder of cloned media — WhatsApp's
+  `Message/Media` measured 434.6 GB on a 392 GB volume — now measures what deleting it would
+  free: the original keeps the bytes, or the clone whose path sorts first when the original is
+  gone. The scan cache carries each file's clone id (layout 5; an older store is rebuilt on the
+  next scan), and `duplicates` proposes neither a clone nor a file that has one, since
+  quarantining either frees nothing. `size_exceeds_volume` keeps firing for what the clone id
+  cannot settle and no longer says clones are counted separately. `clean --purge` counts a
+  purged clone as reclaiming nothing, like a hard link.
+- The walker runs on its own thread pool with 64 MiB stacks: a directory tree 466 levels deep
+  overflowed the default and aborted the scan.
+- The walk descends by directory descriptor (ADR 0010). A tree deeper than a path can name
+  (macOS refuses paths of 1024 bytes or more) is now measured to the bottom instead of ending in
+  `stat …: File name too long (os error 63)` for every entry past the limit.
+
 ## [1.0.0] — 2026-09-22
 
 The last two categories, the safety kernel closing the cloud-root gap, and the supply-chain

@@ -33,6 +33,9 @@ use crate::scan::walker::parts::LinkSighting;
 use crate::scan::walker::{DirNode, FileEntry};
 
 /// Settle every hard link: count it once, and mark who may not be cached.
+///
+/// Every sighting here has more than one name; clones with one name go to the
+/// ledger [`super::clones`] settles next.
 pub(super) fn settle_hard_links(
     nodes: Vec<DirNode>,
     files: Vec<FileEntry>,
@@ -73,8 +76,8 @@ pub(super) struct Settled {
 /// that holds the whole set and is free to be cached. For an inode with names
 /// the walk never saw — another volume, an excluded path, a subtree that was
 /// itself served from the cache — no directory can be sure it holds them all.
-fn hiders(links: &[LinkSighting]) -> HashSet<PathBuf> {
-    let mut hiders = HashSet::new();
+pub(super) fn hiders(links: &[LinkSighting]) -> HashSet<PathBuf> {
+    let mut hiders: HashSet<PathBuf> = HashSet::new();
     for (_, group) in group_by_inode(links) {
         let complete = u64::try_from(group.len())
             .is_ok_and(|seen| Some(seen) == group.first().map(|link| link.link_count));
@@ -84,7 +87,9 @@ fn hiders(links: &[LinkSighting]) -> HashSet<PathBuf> {
                 if whole_set.as_deref() == Some(ancestor) {
                     break;
                 }
-                hiders.insert(ancestor.to_path_buf());
+                if !hiders.contains(ancestor) {
+                    hiders.insert(ancestor.to_path_buf());
+                }
             }
         }
     }
@@ -114,7 +119,7 @@ fn lowest_common_directory(group: &[&LinkSighting]) -> Option<PathBuf> {
 }
 
 /// Mark the directories that may not be served from the cache.
-fn mark_uncacheable(nodes: Vec<DirNode>, hiders: &HashSet<PathBuf>) -> Vec<DirNode> {
+pub(super) fn mark_uncacheable(nodes: Vec<DirNode>, hiders: &HashSet<PathBuf>) -> Vec<DirNode> {
     nodes
         .into_iter()
         .map(|node| if hiders.contains(&node.path) { node.hiding_a_name() } else { node })
@@ -139,19 +144,90 @@ fn partition_names(links: Vec<LinkSighting>) -> (Vec<LinkSighting>, Vec<LinkSigh
 }
 
 /// Remove each duplicate's bytes from its directory and every directory above.
-fn subtract(nodes: Vec<DirNode>, duplicates: &[LinkSighting]) -> Vec<DirNode> {
-    let index: HashMap<PathBuf, usize> =
-        nodes.iter().enumerate().map(|(at, node)| (node.path.clone(), at)).collect();
-    let mut nodes = nodes;
+///
+/// Linear in the duplicates and in the nodes: each duplicate is charged to
+/// its own directory, and the charges then flow up the tree once, deepest
+/// directories first. Walking every duplicate's ancestors one by one would
+/// cost a hash lookup per ancestor per duplicate, and a folder of a million
+/// clones has a million duplicates a dozen levels deep.
+pub(super) fn subtract(nodes: Vec<DirNode>, duplicates: &[LinkSighting]) -> Vec<DirNode> {
+    if duplicates.is_empty() {
+        return nodes;
+    }
+    let mut charged: HashMap<&Path, Charge> = HashMap::new();
     for duplicate in duplicates {
-        for ancestor in duplicate.path.ancestors().skip(1) {
-            let Some(node) = index.get(ancestor).and_then(|at| nodes.get_mut(*at)) else { continue };
-            node.size_bytes = node.size_bytes.saturating_sub(duplicate.size_bytes);
-            node.allocated_bytes = node.allocated_bytes.saturating_sub(duplicate.allocated_bytes);
-            node.file_count = node.file_count.saturating_sub(1);
+        let Some(dir) = duplicate.path.parent() else { continue };
+        let charge = charged.entry(dir).or_default();
+        *charge = charge.plus(&Charge::of(duplicate));
+    }
+    apply_charges(nodes, &charged)
+}
+
+/// Take each directory's charge out of it and out of every directory above.
+pub(super) fn apply_charges(nodes: Vec<DirNode>, per_dir: &HashMap<&Path, Charge>) -> Vec<DirNode> {
+    if per_dir.is_empty() {
+        return nodes;
+    }
+    let index: HashMap<&Path, usize> =
+        nodes.iter().enumerate().map(|(at, node)| (node.path.as_path(), at)).collect();
+    let mut charges = vec![Charge::default(); nodes.len()];
+    for (dir, charge) in per_dir {
+        if let Some(at) = index.get(dir) {
+            charges[*at] = charges[*at].plus(charge);
         }
     }
+    let mut deepest_first: Vec<usize> = (0..nodes.len()).collect();
+    deepest_first.sort_by_key(|at| std::cmp::Reverse(nodes[*at].path.components().count()));
+    for at in deepest_first {
+        let Some(parent) = nodes[at].path.parent().and_then(|parent| index.get(parent)) else { continue };
+        charges[*parent] = charges[*parent].plus(&charges[at]);
+    }
+    drop(index);
     nodes
+        .into_iter()
+        .zip(charges)
+        .map(|(node, charge)| DirNode {
+            size_bytes: node.size_bytes.saturating_sub(charge.size_bytes),
+            allocated_bytes: node.allocated_bytes.saturating_sub(charge.allocated_bytes),
+            file_count: node.file_count.saturating_sub(charge.files),
+            ..node
+        })
+        .collect()
+}
+
+/// What a directory's subtree is charged for its discounted names.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Charge {
+    /// Apparent bytes to take out.
+    pub size_bytes: u64,
+    /// Allocated bytes to take out.
+    pub allocated_bytes: u64,
+    /// Files to take out of the count.
+    pub files: u64,
+}
+
+impl Charge {
+    fn of(duplicate: &LinkSighting) -> Self {
+        Self { size_bytes: duplicate.size_bytes, allocated_bytes: duplicate.allocated_bytes, files: 1 }
+    }
+
+    /// Both charges together, saturating.
+    pub fn plus(self, other: &Self) -> Self {
+        Self {
+            size_bytes: self.size_bytes.saturating_add(other.size_bytes),
+            allocated_bytes: self.allocated_bytes.saturating_add(other.allocated_bytes),
+            files: self.files.saturating_add(other.files),
+        }
+    }
+
+    /// This charge less `other`, saturating.
+    pub fn minus(self, other: &Self) -> Self {
+        Self {
+            size_bytes: self.size_bytes.saturating_sub(other.size_bytes),
+            allocated_bytes: self.allocated_bytes.saturating_sub(other.allocated_bytes),
+            files: self.files.saturating_sub(other.files),
+        }
+    }
 }
 
 #[cfg(test)]

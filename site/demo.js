@@ -32,6 +32,14 @@
   cursor.className = 'cursor';
   cursor.setAttribute('aria-hidden', 'true');
 
+  // The markup separates the steps with newlines so the no-script transcript
+  // reads as one session. Those text nodes keep rendering while their step is
+  // hidden, which is what stacked a blank line per phase at the top.
+  Array.prototype.slice.call(body.childNodes).forEach(function (node) {
+    if (node.nodeType === 3 && !node.textContent.trim()) body.removeChild(node);
+  });
+  body.classList.add('is-live');
+
   var plan = steps.map(function (step) {
     var out = step.querySelector('.out');
     var cmd = step.querySelector('.cmd');
@@ -181,22 +189,4 @@
     });
   }, { threshold: 0.5 });
   observer.observe(document.getElementById('term'));
-})();
-
-// Copy buttons for the install one-liner.
-(function () {
-  'use strict';
-  Array.prototype.forEach.call(document.querySelectorAll('[data-copy]'), function (button) {
-    var source = document.getElementById(button.dataset.copy);
-    if (!source || !navigator.clipboard) return;
-    button.addEventListener('click', function () {
-      navigator.clipboard.writeText(source.textContent).then(function () {
-        var original = button.textContent;
-        button.textContent = 'Copied';
-        setTimeout(function () { button.textContent = original; }, 1600);
-      }, function () {
-        button.textContent = 'Press ⌘C';
-      });
-    });
-  });
 })();

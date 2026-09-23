@@ -18,7 +18,7 @@
 
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::{File, OpenOptions};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
@@ -34,6 +34,10 @@ use crate::ports::EntryMetadata;
 pub(crate) const STAT_BLOCK_BYTES: u64 = 512;
 /// `SF_DATALESS` in `st_flags`: a cloud placeholder whose contents are elsewhere.
 pub(crate) const SF_DATALESS: u32 = 0x4000_0000;
+/// `PATH_MAX`: the kernel refuses a path of this many bytes or more. A
+/// shorter string can still be refused when a symlink on the way lengthens
+/// what the kernel resolves, so this is a shortcut, not the test.
+pub(crate) const PATH_MAX_BYTES: usize = 1024;
 /// Flags every directory is opened with: only a directory (`O_DIRECTORY`
 /// keeps a FIFO from turning an open into a wait), never through a symlink,
 /// never blocking, never inherited by a child process.
@@ -63,12 +67,17 @@ pub(crate) fn open_directory(path: &Path) -> std::io::Result<File> {
 fn open_deepest_ancestor(path: &Path) -> std::io::Result<(&Path, File)> {
     let mut too_long = None;
     for ancestor in path.ancestors() {
+        // A string the kernel cannot take is not worth a call.
+        if ancestor.as_os_str().len() >= PATH_MAX_BYTES {
+            continue;
+        }
         match open_by_path(ancestor) {
             Ok(dir) => return Ok((ancestor, dir)),
             Err(failed) if failed.raw_os_error() == Some(libc::ENAMETOOLONG) => too_long = Some(failed),
-            // Anything else — missing, denied, not a directory — is about the
-            // path as asked, and is reported as such.
-            Err(failed) => return Err(too_long.unwrap_or(failed)),
+            // Anything else — missing, denied, not a directory — is about that
+            // ancestor, and climbing further would not get past it: the way
+            // down leads through it again. Its own error is the answer.
+            Err(failed) => return Err(failed),
         }
     }
     Err(too_long.unwrap_or_else(|| std::io::Error::from_raw_os_error(libc::ENAMETOOLONG)))
@@ -161,24 +170,45 @@ fn timestamp(seconds: i64, nanoseconds: i64) -> Option<Timestamp> {
 /// reads through a duplicate of the descriptor (`fdopendir` takes ownership of
 /// the one it is given) and never hands the kernel a path.
 pub(crate) fn read_dir_names_in(dir: &File) -> std::io::Result<Vec<OsString>> {
-    // SAFETY: `dir` is an open descriptor; `dup` returns a fresh one or -1.
-    let duplicate = retrying(|| unsafe { libc::dup(dir.as_raw_fd()) })?;
-    // SAFETY: `duplicate` is a fresh descriptor this call owns; `fdopendir`
-    // takes it over on success and leaves it to us on failure.
-    let stream = unsafe { libc::fdopendir(duplicate) };
+    // A duplicate would share the offset the bulk reader may have moved to the
+    // end; `openat(".")` gives a fresh descriptor on the same directory, with
+    // its own offset at the start and close-on-exec from the first instant.
+    let fresh = open_directory_in(dir, OsStr::new("."))?.into_raw_fd();
+    // SAFETY: `fresh` is a descriptor this call owns; `fdopendir` takes it
+    // over on success and leaves it to us on failure.
+    let stream = unsafe { libc::fdopendir(fresh) };
     if stream.is_null() {
         let error = std::io::Error::last_os_error();
-        // SAFETY: `duplicate` is still ours to close; `fdopendir` failed.
-        unsafe { libc::close(duplicate) };
+        // SAFETY: `fresh` is still ours to close; `fdopendir` failed.
+        unsafe { libc::close(fresh) };
         return Err(error);
     }
+    let names = read_names(stream);
+    // SAFETY: `stream` came from `fdopendir` and is closed exactly once.
+    unsafe { libc::closedir(stream) };
+    names
+}
+
+/// Every name in the stream but `.` and `..`; an error partway through is an
+/// error, not a shorter directory (`readdir` reports one as NULL with errno
+/// set, and NULL with errno clear at the end).
+fn read_names(stream: *mut libc::DIR) -> std::io::Result<Vec<OsString>> {
     let mut names = Vec::new();
     loop {
-        // SAFETY: `stream` is a live `DIR*` until `closedir` below; the
+        // SAFETY: setting errno is always allowed; `errno_location` is valid.
+        unsafe { *libc::__error() = 0 };
+        // SAFETY: `stream` is a live `DIR*` until the caller's `closedir`; the
         // returned entry is valid until the next call on the same stream.
         let entry = unsafe { libc::readdir(stream) };
         if entry.is_null() {
-            break;
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(0) {
+                return Ok(names);
+            }
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
         }
         // SAFETY: `entry` points at a `dirent` the kernel filled in; `d_name`
         // is NUL-terminated within its `d_namlen` bytes.
@@ -188,9 +218,38 @@ pub(crate) fn read_dir_names_in(dir: &File) -> std::io::Result<Vec<OsString>> {
             names.push(OsString::from_vec(bytes.to_vec()));
         }
     }
-    // SAFETY: `stream` came from `fdopendir` and is closed exactly once.
-    unsafe { libc::closedir(stream) };
-    Ok(names)
+}
+
+/// `(device, inode)` of the open directory, to check it is the one the
+/// listing named: opening by path follows symlinks in every component but the
+/// last, so an ancestor swapped for a link between the listing and the open
+/// would otherwise be walked under the wrong identity.
+pub(crate) fn identity_of(dir: &File) -> Option<(u64, u64)> {
+    // SAFETY: an all-zero `struct stat` is a valid value of a plain C struct.
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `dir` is open and `stat` is a live, correctly sized struct.
+    retrying(|| unsafe { libc::fstat(dir.as_raw_fd(), &raw mut stat) }).ok()?;
+    Some((device_of(&stat), stat.st_ino))
+}
+
+/// A device id the way `std` widens it: `dev_t` is signed.
+#[expect(clippy::cast_sign_loss, reason = "matching std::os::unix::fs::MetadataExt::dev")]
+fn device_of(stat: &libc::stat) -> u64 {
+    i64::from(stat.st_dev) as u64
+}
+
+/// Open the directory `relative` steps below the open `anchor`, one relative
+/// name at a time, closing each intermediate descriptor.
+pub(crate) fn open_directory_below(anchor: &File, relative: &Path) -> std::io::Result<File> {
+    let mut steps = relative.components();
+    let Some(first) = steps.next() else {
+        return open_directory_in(anchor, OsStr::new("."));
+    };
+    let mut dir = open_directory_in(anchor, first.as_os_str())?;
+    for step in steps {
+        dir = open_directory_in(&dir, step.as_os_str())?;
+    }
+    Ok(dir)
 }
 
 #[cfg(test)]
@@ -230,7 +289,35 @@ mod tests {
         let mut names = read_dir_names_in(&sub).unwrap_or_else(|e| panic!("readdir: {e}"));
         names.sort();
         assert_eq!(names, vec![OsStr::new("file"), OsStr::new("link")]);
-        // The stream read through a duplicate: the descriptor is still usable.
+        // Listing again on the same descriptor sees everything again: the
+        // stream has its own offset, whatever an earlier reader moved.
+        let mut again = read_dir_names_in(&sub).unwrap_or_else(|e| panic!("readdir: {e}"));
+        again.sort();
+        assert_eq!(again, names);
         assert!(metadata_in(&sub, OsStr::new("file"), Path::new("/x/file")).is_ok());
+        assert_eq!(
+            super::identity_of(&sub),
+            Some((sub_meta.device, sub_meta.inode)),
+            "the descriptor is the directory the listing named"
+        );
+        let below = super::open_directory_below(&root, Path::new("sub")).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(super::identity_of(&below), super::identity_of(&sub));
+    }
+
+    #[test]
+    fn a_listing_after_the_bulk_reader_read_to_the_end_is_still_complete() {
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        for i in 0..50 {
+            std::fs::write(dir.path().join(format!("f{i}")), b"x").unwrap_or_else(|e| panic!("write: {e}"));
+        }
+        let handle = open_directory(dir.path()).unwrap_or_else(|e| panic!("open: {e}"));
+        // Move the descriptor's own offset to the end, as `getattrlistbulk` does.
+        let bulk = crate::adapters::bulk_dir::read_dir_with_attributes(dir.path());
+        assert!(bulk.is_none_or(|listing| listing.len() == 50));
+        let _ = crate::adapters::bulk_dir::read_dir_in(&handle, dir.path());
+
+        let names = read_dir_names_in(&handle).unwrap_or_else(|e| panic!("readdir: {e}"));
+
+        assert_eq!(names.len(), 50, "{names:?}");
     }
 }

@@ -45,12 +45,35 @@ pub(super) fn open_dir(path: &Path) -> Result<Box<dyn DirHandle>, BrozaError> {
     Ok(Box::new(FdDirHandle(dir)))
 }
 
+/// Open the directory `relative` below the open `anchor`, one relative step at
+/// a time; by path when the anchor is not one of ours.
+pub(super) fn open_dir_below(
+    anchor: &dyn DirHandle,
+    relative: &Path,
+    path: &Path,
+) -> Result<Box<dyn DirHandle>, BrozaError> {
+    let Some(anchor) = descriptor(anchor) else {
+        return open_dir(path);
+    };
+    let dir = dir_fd::open_directory_below(anchor, relative)
+        .map_err(|source| from_io(format!("open directory {}", path.display()), path, source))?;
+    Ok(Box::new(FdDirHandle(dir)))
+}
+
+/// `(device, inode)` of the open directory.
+pub(super) fn dir_identity(dir: &dyn DirHandle) -> Option<(u64, u64)> {
+    descriptor(dir).and_then(dir_fd::identity_of)
+}
+
 /// The children of the open directory `dir`, each with its metadata, named
 /// under `path`.
 ///
 /// The bulk reader answers when it can; otherwise the plain pair, through the
-/// same descriptor: `readdir` on a duplicate of it, `fstatat` per entry,
-/// spread over the pool because each `fstatat` waits on the disk.
+/// same descriptor: `readdir` on a fresh descriptor of the same directory,
+/// `fstatat` per entry, spread over the pool because each `fstatat` waits on
+/// the disk. That spreading lets a waiting thread pick up another directory's
+/// work while this descriptor is held, so in fallback mode descriptors can
+/// nest on one thread; the bulk path, the ordinary one, is sequential.
 pub(super) fn list_dir(
     dir: &dyn DirHandle,
     path: &Path,

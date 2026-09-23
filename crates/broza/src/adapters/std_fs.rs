@@ -105,6 +105,19 @@ impl FileOps for StdFileOps {
         dirs::open_dir(path)
     }
 
+    fn open_dir_below(
+        &self,
+        anchor: &dyn DirHandle,
+        relative: &Path,
+        path: &Path,
+    ) -> Result<Box<dyn DirHandle>, BrozaError> {
+        dirs::open_dir_below(anchor, relative, path)
+    }
+
+    fn dir_identity(&self, dir: &dyn DirHandle) -> Option<(u64, u64)> {
+        dirs::dir_identity(dir)
+    }
+
     fn list_dir(&self, dir: &dyn DirHandle, path: &Path) -> Result<DirListing, BrozaError> {
         dirs::list_dir(dir, path, || self.read_dir_with_metadata(path))
     }

@@ -169,6 +169,27 @@ pub trait FileOps: Send + Sync {
     fn open_dir(&self, path: &Path) -> Result<Box<dyn DirHandle>, BrozaError> {
         Ok(Box::new(PathDirHandle(path.to_path_buf())))
     }
+    /// Open the directory `relative` steps below the open `anchor`; `path` is
+    /// its full path, for errors and for the default, which opens by path.
+    ///
+    /// The walker keeps an anchor every few dozen levels once paths grow past
+    /// what the kernel can name, so a deep directory is reached in a bounded
+    /// number of relative steps rather than from the top each time.
+    fn open_dir_below(
+        &self,
+        anchor: &dyn DirHandle,
+        relative: &Path,
+        path: &Path,
+    ) -> Result<Box<dyn DirHandle>, BrozaError> {
+        let _ = (anchor, relative);
+        self.open_dir(path)
+    }
+    /// `(device, inode)` of the open directory, when the adapter can tell:
+    /// the walker compares it with the listing that named the directory.
+    fn dir_identity(&self, dir: &dyn DirHandle) -> Option<(u64, u64)> {
+        let _ = dir;
+        None
+    }
     /// Direct children of the open directory `dir`, each with the metadata of
     /// a `lstat`, their names joined to `path`.
     ///

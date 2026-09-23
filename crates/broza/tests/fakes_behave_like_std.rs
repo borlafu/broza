@@ -102,6 +102,17 @@ fn a_directory_opened_as_a_handle_lists_the_same_as_one_listed_by_path() {
             subject.name
         );
         assert!(subject.fs.open_dir(&subject.path("missing")).is_err(), "{}", subject.name);
+        assert!(
+            subject.fs.open_dir(&subject.path(DIR_LINK)).is_err(),
+            "{}: a symlink to a directory is never opened as one",
+            subject.name
+        );
+        let opened =
+            subject.fs.open_dir(&subject.path("dir")).unwrap_or_else(|e| panic!("{}: {e}", subject.name));
+        let expected = subject.metadata("dir");
+        if let Some(identity) = subject.fs.dir_identity(opened.as_ref()) {
+            assert_eq!(identity, (expected.device, expected.inode), "{}", subject.name);
+        }
     }
 }
 

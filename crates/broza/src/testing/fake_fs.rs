@@ -98,10 +98,11 @@ impl FileOps for FakeFileOps {
     }
 
     fn open_dir(&self, path: &Path) -> Result<Box<dyn DirHandle>, BrozaError> {
-        // What `open(O_DIRECTORY)` would say: denied, missing, or not a directory.
+        // What `open(O_DIRECTORY | O_NOFOLLOW)` would say: denied, missing, or
+        // not a directory — a symlink to one included.
         let tree = lock(&self.tree);
         check_allowed(&tree, path)?;
-        let resolved = resolve(&tree, path)?;
+        let resolved = resolve_parent(&tree, path)?;
         if !tree.exists(&resolved) {
             return Err(not_found(path));
         }

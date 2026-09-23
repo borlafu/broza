@@ -36,7 +36,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::BrozaError;
-use crate::adapters::dir_fd::{metadata_in, open_directory};
+use crate::adapters::dir_fd::{metadata_in, open_directory, retrying};
 use crate::ports::{DirListing, EntryMetadata};
 use parse::ParsedEntry;
 
@@ -169,8 +169,9 @@ fn collect(dir: &File) -> Collected {
 fn call_bulk(dir: &File, request: &mut libc::attrlist, buffer: &mut [u8]) -> i32 {
     // SAFETY: `request` is the fixed-size struct libc declares and `buffer` is
     // a live allocation of `buffer.len()` bytes; the kernel writes no more than
-    // that. The descriptor belongs to a `File` that outlives the call.
-    unsafe {
+    // that. The descriptor belongs to a `File` that outlives the call. An
+    // interrupted call is asked again, as `std` does for its own calls.
+    retrying(|| unsafe {
         libc::getattrlistbulk(
             dir.as_raw_fd(),
             std::ptr::from_mut(request).cast(),
@@ -178,7 +179,8 @@ fn call_bulk(dir: &File, request: &mut libc::attrlist, buffer: &mut [u8]) -> i32
             buffer.len(),
             u64::from(libc::FSOPT_ATTR_CMN_EXTENDED),
         )
-    }
+    })
+    .unwrap_or(-1)
 }
 
 /// The attribute list handed to the kernel.

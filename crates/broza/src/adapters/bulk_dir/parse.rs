@@ -32,6 +32,7 @@ use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 
+use crate::adapters::dir_fd::SF_DATALESS;
 use crate::ports::EntryMetadata;
 
 /// `ATTR_CMN_ERROR`, which libc does not declare.
@@ -74,8 +75,6 @@ const VREG: u32 = 1;
 const VDIR: u32 = 2;
 /// `VLNK`, a symbolic link.
 const VLNK: u32 = 5;
-/// `SF_DATALESS`: the contents live in the cloud, not on this disk.
-const SF_DATALESS: u32 = 0x4000_0000;
 /// Seconds after the epoch a plausible modification time stays below
 /// (1 January 2100), used to notice a misread buffer.
 const IMPLAUSIBLE_AFTER: i64 = 4_102_444_800;

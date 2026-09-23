@@ -13,6 +13,7 @@ pub mod mount_table;
 pub mod nsurl_space;
 pub mod process_error;
 pub mod std_fs;
+mod std_fs_dirs;
 mod std_fs_exclusive;
 pub mod std_process;
 pub mod system_clock;

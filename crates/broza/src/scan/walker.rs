@@ -26,9 +26,9 @@
 //! - Symlinks count as their own size and are never followed. There is no
 //!   option to follow them: a cleanup tool that follows links walks out of the
 //!   volume it was asked about.
-//! - Directories are opened from their parent's handle by name
-//!   ([`FileOps::open_dir_in`]), so a tree deeper than `PATH_MAX` allows is
-//!   walked to the bottom (ADR 0010).
+//! - Directories are opened as handles and listed through them
+//!   ([`FileOps::open_dir`], [`FileOps::list_dir`]), so a tree deeper than
+//!   `PATH_MAX` allows is walked to the bottom (ADR 0010).
 //! - `max_depth` limits what is **reported**, never what is aggregated: a node
 //!   at the depth limit still carries the bytes of everything below it and says
 //!   so with `children_truncated`.
@@ -60,7 +60,7 @@ pub use types::{
 };
 
 use crate::BrozaError;
-use crate::ports::{DirHandle, EntryMetadata, FileOps};
+use crate::ports::{EntryMetadata, FileOps};
 use leaves::{Children, Leaves};
 use parts::{Context, Partial, Totals};
 use top_files::TopFiles;
@@ -108,7 +108,7 @@ fn walk_on_this_pool(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -
     let exclude = options.exclude.iter().filter(|prefix| !root.starts_with(prefix)).cloned().collect();
     let context = Context { fs, options, root_device: meta.device, exclude };
     let partial = if meta.is_dir && !meta.is_symlink && !meta.is_dataless {
-        walk_dir(root, &meta, 0, None, &context)
+        walk_dir(root, &meta, 0, &context)
     } else {
         walk_leaf_root(root, &meta, &context)
     };
@@ -117,27 +117,16 @@ fn walk_on_this_pool(root: &Path, options: &WalkOptions<'_>, fs: &dyn FileOps) -
 
 /// Walk one directory and, in parallel, everything below it.
 ///
-/// The directory is opened from its parent's handle by name, so no call sees
-/// the full path: a tree deeper than `PATH_MAX` allows is walked like any
-/// other (ADR 0010). The totals handed back to the caller count this subtree
-/// as an item in its own right ([`Totals::as_child`]); the node keeps the view
-/// from inside.
-fn walk_dir(
-    path: &Path,
-    meta: &EntryMetadata,
-    depth: usize,
-    parent: Option<&dyn DirHandle>,
-    context: &Context<'_>,
-) -> Partial {
+/// The directory is opened as a handle and listed through it, so a tree
+/// deeper than `PATH_MAX` allows is walked like any other (ADR 0010). The
+/// totals handed back to the caller count this subtree as an item in its own
+/// right ([`Totals::as_child`]); the node keeps the view from inside.
+fn walk_dir(path: &Path, meta: &EntryMetadata, depth: usize, context: &Context<'_>) -> Partial {
     let identity = DirIdentity::of(path, meta);
     if let Some(subtree) = cached(&identity, depth, context).filter(|subtree| !subtree.nodes.is_empty()) {
         return cached_dir(&identity, subtree, depth, context);
     }
-    let opened = match (parent, path.file_name()) {
-        (Some(parent), Some(name)) => context.fs.open_dir_in(parent, name, path),
-        _ => context.fs.open_dir(path),
-    };
-    let dir = match opened {
+    let dir = match context.fs.open_dir(path) {
         Ok(dir) => dir,
         Err(error) => return unreadable_dir(&identity, &error, context),
     };
@@ -149,10 +138,13 @@ fn walk_dir(
     context.report(leaves.entries.saturating_add(1), leaves.totals.size_bytes);
     let child_dirs = dirs.len() as u64;
     let cap = context.options.report_files_top;
-    let dir: &dyn DirHandle = dir.as_ref();
+    // The handle is not needed once the listing is in hand: children open
+    // their own, so the walk holds one descriptor per directory being listed,
+    // never a chain.
+    drop(dir);
     let below = dirs
         .into_par_iter()
-        .map(|(child, child_meta)| walk_dir(&child, &child_meta, depth.saturating_add(1), Some(dir), context))
+        .map(|(child, child_meta)| walk_dir(&child, &child_meta, depth.saturating_add(1), context))
         .reduce(|| Partial::empty(cap), Partial::merge);
     let reports_children = context.options.max_depth.is_none_or(|max| depth < max);
     let truncated = skipped || !reports_children;

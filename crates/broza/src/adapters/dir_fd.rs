@@ -4,51 +4,83 @@
 //! `ENAMETOOLONG`, while directories can be *created* deeper than that with
 //! short relative names. A walk that opens and stats by path therefore stops
 //! at that depth and reports what is below as unreadable. The `*at` calls take
-//! a directory descriptor and one entry name instead, so a walk that descends
-//! by descriptor has no depth limit but the descriptor table
-//! ([`raise_open_files_limit`]). `getattrlistbulk` already works on a
-//! descriptor; this file supplies the rest: `openat`, `fstatat`,
-//! `getattrlistat` (ADR 0010).
+//! a directory descriptor and one entry name instead, so a directory deeper
+//! than a path can name is reached by opening the deepest ancestor whose path
+//! still fits and stepping down one name at a time ([`open_directory`]), and
+//! its children are stated by name inside it ([`metadata_in`]).
+//! `getattrlistbulk` already works on a descriptor; this file supplies the
+//! rest: `openat`, `fstatat`, `fdopendir` (ADR 0010).
+//!
+//! One descriptor is held per directory being listed, never a chain: the
+//! walk's descriptor use is what it was when it opened by path.
 
 #![allow(unsafe_code)]
 
-use std::ffi::{CString, OsStr};
+use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsRawFd, FromRawFd};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use jiff::Timestamp;
 
 use crate::BrozaError;
+use crate::adapters::clone_id::clone_id_in;
 use crate::adapters::io_error::from_io;
 use crate::ports::EntryMetadata;
 
 /// Size of the blocks `st_blocks` counts, fixed at 512 bytes by POSIX.
-const STAT_BLOCK_BYTES: u64 = 512;
+pub(crate) const STAT_BLOCK_BYTES: u64 = 512;
 /// `SF_DATALESS` in `st_flags`: a cloud placeholder whose contents are elsewhere.
-const SF_DATALESS: u32 = 0x4000_0000;
+pub(crate) const SF_DATALESS: u32 = 0x4000_0000;
 /// Flags every directory is opened with: only a directory (`O_DIRECTORY`
 /// keeps a FIFO from turning an open into a wait), never through a symlink,
 /// never blocking, never inherited by a child process.
 const DIRECTORY_FLAGS: libc::c_int =
     libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
-/// `OPEN_MAX`: the most descriptors macOS lets a process raise its soft limit
-/// to when the hard limit is unlimited.
-const OPEN_MAX: libc::rlim_t = 10_240;
-/// Bytes the kernel writes for one `u64` attribute: the length word, then the value.
-const ATTR_REPLY_LEN: usize = 4 + 8;
 
 /// Open the directory at `path`, and only a directory, without blocking on anything.
+///
+/// A path the kernel can name is opened as one call. When the kernel answers
+/// `ENAMETOOLONG` — the string itself is too long, or a symlink on the way
+/// (`/var` → `/private/var`) makes what the kernel resolves too long — the
+/// deepest ancestor that does open is found by asking, and the rest is opened
+/// one relative name at a time, each step through the previous descriptor and
+/// closing it. So the depth costs calls, never descriptors.
 pub(crate) fn open_directory(path: &Path) -> std::io::Result<File> {
-    raise_open_files_limit();
+    let (anchor, mut dir) = open_deepest_ancestor(path)?;
+    let rest =
+        path.strip_prefix(anchor).map_err(|_| std::io::Error::from_raw_os_error(libc::ENAMETOOLONG))?;
+    for step in rest.components() {
+        dir = open_directory_in(&dir, step.as_os_str())?;
+    }
+    Ok(dir)
+}
+
+/// `path` itself when it opens; otherwise the deepest ancestor that does, when
+/// the only thing wrong with the ones below was their length.
+fn open_deepest_ancestor(path: &Path) -> std::io::Result<(&Path, File)> {
+    let mut too_long = None;
+    for ancestor in path.ancestors() {
+        match open_by_path(ancestor) {
+            Ok(dir) => return Ok((ancestor, dir)),
+            Err(failed) if failed.raw_os_error() == Some(libc::ENAMETOOLONG) => too_long = Some(failed),
+            // Anything else — missing, denied, not a directory — is about the
+            // path as asked, and is reported as such.
+            Err(failed) => return Err(too_long.unwrap_or(failed)),
+        }
+    }
+    Err(too_long.unwrap_or_else(|| std::io::Error::from_raw_os_error(libc::ENAMETOOLONG)))
+}
+
+/// One `open` of a directory by path.
+fn open_by_path(path: &Path) -> std::io::Result<File> {
     OpenOptions::new().read(true).custom_flags(DIRECTORY_FLAGS).open(path)
 }
 
 /// Open the directory `name` directly inside `parent`, the same way.
-pub(crate) fn open_directory_in(parent: &File, name: &OsStr) -> std::io::Result<File> {
+fn open_directory_in(parent: &File, name: &OsStr) -> std::io::Result<File> {
     let c_name = CString::new(name.as_bytes())?;
     // SAFETY: `c_name` is a valid NUL-terminated string that outlives the
     // call, and `parent` is an open descriptor for as long as the borrow.
@@ -62,7 +94,7 @@ pub(crate) fn open_directory_in(parent: &File, name: &OsStr) -> std::io::Result<
 /// Call `syscall` again while it fails with `EINTR`, as `std` does for its
 /// own calls: a signal (a window resize, a child exiting) interrupts a raw
 /// call and is not a reason to report a directory unreadable.
-fn retrying(mut syscall: impl FnMut() -> libc::c_int) -> std::io::Result<libc::c_int> {
+pub(crate) fn retrying(mut syscall: impl FnMut() -> libc::c_int) -> std::io::Result<libc::c_int> {
     loop {
         let result = syscall();
         if result >= 0 {
@@ -122,68 +154,43 @@ fn timestamp(seconds: i64, nanoseconds: i64) -> Option<Timestamp> {
     Timestamp::new(seconds, i32::try_from(nanoseconds).ok()?).ok()
 }
 
-/// The APFS clone id of the regular file `name` inside `parent`, without
-/// following a symlink; `None` when the filesystem reports none.
-fn clone_id_in(parent: &File, c_name: &CString) -> Option<u64> {
-    let mut request = libc::attrlist {
-        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
-        reserved: 0,
-        commonattr: 0,
-        volattr: 0,
-        dirattr: 0,
-        fileattr: 0,
-        forkattr: libc::ATTR_CMNEXT_CLONEID,
-    };
-    let mut reply = [0_u8; ATTR_REPLY_LEN];
-    // SAFETY: `c_name` is valid for the call, `request` is the fixed-size
-    // struct libc declares, `reply` is a live buffer of the length handed to
-    // the kernel, and `parent` is open.
-    let status = unsafe {
-        libc::getattrlistat(
-            parent.as_raw_fd(),
-            c_name.as_ptr(),
-            std::ptr::from_mut(&mut request).cast(),
-            reply.as_mut_ptr().cast(),
-            reply.len(),
-            u64::from(libc::FSOPT_NOFOLLOW | libc::FSOPT_ATTR_CMN_EXTENDED),
-        )
-    };
-    if status != 0 {
-        return None;
-    }
-    let length = u32::from_ne_bytes(reply[..4].try_into().ok()?) as usize;
-    if length < ATTR_REPLY_LEN {
-        return None;
-    }
-    Some(u64::from_ne_bytes(reply[4..ATTR_REPLY_LEN].try_into().ok()?))
-}
-
-/// Raise the soft limit on open descriptors as far as the hard limit allows,
-/// once per process.
+/// The names of the entries of the open directory `dir`, as `readdir` lists
+/// them, without `.` and `..`.
 ///
-/// A walk by descriptor holds one open directory per level of the chain each
-/// thread is descending, and a terminal's default soft limit is 256 on some
-/// macOS setups. The hard limit stays what it is; `OPEN_MAX` caps the request
-/// when the hard limit is unlimited, as the kernel demands. Failure is
-/// ignored: a descriptor that cannot be opened becomes a warning in the walk.
-pub(crate) fn raise_open_files_limit() {
-    static RAISED: OnceLock<()> = OnceLock::new();
-    RAISED.get_or_init(|| {
-        let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-        // SAFETY: `limit` is a live `rlimit` the kernel fills in.
-        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut limit) } != 0 {
-            return;
+/// The plain pair's first half, for when the bulk reader will not answer: it
+/// reads through a duplicate of the descriptor (`fdopendir` takes ownership of
+/// the one it is given) and never hands the kernel a path.
+pub(crate) fn read_dir_names_in(dir: &File) -> std::io::Result<Vec<OsString>> {
+    // SAFETY: `dir` is an open descriptor; `dup` returns a fresh one or -1.
+    let duplicate = retrying(|| unsafe { libc::dup(dir.as_raw_fd()) })?;
+    // SAFETY: `duplicate` is a fresh descriptor this call owns; `fdopendir`
+    // takes it over on success and leaves it to us on failure.
+    let stream = unsafe { libc::fdopendir(duplicate) };
+    if stream.is_null() {
+        let error = std::io::Error::last_os_error();
+        // SAFETY: `duplicate` is still ours to close; `fdopendir` failed.
+        unsafe { libc::close(duplicate) };
+        return Err(error);
+    }
+    let mut names = Vec::new();
+    loop {
+        // SAFETY: `stream` is a live `DIR*` until `closedir` below; the
+        // returned entry is valid until the next call on the same stream.
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
         }
-        let wanted =
-            if limit.rlim_max == libc::RLIM_INFINITY { OPEN_MAX } else { limit.rlim_max.min(OPEN_MAX) };
-        if limit.rlim_cur >= wanted {
-            return;
+        // SAFETY: `entry` points at a `dirent` the kernel filled in; `d_name`
+        // is NUL-terminated within its `d_namlen` bytes.
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let bytes = name.to_bytes();
+        if bytes != b"." && bytes != b".." {
+            names.push(OsString::from_vec(bytes.to_vec()));
         }
-        let raised = libc::rlimit { rlim_cur: wanted, rlim_max: limit.rlim_max };
-        // SAFETY: `raised` is a valid `rlimit`; the call only changes this
-        // process's own soft limit.
-        let _ = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raw const raised) };
-    });
+    }
+    // SAFETY: `stream` came from `fdopendir` and is closed exactly once.
+    unsafe { libc::closedir(stream) };
+    Ok(names)
 }
 
 #[cfg(test)]
@@ -192,7 +199,7 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
     use std::path::Path;
 
-    use super::{metadata_in, open_directory, open_directory_in, raise_open_files_limit};
+    use super::{metadata_in, open_directory, open_directory_in, read_dir_names_in};
     use crate::adapters::StdFileOps;
     use crate::ports::FileOps;
 
@@ -220,11 +227,10 @@ mod tests {
         );
         assert!(metadata_in(&sub, OsStr::new("missing"), Path::new("/x/missing")).is_err());
         assert!(open_directory_in(&sub, OsStr::new("file")).is_err(), "a file is not a directory");
-    }
-
-    #[test]
-    fn raising_the_descriptor_limit_is_idempotent() {
-        raise_open_files_limit();
-        raise_open_files_limit();
+        let mut names = read_dir_names_in(&sub).unwrap_or_else(|e| panic!("readdir: {e}"));
+        names.sort();
+        assert_eq!(names, vec![OsStr::new("file"), OsStr::new("link")]);
+        // The stream read through a duplicate: the descriptor is still usable.
+        assert!(metadata_in(&sub, OsStr::new("file"), Path::new("/x/file")).is_ok());
     }
 }

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::BrozaError;
 use crate::adapters::io_error::not_found;
-use crate::ports::{EntryMetadata, FileOps, FsLock, RenameMode};
+use crate::ports::{DirHandle, EntryMetadata, FileOps, FsLock, PathDirHandle, RenameMode};
 use crate::testing::fake_posix::{
     EEXIST, EISDIR, ENOTDIR, EXDEV, check_allowed, check_parent, check_replaceable, errno_error,
     expect_buildable, from_tree_error, resolve, resolve_parent,
@@ -95,6 +95,20 @@ impl FileOps for FakeFileOps {
             accessed: node.accessed,
             clone_id: tree.clone_id(&resolved),
         })
+    }
+
+    fn open_dir(&self, path: &Path) -> Result<Box<dyn DirHandle>, BrozaError> {
+        // What `open(O_DIRECTORY)` would say: denied, missing, or not a directory.
+        let tree = lock(&self.tree);
+        check_allowed(&tree, path)?;
+        let resolved = resolve(&tree, path)?;
+        if !tree.exists(&resolved) {
+            return Err(not_found(path));
+        }
+        if !tree.is_dir(&resolved) {
+            return Err(errno_error(format!("open directory {}", path.display()), ENOTDIR));
+        }
+        Ok(Box::new(PathDirHandle(path.to_path_buf())))
     }
 
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>, BrozaError> {

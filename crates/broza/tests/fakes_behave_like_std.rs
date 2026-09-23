@@ -72,6 +72,40 @@ fn a_clone_reports_the_original_s_inode_as_its_clone_id_and_a_fresh_file_its_own
 }
 
 #[test]
+fn a_directory_opened_as_a_handle_lists_the_same_as_one_listed_by_path() {
+    for subject in subjects() {
+        let dir =
+            subject.fs.open_dir(&subject.path("dir")).unwrap_or_else(|e| panic!("{}: {e}", subject.name));
+
+        let mut by_handle = subject
+            .fs
+            .list_dir(dir.as_ref(), &subject.path("dir"))
+            .unwrap_or_else(|e| panic!("{}: {e}", subject.name));
+        let mut by_path = subject
+            .fs
+            .read_dir_with_metadata(&subject.path("dir"))
+            .unwrap_or_else(|e| panic!("{}: {e}", subject.name));
+        by_handle.sort_by(|a, b| a.0.cmp(&b.0));
+        by_path.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(by_handle.len(), by_path.len(), "{}", subject.name);
+        for ((path, handle_meta), (_, path_meta)) in by_handle.iter().zip(&by_path) {
+            let handle_meta =
+                handle_meta.as_ref().unwrap_or_else(|e| panic!("{}: {} {e}", subject.name, path.display()));
+            let path_meta =
+                path_meta.as_ref().unwrap_or_else(|e| panic!("{}: {} {e}", subject.name, path.display()));
+            assert_eq!(handle_meta, path_meta, "{}: {}", subject.name, path.display());
+        }
+        assert!(
+            subject.fs.open_dir(&subject.path(FILE)).is_err(),
+            "{}: a file is not a directory",
+            subject.name
+        );
+        assert!(subject.fs.open_dir(&subject.path("missing")).is_err(), "{}", subject.name);
+    }
+}
+
+#[test]
 fn a_listing_with_metadata_says_the_same_as_stating_every_child() {
     for subject in subjects() {
         let listing = subject

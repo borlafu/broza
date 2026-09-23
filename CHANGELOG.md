@@ -4,7 +4,9 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
-## [Unreleased]
+## [1.1.0] — 2026-09-23
+
+Honest sizes for cloned and very deep trees, and a support message that is seen.
 
 ### Changed
 

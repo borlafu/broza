@@ -1133,7 +1133,7 @@ Everything below ships with 1.0.0; the milestone that produced each change is in
 
 ## 12. Changelog 1.3 → 1.4
 
-Unreleased: everything below ships with the next minor version.
+Shipped with 1.1.0.
 
 - §4.2 and §7 (post-1.0): APFS clone accounting. A clone family is counted once, by clone id (`ATTR_CMNEXT_CLONEID`): the original keeps the bytes when the walk saw it, otherwise the clone whose path sorts first; the cache records carry each file's clone id and the families whose credited clone they hold (store layout 5), so a warm walk discounts a family's other clones as the cold walk did. The `size_exceeds_volume` warning stays for the cases the clone id cannot settle (a family split across a cached subtree, diverged clones) and its message no longer says clones are counted separately. [ADR 0009](adr/0009-apfs-clone-accounting-by-clone-id.md).
 - §3.3 (post-1.0): `duplicates` leaves out a clone and any file that has a clone among the families the walk knows of; quarantining either frees nothing. The `reasoning` states the rule. `large-old-files` leaves out a file whose removal frees nothing; `trash`, `user-cache` and `build-cache` size a file as the walk settled it.

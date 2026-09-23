@@ -9,6 +9,8 @@ reversible quarantine. Built in Rust for Apple Silicon.
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/borlafu)
 
+Website: [borlafu.github.io/broza](https://borlafu.github.io/broza/)
+
 ## Why Broza
 
 Every Mac owner eventually asks the same three questions when the disk fills up:

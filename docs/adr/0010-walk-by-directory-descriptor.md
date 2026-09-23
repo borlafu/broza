@@ -30,13 +30,10 @@ four warnings. That design is not the one recorded here.
    `open(O_DIRECTORY)` would refuse, so the walker's error arm is exercised). `StdFileOps` makes
    the handle a descriptor and lists through it: `getattrlistbulk` on the descriptor, entries the
    buffer leaves out stated with `fstatat(dir_fd, name, AT_SYMLINK_NOFOLLOW)` and `getattrlistat`
-   for the clone id, and — when the bulk reader will not answer — `readdir` on a fresh descriptor
-   of the same directory (`openat(fd, ".")`: a duplicate shares the position the bulk reader
-   moved to the end, and rewinding it does not move what `readdir` sees, so it lists nothing;
-   measured and pinned by a test) plus `fstatat` per entry; a `readdir` error is an error, never a
-   shorter directory. Reopening `.` needs search permission on the directory, which every
-   `fstatat` below would need as well, so a directory without it is one warning instead of one
-   per entry. Nothing in the listing hands the kernel a path
+   for the clone id, and — when the bulk reader will not answer — `readdir` on a duplicate of the
+   descriptor rewound with `lseek` (a duplicate shares the position the bulk reader moved to the
+   end and would list nothing; rewinding it is measured to work and pinned by a test) plus
+   `fstatat` per entry; a `readdir` error is an error, never a shorter directory. Nothing in the listing hands the kernel a path
    (`adapters/dir_fd.rs`, `adapters/std_fs_dirs.rs`).
 2. Each directory is opened on its own, by path, with `O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK |
    O_CLOEXEC`. When the kernel answers `ENAMETOOLONG`, the deepest ancestor that does open is found
@@ -54,8 +51,8 @@ four warnings. That design is not the one recorded here.
    limit (a review measured 35 s for 8 chains of 600 levels, 289 s for 64). So once a path is 768
    bytes long, the walker keeps one handle open every 32 levels as the anchor the directories
    below are opened from (`FileOps::open_dir_below`, `walker/anchor.rs`): at most 32 names per
-   directory, opened in one call, one extra descriptor per 32 levels on each chain being walked,
-   none on an ordinary tree.
+   directory, opened in as few calls as their length allows (one for short names), one extra
+   descriptor per 32 levels on each chain being walked, none on an ordinary tree.
 5. After opening, the descriptor's `(device, inode)` is compared with the listing that named the
    directory (`FileOps::dir_identity`, `fstat`). Opening by path follows symlinks in every
    component but the last, so an ancestor swapped for a link between the listing and the open

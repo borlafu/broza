@@ -6,7 +6,8 @@
 //! at that depth and reports what is below as unreadable. The `*at` calls take
 //! a directory descriptor and one entry name instead, so a directory deeper
 //! than a path can name is reached by opening the deepest ancestor whose path
-//! still fits and stepping down one name at a time ([`open_directory`]), and
+//! still fits and the rest relative to it, a stretch of names at a time
+//! ([`open_directory`]), and
 //! its children are stated by name inside it ([`metadata_in`]).
 //! `getattrlistbulk` already works on a descriptor; this file supplies the
 //! rest: `openat`, `fstatat`, `fdopendir` (ADR 0010).
@@ -19,7 +20,7 @@
 
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::{File, OpenOptions};
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
@@ -57,8 +58,8 @@ const RELATIVE_FLAGS: libc::c_int =
 /// `ENAMETOOLONG` — the string itself is too long, or a symlink on the way
 /// (`/var` → `/private/var`) makes what the kernel resolves too long — the
 /// deepest ancestor that does open is found by asking, and the rest is opened
-/// one relative name at a time, each step through the previous descriptor and
-/// closing it. So the depth costs calls, never descriptors.
+/// relative to it, a stretch of names per call, each intermediate descriptor
+/// closed. So the depth costs calls, never descriptors.
 pub(crate) fn open_directory(path: &Path) -> std::io::Result<File> {
     let (anchor, dir) = open_deepest_ancestor(path)?;
     let rest =
@@ -98,12 +99,16 @@ fn open_by_path(path: &Path) -> std::io::Result<File> {
 /// Open the directory `relative` steps below the open `anchor`, in as few
 /// calls as the kernel allows: one `openat` per stretch of the relative path
 /// shorter than `PATH_MAX`, no symlink followed anywhere, each intermediate
-/// descriptor closed. Thirty-two names cost one call, not thirty-two.
+/// descriptor closed. Short names come dozens to a call; only `Normal`
+/// components are accepted, since `..` or an absolute one would leave the
+/// anchor behind.
 pub(crate) fn open_directory_below(anchor: &File, relative: &Path) -> std::io::Result<File> {
     let mut dir: Option<File> = None;
     let mut stretch = PathBuf::new();
     for step in relative.components() {
-        let name = step.as_os_str();
+        let std::path::Component::Normal(name) = step else {
+            return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+        };
         let would_be = stretch.as_os_str().len().saturating_add(1).saturating_add(name.len());
         if !stretch.as_os_str().is_empty() && would_be >= PATH_MAX_BYTES {
             dir = Some(open_relative(dir.as_ref().unwrap_or(anchor), &stretch)?);
@@ -199,19 +204,27 @@ fn timestamp(seconds: i64, nanoseconds: i64) -> Option<Timestamp> {
 pub(crate) fn read_dir_names_in(dir: &File) -> std::io::Result<Vec<OsString>> {
     // `fdopendir` takes ownership of the descriptor it is given and reads
     // from where that descriptor stands, which the bulk reader has moved to
-    // the end; a duplicate shares that position and `lseek` does not move
-    // what `readdir` sees (measured, pinned by `bulk_dir::tests`). Opening
-    // `.` below the descriptor gives a fresh one at the start, close-on-exec
-    // from the first instant. It needs search permission on the directory,
-    // which every `fstatat` below would need as well.
-    let fresh = open_relative(dir, Path::new("."))?.into_raw_fd();
-    // SAFETY: `fresh` is a descriptor this call owns; `fdopendir` takes it
-    // over on success and leaves it to us on failure.
-    let stream = unsafe { libc::fdopendir(fresh) };
+    // the end: so a close-on-exec duplicate, rewound with `lseek`, which does
+    // move what `readdir` sees (measured, pinned by `bulk_dir::tests`). No
+    // reopen: that would need search permission and, deep in a tree, another
+    // costly path lookup.
+    // SAFETY: `dir` is an open descriptor; `fcntl` returns a fresh one or -1.
+    let duplicate = retrying(|| unsafe { libc::fcntl(dir.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) })?;
+    // SAFETY: `duplicate` is a descriptor this call owns until `fdopendir`
+    // takes it over.
+    if unsafe { libc::lseek(duplicate, 0, libc::SEEK_SET) } < 0 {
+        let error = std::io::Error::last_os_error();
+        // SAFETY: `duplicate` is still ours to close.
+        unsafe { libc::close(duplicate) };
+        return Err(error);
+    }
+    // SAFETY: `duplicate` is ours; `fdopendir` takes it over on success and
+    // leaves it to us on failure.
+    let stream = unsafe { libc::fdopendir(duplicate) };
     if stream.is_null() {
         let error = std::io::Error::last_os_error();
-        // SAFETY: `fresh` is still ours to close; `fdopendir` failed.
-        unsafe { libc::close(fresh) };
+        // SAFETY: `duplicate` is still ours to close; `fdopendir` failed.
+        unsafe { libc::close(duplicate) };
         return Err(error);
     }
     let names = read_names(stream);
@@ -275,7 +288,11 @@ mod tests {
     use std::os::unix::fs::MetadataExt;
     use std::path::Path;
 
-    use super::{identity_of, metadata_in, open_directory, open_directory_below, read_dir_names_in};
+    use std::path::PathBuf;
+
+    use super::{
+        PATH_MAX_BYTES, identity_of, metadata_in, open_directory, open_directory_below, read_dir_names_in,
+    };
     use crate::adapters::StdFileOps;
     use crate::ports::FileOps;
 
@@ -318,13 +335,49 @@ mod tests {
             "the descriptor is the directory the listing named"
         );
         std::fs::create_dir_all(dir.path().join("sub/x/y")).unwrap_or_else(|e| panic!("mkdir: {e}"));
-        std::os::unix::fs::symlink("y", dir.path().join("sub/x/ylink")).unwrap_or_else(|e| panic!("ln: {e}"));
+        std::os::unix::fs::symlink("x", dir.path().join("sub/xlink")).unwrap_or_else(|e| panic!("ln: {e}"));
         let deep = open_directory_below(&root, Path::new("sub/x/y")).unwrap_or_else(|e| panic!("{e}"));
         let by_path = open_directory(&dir.path().join("sub/x/y")).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(identity_of(&deep), identity_of(&by_path), "several names in one step");
         assert!(
-            open_directory_below(&root, Path::new("sub/x/ylink")).is_err(),
-            "no symlink is followed anywhere in a relative open"
+            open_directory_below(&root, Path::new("sub/xlink/y")).is_err(),
+            "a symlink in the middle is not followed either (O_NOFOLLOW alone would follow it)"
         );
+        assert!(open_directory_below(&root, Path::new("sub/../sub")).is_err(), "no way up or out");
+        assert!(open_directory_below(&root, Path::new("/")).is_err());
+    }
+
+    #[test]
+    fn a_relative_path_longer_than_the_kernel_takes_is_opened_in_stretches() {
+        // Five names of 255 bytes: 1279 bytes relative, more than one call
+        // takes, so the path is opened in stretches the kernel accepts. The
+        // tree is built one relative name at a time, as the kernel forces.
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir: {e}"));
+        let name = "n".repeat(255);
+        let built = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("cd \"$1\" && for i in 1 2 3 4 5; do mkdir \"$2\" && cd \"$2\"; done")
+            .arg("sh")
+            .arg(dir.path())
+            .arg(&name)
+            .status()
+            .unwrap_or_else(|e| panic!("sh: {e}"));
+        assert!(built.success(), "building the tree failed: {built}");
+        let relative: PathBuf = (0..5).map(|_| name.as_str()).collect();
+        assert!(
+            relative.as_os_str().len() > PATH_MAX_BYTES,
+            "the relative path alone is too long for one call"
+        );
+        let root = open_directory(dir.path()).unwrap_or_else(|e| panic!("open: {e}"));
+
+        let stretched = open_directory_below(&root, &relative).unwrap_or_else(|e| panic!("{e}"));
+        let mut step_by_step =
+            open_directory_below(&root, Path::new(&name)).unwrap_or_else(|e| panic!("{e}"));
+        for _ in 1..5 {
+            step_by_step =
+                open_directory_below(&step_by_step, Path::new(&name)).unwrap_or_else(|e| panic!("{e}"));
+        }
+
+        assert_eq!(identity_of(&stretched), identity_of(&step_by_step));
     }
 }

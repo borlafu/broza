@@ -14,13 +14,14 @@ use crate::donate::{DONATE_URL, DonationInput, should_show_donation};
 use crate::env::RuntimeEnv;
 use crate::output::color::ColorPolicy;
 use crate::output::style::{Style, paint};
-use crate::output::wrap::WRAP_WIDTH;
 use crate::output::{OutputFormat, format_bytes};
 
 /// Indent of every line of the banner.
 const INDENT: &str = "  ";
 /// The character the rules above and below the message are drawn with.
 const RULE: char = '─';
+/// Length of each rule, in characters, after the indent.
+const RULE_WIDTH: usize = 78;
 
 /// What a run has to have been for the message to be considered at all.
 pub struct Run<'a> {
@@ -57,13 +58,14 @@ pub fn maybe_show(run: &Run<'_>, stderr: &mut dyn Write) {
     if !should_show_donation(&input) {
         return;
     }
+    // Best effort: a closed stderr must not change the exit code.
     let _ignored = stderr.write_all(banner(reclaimed, run.policy).as_bytes());
 }
 
 /// The banner of §5: the two lines between rules, set apart by blank lines.
 pub fn banner(reclaimed: &Reclaimed, policy: ColorPolicy) -> String {
     let [made, ask] = message(reclaimed);
-    let rule = paint(policy, Style::Dim, &RULE.to_string().repeat(WRAP_WIDTH));
+    let rule = paint(policy, Style::Dim, &RULE.to_string().repeat(RULE_WIDTH));
     let lines = [rule.clone(), paint(policy, Style::Bold, &made), paint(policy, Style::Dim, &ask), rule];
     let body = lines.map(|line| format!("{INDENT}{line}")).join("\n");
     format!("\n{body}\n\n")
@@ -146,14 +148,20 @@ mod tests {
         assert!(styled.contains("\u{1b}[1mBroza made"), "the first line is bold: {styled:?}");
         assert!(styled.contains("\u{1b}[2mIf it helped"), "the second line is dim: {styled:?}");
         assert_eq!(styled.matches("\u{1b}[2m─").count(), 2, "both rules are dim: {styled:?}");
+        for line in styled.lines().filter(|line| !line.is_empty()) {
+            assert!(
+                line.starts_with("  \u{1b}[") && line.ends_with("\u{1b}[0m"),
+                "styled end to end: {line:?}"
+            );
+        }
     }
 
-    fn interactive(home: &str) -> RuntimeEnv {
+    fn interactive() -> RuntimeEnv {
         RuntimeEnv {
             stdout_is_tty: true,
             stderr_is_tty: true,
             stdin_is_tty: true,
-            ..RuntimeEnv::for_tests(PathBuf::from(home))
+            ..RuntimeEnv::for_tests(PathBuf::from("/Users/dana"))
         }
     }
 
@@ -171,20 +179,24 @@ mod tests {
         }
     }
 
-    fn run<'a>(outcome: &'a Outcome, runtime: &'a RuntimeEnv, format: OutputFormat) -> Run<'a> {
-        Run { outcome, global: &GLOBAL, runtime, donate_prompt: true, format, policy: ColorPolicy::Never }
+    fn run<'a>(
+        outcome: &'a Outcome,
+        global: &'a GlobalArgs,
+        runtime: &'a RuntimeEnv,
+        format: OutputFormat,
+    ) -> Run<'a> {
+        Run { outcome, global, runtime, donate_prompt: true, format, policy: ColorPolicy::Never }
     }
-
-    static GLOBAL: std::sync::LazyLock<GlobalArgs> = std::sync::LazyLock::new(global);
 
     #[test]
     fn every_eligible_run_shows_the_banner_with_no_cooldown_between_them() {
         let outcome = Outcome::ok(String::new()).with_reclaimed(reclaimed(10, 0));
-        let runtime = interactive("/Users/dana");
+        let global = global();
+        let runtime = interactive();
         let mut shown = Vec::new();
 
-        maybe_show(&run(&outcome, &runtime, OutputFormat::Human), &mut shown);
-        maybe_show(&run(&outcome, &runtime, OutputFormat::Human), &mut shown);
+        maybe_show(&run(&outcome, &global, &runtime, OutputFormat::Human), &mut shown);
+        maybe_show(&run(&outcome, &global, &runtime, OutputFormat::Human), &mut shown);
 
         let text = String::from_utf8(shown).unwrap();
         assert_eq!(text.matches("ko-fi.com/borlafu").count(), 2, "shown on both runs: {text}");
@@ -195,13 +207,14 @@ mod tests {
     fn a_run_that_reclaimed_nothing_or_was_not_interactive_shows_nothing() {
         let dry = Outcome::ok(String::new());
         let applied = Outcome::ok(String::new()).with_reclaimed(reclaimed(10, 0));
+        let global = global();
         let quiet_env = RuntimeEnv::for_tests(PathBuf::from("/Users/dana"));
-        let interactive_env = interactive("/Users/dana");
+        let interactive_env = interactive();
         let mut out = Vec::new();
 
-        maybe_show(&run(&dry, &interactive_env, OutputFormat::Human), &mut out);
-        maybe_show(&run(&applied, &quiet_env, OutputFormat::Human), &mut out);
-        maybe_show(&run(&applied, &interactive_env, OutputFormat::Json), &mut out);
+        maybe_show(&run(&dry, &global, &interactive_env, OutputFormat::Human), &mut out);
+        maybe_show(&run(&applied, &global, &quiet_env, OutputFormat::Human), &mut out);
+        maybe_show(&run(&applied, &global, &interactive_env, OutputFormat::Json), &mut out);
 
         assert!(out.is_empty(), "no line for a dry run, a non-interactive run or --json: {out:?}");
     }

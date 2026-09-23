@@ -6,6 +6,14 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 
 ## [Unreleased]
 
+### Changed
+
+- The Ko-fi message shows after every applied cleanup that moved or freed bytes, not once
+  every 30 days: the marker file `~/.local/share/broza/state/donate_last_shown` is no longer
+  read or written (an existing one is harmless). It is set apart by blank lines and a rule
+  above and below, with the first line in bold where color is on; `donate-prompt false`,
+  `BROZA_NO_DONATE`, `CI`, `--quiet`, `--json` and `--csv` still silence it (spec §5).
+
 ### Fixed
 
 - APFS clone families are counted once (ADR 0009). A folder of cloned media — WhatsApp's

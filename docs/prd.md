@@ -419,7 +419,7 @@ Evaluate real traction against the §9 threshold **before** investing in the GUI
 | RF-09 | M1 | Role rejection, root allowlist, exclusions | `tests/safety_kernel.rs`, `safety/roots.rs` tests |
 | RF-10 | Deferred | Post-1.0 (D14) | — |
 | RF-11 to RF-16 | Phase 2 | GUI | — |
-| RF-17 | M3 | Donation gate, all six conditions + 30-day marker | `crates/broza-cli/src/donate_display.rs` tests, `tests/pipeline.rs` |
+| RF-17 | M3 | Donation gate, five conditions, no state | `crates/broza-cli/src/donate.rs` and `donate_display.rs` tests |
 | RF-18 | M1, M3 | Confirmation matrix in M1; exit `7` path end-to-end in M3 | `tests/safety_confirmation.rs`, `scan_explain.rs::clean_apply_without_a_terminal_*` |
 | RF-19 | M1, M5 | `inform_only` forced by construction in M1; `cloud-synced` detector in M5 | `model/finding.rs` tests, `detect/detectors/cloud_synced.rs` tests, `tests/safety_kernel.rs::an_inform_only_*` |
 | Detectors green | M3 | `user-cache`, `build-cache` | `detect/detectors/{user_cache,build_cache,node_modules}.rs` tests |

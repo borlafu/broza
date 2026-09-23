@@ -952,15 +952,18 @@ Normative specification. Violating any of these rules is a *bug*.
 3. `--json`, `--csv` and `--quiet` are **absent**.
 4. `config donate-prompt` is `true`.
 5. `BROZA_NO_DONATE` and `CI` are **not** set.
-6. It has not been shown in the last **30 days**.
 
-Condition 6 is tracked by the marker file `~/.local/share/broza/state/donate_last_shown`, which contains a single RFC 3339 UTC timestamp and is rewritten (temp file + rename) each time the message is shown. A missing or unreadable marker counts as "never shown"; a write failure is logged at `-v` and never affects the exit code.
+There is no cooldown and no state: every run that meets the five conditions shows the message. Silencing it is the user's call, through condition 4 or 5.
 
-**Format (stderr, two lines maximum):**
+**Format (stderr):** a blank line, a rule of 78 `─` characters, the two lines of the message, the same rule, a blank line. Every line is indented two spaces. Where color is enabled (§1.1) the first line is bold and the rules and the second line are dim; where it is not, the same characters are written without escapes. No other styling.
 
 ```
+
+  ──────────────────────────────────────────────────────────────────────────────
   Broza made 138.2 GB reclaimable (121.4 GB in quarantine, 16.8 GB freed). It is free and open source software.
   If it helped you: https://ko-fi.com/borlafu   ·   Silence this: broza config set donate-prompt false
+  ──────────────────────────────────────────────────────────────────────────────
+
 ```
 
 The figures follow principle 8: pending and freed bytes are reported separately inside the parenthesis; a figure that is zero is left out of it, and the parenthesis stays for the other one (`(12.4 GB freed)` after a purge, `(94.2 GB in quarantine)` after a plain cleanup).
@@ -1135,5 +1138,7 @@ Unreleased: everything below ships with the next minor version.
 - §4.2 and §7 (post-1.0): APFS clone accounting. A clone family is counted once, by clone id (`ATTR_CMNEXT_CLONEID`): the original keeps the bytes when the walk saw it, otherwise the clone whose path sorts first; the cache records carry each file's clone id and the families whose credited clone they hold (store layout 5), so a warm walk discounts a family's other clones as the cold walk did. The `size_exceeds_volume` warning stays for the cases the clone id cannot settle (a family split across a cached subtree, diverged clones) and its message no longer says clones are counted separately. [ADR 0009](adr/0009-apfs-clone-accounting-by-clone-id.md).
 - §3.3 (post-1.0): `duplicates` leaves out a clone and any file that has a clone among the families the walk knows of; quarantining either frees nothing. The `reasoning` states the rule. `large-old-files` leaves out a file whose removal frees nothing; `trash`, `user-cache` and `build-cache` size a file as the walk settled it.
 - §4.3 (post-1.0): `reclaimed_bytes` counts a purged clone as nothing, like a hard link: whether its family is all gone is not knowable at purge time.
+- §5 (post-1.0): the donation message has no cooldown any more; the 30-day condition and the marker file `~/.local/share/broza/state/donate_last_shown` are gone (an existing marker is ignored and left in place). Every applied cleanup that meets the five remaining conditions shows it.
+- §5 (post-1.0): the message is set apart by blank lines and a `─` rule above and below; the first line is bold and the rest dim where color is enabled. Bold and dim only; no hues.
 - §8.2: "APFS clone-aware sizes" leaves the deferred list; what remains deferred is the accounting of the blocks a diverged clone owns.
 - §7 (post-1.0): the walk lists directories by descriptor and reaches deep ones by relative steps, so a tree deeper than `PATH_MAX` allows is measured to the bottom instead of ending in one `unreadable_entry` warning per blocked entry. [ADR 0010](adr/0010-walk-by-directory-descriptor.md).

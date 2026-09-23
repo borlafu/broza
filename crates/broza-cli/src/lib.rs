@@ -83,7 +83,6 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     let policy = ColorPolicy::resolve(cli.global.no_color, effective.color, runtime, format);
 
     let donate_prompt = effective.donate_prompt;
-    let (fs, clock) = (Arc::clone(&ports.fs), Arc::clone(&ports.clock));
     let outcome = dispatch(
         command,
         cli,
@@ -93,9 +92,14 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     sink.write(&outcome.rendered)?;
     report_warnings(&outcome.warnings, &cli.global, format);
     donate_display::maybe_show(
-        &donate_display::Run { outcome: &outcome, global: &cli.global, runtime, donate_prompt, format },
-        fs.as_ref(),
-        clock.as_ref(),
+        &donate_display::Run {
+            outcome: &outcome,
+            global: &cli.global,
+            runtime,
+            donate_prompt,
+            format,
+            policy,
+        },
         &mut std::io::stderr(),
     );
     Ok(outcome.code)

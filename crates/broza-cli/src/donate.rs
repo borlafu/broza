@@ -1,21 +1,14 @@
 //! Donation message gate (`docs/cli-spec.md` §5, RF-17).
 //!
-//! This module is a pure predicate: no I/O, no clock, no environment. The
-//! caller reads the marker file, the clock and the terminal state and passes
-//! the facts in; [`crate::donate_display`] does that and prints the message.
-
-use jiff::{SignedDuration, Timestamp};
+//! This module is a pure predicate: no I/O, no environment. The caller reads
+//! the terminal state and the flags and passes the facts in;
+//! [`crate::donate_display`] does that and prints the message.
 
 /// Ko-fi link shown by the message and by `broza about`.
 pub const DONATE_URL: &str = "https://ko-fi.com/borlafu";
-/// Marker file, relative to the user's home directory.
-pub const MARKER_RELATIVE: &str = ".local/share/broza/state/donate_last_shown";
-/// Minimum time between two messages (condition 6): 30 days.
-/// Expressed in hours because `jiff::Timestamp` arithmetic takes no calendar units.
-const COOLDOWN: SignedDuration = SignedDuration::from_hours(30 * 24);
 
-/// Everything the six conditions of §5 depend on.
-// The six conditions are booleans; collapsing them would hide the mapping.
+/// Everything the five conditions of §5 depend on.
+// The five conditions are booleans; collapsing them would hide the mapping.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DonationInput {
@@ -39,16 +32,11 @@ pub struct DonationInput {
     pub broza_no_donate: bool,
     /// Condition 5: `CI` is set.
     pub ci: bool,
-    /// Condition 6: contents of the marker file, if it could be read.
-    pub last_shown: Option<Timestamp>,
-    /// Condition 6: the current time.
-    pub now: Timestamp,
 }
 
 /// Decide whether the donation message may be shown.
 ///
-/// All six conditions of `docs/cli-spec.md` §5 must hold. A missing or
-/// unreadable marker counts as "never shown".
+/// All five conditions of `docs/cli-spec.md` §5 must hold.
 pub fn should_show_donation(input: &DonationInput) -> bool {
     input.apply_succeeded
         && input.affected_bytes > 0
@@ -60,31 +48,13 @@ pub fn should_show_donation(input: &DonationInput) -> bool {
         && input.donate_prompt
         && !input.broza_no_donate
         && !input.ci
-        && is_past_cooldown(input.last_shown, input.now)
-}
-
-/// Condition 6: at least [`COOLDOWN`] since the last message.
-fn is_past_cooldown(last_shown: Option<Timestamp>, now: Timestamp) -> bool {
-    let Some(last) = last_shown else {
-        return true;
-    };
-    let Ok(cooldown_ends) = last.checked_add(COOLDOWN) else {
-        return true;
-    };
-    now >= cooldown_ends
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
     use super::*;
 
-    fn now() -> Timestamp {
-        "2026-09-21T10:36:08Z".parse().unwrap()
-    }
-
-    /// An input where every one of the six conditions holds.
+    /// An input where every one of the five conditions holds.
     fn eligible() -> DonationInput {
         DonationInput {
             apply_succeeded: true,
@@ -97,8 +67,6 @@ mod tests {
             donate_prompt: true,
             broza_no_donate: false,
             ci: false,
-            last_shown: None,
-            now: now(),
         }
     }
 
@@ -120,36 +88,9 @@ mod tests {
             ("4: donate-prompt false", DonationInput { donate_prompt: false, ..eligible() }),
             ("5: BROZA_NO_DONATE", DonationInput { broza_no_donate: true, ..eligible() }),
             ("5: CI", DonationInput { ci: true, ..eligible() }),
-            (
-                "6: shown yesterday",
-                DonationInput {
-                    last_shown: Some(now().checked_sub(SignedDuration::from_hours(24)).unwrap()),
-                    ..eligible()
-                },
-            ),
         ];
         for (reason, input) in cases {
             assert!(!should_show_donation(&input), "condition `{reason}` must veto the message");
         }
-    }
-
-    #[test]
-    fn a_marker_older_than_thirty_days_does_not_veto() {
-        let input = DonationInput {
-            last_shown: Some(now().checked_sub(SignedDuration::from_hours(31 * 24)).unwrap()),
-            ..eligible()
-        };
-        assert!(should_show_donation(&input));
-    }
-
-    #[test]
-    fn exactly_thirty_days_is_enough() {
-        let input = DonationInput { last_shown: Some(now().checked_sub(COOLDOWN).unwrap()), ..eligible() };
-        assert!(should_show_donation(&input));
-    }
-
-    #[test]
-    fn an_unreadable_marker_counts_as_never_shown() {
-        assert!(should_show_donation(&DonationInput { last_shown: None, ..eligible() }));
     }
 }

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Find and remove orphan node_modules on a Mac | Broza</title>
+<meta name="description" content="How to find node_modules folders whose project is gone or untouched for a year, and reclaim the space safely with a dry run and a 30-day undo.">
+<link rel="canonical" href="https://borlafu.github.io/broza/explain/node-modules.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="Find and remove orphan node_modules on a Mac">
+<meta property="og:description" content="How to find node_modules folders whose project is gone or untouched for a year, and reclaim the space safely with a dry run and a 30-day undo.">
+<meta property="og:url" content="https://borlafu.github.io/broza/explain/node-modules.html">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+[
+ {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Find and remove orphan node_modules on a Mac",
+  "description": "How to find node_modules folders whose project is gone or untouched for a year, and reclaim the space safely with a dry run and a 30-day undo.",
+  "url": "https://borlafu.github.io/broza/explain/node-modules.html",
+  "datePublished": "2026-09-26",
+  "dateModified": "2026-09-26",
+  "image": "https://borlafu.github.io/broza/assets/og.png",
+  "inLanguage": "en",
+  "author": {
+   "@type": "Person",
+   "name": "Borja Lafuente",
+   "url": "https://github.com/borlafu"
+  },
+  "publisher": {
+   "@type": "Organization",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  },
+  "about": {
+   "@type": "SoftwareApplication",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  }
+ },
+ {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+   {
+    "@type": "ListItem",
+    "position": 1,
+    "name": "Broza",
+    "item": "https://borlafu.github.io/broza/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 2,
+    "name": "Guides",
+    "item": "https://borlafu.github.io/broza/explain/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 3,
+    "name": "Find and remove orphan node_modules on a Mac",
+    "item": "https://borlafu.github.io/broza/explain/node-modules.html"
+   }
+  ]
+ }
+]
+</script>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../">
+      <svg width="20" height="20" viewBox="-16 -56 32 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color:var(--leaf)" aria-hidden="true"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -2 L0 -46"/></svg>
+      broza
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#quick-start">quick start</a>
+      <a href="../#features">features</a>
+      <a href="./">guides</a>
+      <a class="repo" href="https://github.com/borlafu/broza">github</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="article wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="../">Broza</a> <span aria-hidden="true">›</span> <a href="./">Guides</a></nav>
+<h1>Find and remove orphan node_modules on a Mac</h1>
+<p class="article-meta"><span class="risk risk-review">REVIEW</span> <code>build-cache</code></p>
+<p class="article-lede">A <code>node_modules</code> directory is reproducible from its project's <code>package.json</code> and one install command. The ones worth removing are orphans: the project is gone, or nothing in it has changed for a long time.</p>
+<h2>What it is</h2>
+<p>Everything a compiler or a package manager wrote so it would not have to do the work twice: Xcode DerivedData and Archives, node_modules directories, __pycache__, .gradle, Rust target/ directories, and the virtual disk Docker Desktop stores its images in.</p>
+<h2>What it is for</h2>
+<p>It makes the second build faster than the first. On a developer's Mac it is usually the single largest reclaimable category, and none of it is source code: every byte is reproducible from a repository and a build command.</p>
+<h2>Is it safe to delete?</h2>
+<p>Yes for the build outputs, which Broza moves to quarantine; the next build recreates them. The Docker virtual disk is the exception: Broza only reports its size and points at <code>docker system prune</code>, because shrinking that file is Docker's job, not a file manager's.</p>
+<h2>What Broza counts as an orphan</h2><p>A leaf <code>node_modules</code> directory is orphan when it is not tool-managed and either its parent has no <code>package.json</code> (the project is gone), or none of the project's other entries changed for the <code>--unused-after</code> period (one year by default).</p><p>Tool-managed directories are left out: anything under <code>~/Library</code> (package-manager stores such as pnpm's), under a hidden directory (<code>~/.vscode/extensions</code>, <code>~/.npm/_npx</code>, <code>~/.cache</code>) or inside an <code>.app</code> bundle. In monorepos only leaf <code>node_modules</code> are proposed. Orphans are rated REVIEW and moved to quarantine, never deleted outright.</p>
+<h2>Check it on your Mac</h2>
+<p>Broza is a free, open-source command-line tool. Every command below is read-only except <code>clean</code>, and <code>clean</code> is a dry run until you add <code>--apply</code>.</p>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza suggest --category build-cache --unused-after 6m</code><button class="copy-mini" type="button" data-copy-text="broza suggest --category build-cache --unused-after 6m" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza clean --category build-cache</code><button class="copy-mini" type="button" data-copy-text="broza clean --category build-cache" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<p class="article-install">Not installed yet? <a href="../#quick-start">Install Broza</a> with Homebrew, the installer script, or Cargo.</p>
+<h2>Related guides</h2>
+<ul class="related">
+<li><a href="xcode-deriveddata.html">Is it safe to delete Xcode DerivedData?</a></li>
+<li><a href="docker-disk-image.html">Docker.raw taking up space on your Mac? What to do</a></li>
+<li><a href="library-caches.html">Is it safe to delete ~/Library/Caches on a Mac?</a></li>
+</ul>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>MIT licensed · <em>broza</em> is Spanish for brushwood or useless clutter. Pronounced BRO-zah.</p>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="./">Guides</a></li>
+      <li><a href="https://github.com/borlafu/broza">Source</a></li>
+      <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+    </ul>
+  </div>
+</footer>
+<script src="../ui.js" defer></script>
+</body>
+</html>

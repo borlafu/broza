@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Is it safe to delete ~/Library/Caches on a Mac? | Broza</title>
+<meta name="description" content="Yes, with one exception Broza handles for you. What lives in ~/Library/Caches, why it only grows, and how to clear it with a dry run first and a 30-day undo.">
+<link rel="canonical" href="https://borlafu.github.io/broza/explain/library-caches.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="Is it safe to delete ~/Library/Caches on a Mac?">
+<meta property="og:description" content="Yes, with one exception Broza handles for you. What lives in ~/Library/Caches, why it only grows, and how to clear it with a dry run first and a 30-day undo.">
+<meta property="og:url" content="https://borlafu.github.io/broza/explain/library-caches.html">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+[
+ {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Is it safe to delete ~/Library/Caches on a Mac?",
+  "description": "Yes, with one exception Broza handles for you. What lives in ~/Library/Caches, why it only grows, and how to clear it with a dry run first and a 30-day undo.",
+  "url": "https://borlafu.github.io/broza/explain/library-caches.html",
+  "datePublished": "2026-09-26",
+  "dateModified": "2026-09-26",
+  "image": "https://borlafu.github.io/broza/assets/og.png",
+  "inLanguage": "en",
+  "author": {
+   "@type": "Person",
+   "name": "Borja Lafuente",
+   "url": "https://github.com/borlafu"
+  },
+  "publisher": {
+   "@type": "Organization",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  },
+  "about": {
+   "@type": "SoftwareApplication",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  }
+ },
+ {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+   {
+    "@type": "ListItem",
+    "position": 1,
+    "name": "Broza",
+    "item": "https://borlafu.github.io/broza/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 2,
+    "name": "Guides",
+    "item": "https://borlafu.github.io/broza/explain/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 3,
+    "name": "Is it safe to delete ~/Library/Caches on a Mac?",
+    "item": "https://borlafu.github.io/broza/explain/library-caches.html"
+   }
+  ]
+ }
+]
+</script>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../">
+      <svg width="20" height="20" viewBox="-16 -56 32 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color:var(--leaf)" aria-hidden="true"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -2 L0 -46"/></svg>
+      broza
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#quick-start">quick start</a>
+      <a href="../#features">features</a>
+      <a href="./">guides</a>
+      <a class="repo" href="https://github.com/borlafu/broza">github</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="article wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="../">Broza</a> <span aria-hidden="true">›</span> <a href="./">Guides</a></nav>
+<h1>Is it safe to delete ~/Library/Caches on a Mac?</h1>
+<p class="article-meta"><span class="risk risk-safe">SAFE</span> <code>user-cache</code></p>
+<p class="article-lede">Application caches, logs and incomplete downloads under ~/Library. Regenerated on demand.</p>
+<h2>What it is</h2>
+<p>Working files applications keep under ~/Library/Caches, plus their logs and the half-finished downloads they never cleaned up. None of it is a document you created.</p>
+<h2>What it is for</h2>
+<p>A cache buys speed: a browser keeps images, a mail client keeps message bodies, a package manager keeps archives it already downloaded. macOS never prunes these directories on your behalf, so they only grow.</p>
+<h2>Is it safe to delete?</h2>
+<p>Yes. Every application recreates what it needs, at the cost of being a little slower the first time. Broza moves the files to quarantine instead of deleting them, so a program that behaves oddly afterwards can be put back exactly as it was.</p>
+<h2>The exception Broza handles for you</h2><p>A few directories under <code>~/Library/Caches</code> hold data nothing regenerates: JetBrains' per-file undo history and Poetry's <code>virtualenvs</code>. Broza opens those up and lists only their regenerable contents, so every path under the SAFE label is one an application recreates.</p>
+<h2>Check it on your Mac</h2>
+<p>Broza is a free, open-source command-line tool. Every command below is read-only except <code>clean</code>, and <code>clean</code> is a dry run until you add <code>--apply</code>.</p>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza explain user-cache</code><button class="copy-mini" type="button" data-copy-text="broza explain user-cache" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza suggest --category user-cache</code><button class="copy-mini" type="button" data-copy-text="broza suggest --category user-cache" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza clean --category user-cache</code><button class="copy-mini" type="button" data-copy-text="broza clean --category user-cache" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<p class="article-install">Not installed yet? <a href="../#quick-start">Install Broza</a> with Homebrew, the installer script, or Cargo.</p>
+<h2>Related guides</h2>
+<ul class="related">
+<li><a href="xcode-deriveddata.html">Is it safe to delete Xcode DerivedData?</a></li>
+<li><a href="system-data.html">What is &quot;System Data&quot; on a Mac, and how to shrink it</a></li>
+<li><a href="node-modules.html">Find and remove orphan node_modules on a Mac</a></li>
+</ul>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>MIT licensed · <em>broza</em> is Spanish for brushwood or useless clutter. Pronounced BRO-zah.</p>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="./">Guides</a></li>
+      <li><a href="https://github.com/borlafu/broza">Source</a></li>
+      <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+    </ul>
+  </div>
+</footer>
+<script src="../ui.js" defer></script>
+</body>
+</html>

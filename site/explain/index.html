@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mac disk space guides | Broza</title>
+<meta name="description" content="Plain-English answers to what fills a Mac&#x27;s disk — DerivedData, node_modules, Docker, simulators, snapshots, System Data — and what is safe to remove.">
+<link rel="canonical" href="https://borlafu.github.io/broza/explain/">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="Mac disk space guides">
+<meta property="og:description" content="Plain-English answers to what fills a Mac&#x27;s disk — DerivedData, node_modules, Docker, simulators, snapshots, System Data — and what is safe to remove.">
+<meta property="og:url" content="https://borlafu.github.io/broza/explain/">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "CollectionPage",
+ "name": "Mac disk space guides",
+ "url": "https://borlafu.github.io/broza/explain/",
+ "description": "Plain-English answers to what fills a Mac's disk and what is safe to remove."
+}
+</script>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../">
+      <svg width="20" height="20" viewBox="-16 -56 32 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color:var(--leaf)" aria-hidden="true"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -2 L0 -46"/></svg>
+      broza
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#quick-start">quick start</a>
+      <a href="../#features">features</a>
+      <a href="./">guides</a>
+      <a class="repo" href="https://github.com/borlafu/broza">github</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="article wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="../">Broza</a></nav>
+<h1>Mac disk space guides</h1>
+<p class="article-lede">What fills a Mac's disk, what each thing is for, and whether it is safe to remove. The same explanations <code>broza explain</code> prints, one page per topic.</p>
+<ul class="guide-list">
+<li><a href="xcode-deriveddata.html">Is it safe to delete Xcode DerivedData?</a><p>Yes: DerivedData is build output Xcode regenerates on the next build. What it is, why it grows, and how to clear it with a dry run first and a 30-day undo.</p></li>
+<li><a href="node-modules.html">Find and remove orphan node_modules on a Mac</a><p>How to find node_modules folders whose project is gone or untouched for a year, and reclaim the space safely with a dry run and a 30-day undo.</p></li>
+<li><a href="docker-disk-image.html">Docker.raw taking up space on your Mac? What to do</a><p>Docker Desktop keeps every image and volume in one virtual disk, Docker.raw. Why it grows, why you should not delete it by hand, and how to shrink it.</p></li>
+<li><a href="ios-simulators.html">Delete unused iOS simulators and runtimes on a Mac</a><p>Each iOS simulator is a full copy of an iOS release plus app data. Which ones are safe to remove, and how to clear them with a dry run and a 30-day undo.</p></li>
+<li><a href="system-data.html">What is &quot;System Data&quot; on a Mac, and how to shrink it</a><p>System Data is mostly local snapshots, swap, caches and logs. What each part is, which parts are safe to remove, and which only macOS should manage.</p></li>
+<li><a href="purgeable-space.html">Purgeable space on Mac: why &quot;available&quot; is not free</a><p>Finder counts purgeable space as available, but your apps cannot use it yet. What purgeable space is, where it comes from, and how to see the real free number.</p></li>
+<li><a href="time-machine-local-snapshots.html">Time Machine local snapshots eating disk space</a><p>Local snapshots are why a Mac shows gigabytes of purgeable space. What they are, why they must go through tmutil, and how to list and remove them safely.</p></li>
+<li><a href="iphone-backups.html">Old iPhone backups on your Mac: find and remove them</a><p>Where Finder keeps iPhone and iPad backups on a Mac, how to tell which are old, and how to remove them with a dry run first and a 30-day undo.</p></li>
+<li><a href="cloud-synced-files.html">Free space on a Mac without deleting iCloud or Dropbox files</a><p>Deleting a synced file deletes it from the cloud and every device. How to see how much iCloud Drive, Dropbox, OneDrive or Google Drive keeps locally, safely.</p></li>
+<li><a href="library-caches.html">Is it safe to delete ~/Library/Caches on a Mac?</a><p>Yes, with one exception Broza handles for you. What lives in ~/Library/Caches, why it only grows, and how to clear it with a dry run first and a 30-day undo.</p></li>
+</ul>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>MIT licensed · <em>broza</em> is Spanish for brushwood or useless clutter. Pronounced BRO-zah.</p>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="./">Guides</a></li>
+      <li><a href="https://github.com/borlafu/broza">Source</a></li>
+      <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+    </ul>
+  </div>
+</footer>
+<script src="../ui.js" defer></script>
+</body>
+</html>

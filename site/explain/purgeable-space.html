@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Purgeable space on Mac: why &quot;available&quot; is not free | Broza</title>
+<meta name="description" content="Finder counts purgeable space as available, but your apps cannot use it yet. What purgeable space is, where it comes from, and how to see the real free number.">
+<link rel="canonical" href="https://borlafu.github.io/broza/explain/purgeable-space.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="Purgeable space on Mac: why &quot;available&quot; is not free">
+<meta property="og:description" content="Finder counts purgeable space as available, but your apps cannot use it yet. What purgeable space is, where it comes from, and how to see the real free number.">
+<meta property="og:url" content="https://borlafu.github.io/broza/explain/purgeable-space.html">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+[
+ {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Purgeable space on Mac: why \"available\" is not free",
+  "description": "Finder counts purgeable space as available, but your apps cannot use it yet. What purgeable space is, where it comes from, and how to see the real free number.",
+  "url": "https://borlafu.github.io/broza/explain/purgeable-space.html",
+  "datePublished": "2026-09-26",
+  "dateModified": "2026-09-26",
+  "image": "https://borlafu.github.io/broza/assets/og.png",
+  "inLanguage": "en",
+  "author": {
+   "@type": "Person",
+   "name": "Borja Lafuente",
+   "url": "https://github.com/borlafu"
+  },
+  "publisher": {
+   "@type": "Organization",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  },
+  "about": {
+   "@type": "SoftwareApplication",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  }
+ },
+ {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+   {
+    "@type": "ListItem",
+    "position": 1,
+    "name": "Broza",
+    "item": "https://borlafu.github.io/broza/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 2,
+    "name": "Guides",
+    "item": "https://borlafu.github.io/broza/explain/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 3,
+    "name": "Purgeable space on Mac: why \"available\" is not free",
+    "item": "https://borlafu.github.io/broza/explain/purgeable-space.html"
+   }
+  ]
+ }
+]
+</script>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../">
+      <svg width="20" height="20" viewBox="-16 -56 32 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color:var(--leaf)" aria-hidden="true"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -2 L0 -46"/></svg>
+      broza
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#quick-start">quick start</a>
+      <a href="../#features">features</a>
+      <a href="./">guides</a>
+      <a class="repo" href="https://github.com/borlafu/broza">github</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="article wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="../">Broza</a> <span aria-hidden="true">›</span> <a href="./">Guides</a></nav>
+<h1>Purgeable space on Mac: why "available" is not free</h1>
+
+<p class="article-lede">Finder reports "available" as free space plus <em>purgeable</em> space. Purgeable space is data macOS may delete on its own when it needs room, such as local snapshots and caches. An app asking the file system sees only the truly free part. Broza shows both numbers on separate lines and never adds purgeable to free.</p>
+<h2>Why Finder shows more available space</h2>
+<p>Finder adds purgeable space to free space. Broza shows them separately because purgeable space is not guaranteed to be available to your apps right now.</p>
+<h2>Where purgeable space comes from</h2>
+<p>They are what "enter Time Machine" browses when the backup disk is not attached, and what lets a failed update roll back. They are also why a Mac reports gigabytes of "purgeable" space: macOS deletes snapshots itself when the disk fills.</p>
+<h2>Free space belongs to the container</h2>
+<p>A Mac's SSD holds one APFS container with several volumes (System, Data, Preboot, Recovery, VM). Free space belongs to the container, not to any single volume. That is why a "percentage full" per volume is misleading, and why Broza reasons at the container level.</p>
+<h2>What the honest numbers look like</h2>
+<pre class="term-body term-static"><code>Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
+└─ APFS container  disk3  (994.7 GB)
+   ├─ Used        812.4 GB  ████████████████░░░░  81.7%
+   ├─ Free         98.1 GB
+   └─ Purgeable    84.1 GB  ← estimate; macOS shows this as &quot;available&quot;</code></pre>
+<p><code>broza scan</code> prints used, free and purgeable on separate lines, and never adds purgeable to free.</p>
+<h2>Check it on your Mac</h2>
+<p>Broza is a free, open-source command-line tool. Every command below is read-only except <code>clean</code>, and <code>clean</code> is a dry run until you add <code>--apply</code>.</p>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza scan</code><button class="copy-mini" type="button" data-copy-text="broza scan" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<p class="article-install">Not installed yet? <a href="../#quick-start">Install Broza</a> with Homebrew, the installer script, or Cargo.</p>
+<h2>Related guides</h2>
+<ul class="related">
+<li><a href="system-data.html">What is &quot;System Data&quot; on a Mac, and how to shrink it</a></li>
+<li><a href="time-machine-local-snapshots.html">Time Machine local snapshots eating disk space</a></li>
+<li><a href="library-caches.html">Is it safe to delete ~/Library/Caches on a Mac?</a></li>
+</ul>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>MIT licensed · <em>broza</em> is Spanish for brushwood or useless clutter. Pronounced BRO-zah.</p>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="./">Guides</a></li>
+      <li><a href="https://github.com/borlafu/broza">Source</a></li>
+      <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+    </ul>
+  </div>
+</footer>
+<script src="../ui.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What is &quot;System Data&quot; on a Mac, and how to shrink it | Broza</title>
+<meta name="description" content="System Data is mostly local snapshots, swap, caches and logs. What each part is, which parts are safe to remove, and which only macOS should manage.">
+<link rel="canonical" href="https://borlafu.github.io/broza/explain/system-data.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="What is &quot;System Data&quot; on a Mac, and how to shrink it">
+<meta property="og:description" content="System Data is mostly local snapshots, swap, caches and logs. What each part is, which parts are safe to remove, and which only macOS should manage.">
+<meta property="og:url" content="https://borlafu.github.io/broza/explain/system-data.html">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+[
+ {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "What is \"System Data\" on a Mac, and how to shrink it",
+  "description": "System Data is mostly local snapshots, swap, caches and logs. What each part is, which parts are safe to remove, and which only macOS should manage.",
+  "url": "https://borlafu.github.io/broza/explain/system-data.html",
+  "datePublished": "2026-09-26",
+  "dateModified": "2026-09-26",
+  "image": "https://borlafu.github.io/broza/assets/og.png",
+  "inLanguage": "en",
+  "author": {
+   "@type": "Person",
+   "name": "Borja Lafuente",
+   "url": "https://github.com/borlafu"
+  },
+  "publisher": {
+   "@type": "Organization",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  },
+  "about": {
+   "@type": "SoftwareApplication",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  }
+ },
+ {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+   {
+    "@type": "ListItem",
+    "position": 1,
+    "name": "Broza",
+    "item": "https://borlafu.github.io/broza/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 2,
+    "name": "Guides",
+    "item": "https://borlafu.github.io/broza/explain/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 3,
+    "name": "What is \"System Data\" on a Mac, and how to shrink it",
+    "item": "https://borlafu.github.io/broza/explain/system-data.html"
+   }
+  ]
+ }
+]
+</script>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../">
+      <svg width="20" height="20" viewBox="-16 -56 32 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color:var(--leaf)" aria-hidden="true"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -2 L0 -46"/></svg>
+      broza
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#quick-start">quick start</a>
+      <a href="../#features">features</a>
+      <a href="./">guides</a>
+      <a class="repo" href="https://github.com/borlafu/broza">github</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="article wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="../">Broza</a> <span aria-hidden="true">›</span> <a href="./">Guides</a></nav>
+<h1>What is "System Data" on a Mac, and how to shrink it</h1>
+
+<p class="article-lede">The large, opaque "System Data" bucket in System Settings is mostly APFS local snapshots, virtual memory swap, application caches, logs, and on newer Macs the Apple Intelligence models. Some of it is safe to remove, some shrinks after a reboot, and some should only be managed through Apple's own tools. <code>broza explain</code> tells you which is which.</p>
+<h2>Local snapshots</h2>
+<p>Point-in-time images of a volume kept on the volume itself. Time Machine takes one every hour when it cannot reach its backup disk, and macOS takes one before it installs an update.</p>
+<p>They are what "enter Time Machine" browses when the backup disk is not attached, and what lets a failed update roll back. They are also why a Mac reports gigabytes of "purgeable" space: macOS deletes snapshots itself when the disk fills.</p>
+<p><a href="time-machine-local-snapshots.html">Time Machine local snapshots: what they are and how to remove them →</a></p>
+<h2>Virtual memory swap</h2>
+<p>The volume macOS uses for virtual memory: swap files and, on a Mac that sleeps to disk, the sleep image.</p>
+<p>No. Broza never writes to it. Deleting swap by hand risks a crash, and macOS reclaims the space itself once the pressure is gone.</p>
+<h2>Application caches and logs</h2>
+<p>Working files applications keep under ~/Library/Caches, plus their logs and the half-finished downloads they never cleaned up. None of it is a document you created.</p>
+<p>Yes. Every application recreates what it needs, at the cost of being a little slower the first time. Broza moves the files to quarantine instead of deleting them, so a program that behaves oddly afterwards can be put back exactly as it was.</p>
+<p><a href="library-caches.html">Is it safe to delete ~/Library/Caches? →</a></p>
+<h2>Why the number looks bigger than it is</h2>
+<p>Finder reports "available" as free space plus <em>purgeable</em> space. Purgeable space is data macOS may delete on its own when it needs room, such as local snapshots and caches. An app asking the file system sees only the truly free part. Broza shows both numbers on separate lines and never adds purgeable to free.</p>
+<p><a href="purgeable-space.html">Purgeable space, explained →</a></p>
+<h2>Check it on your Mac</h2>
+<p>Broza is a free, open-source command-line tool. Every command below is read-only except <code>clean</code>, and <code>clean</code> is a dry run until you add <code>--apply</code>.</p>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza scan</code><button class="copy-mini" type="button" data-copy-text="broza scan" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza explain /System/Volumes/Data</code><button class="copy-mini" type="button" data-copy-text="broza explain /System/Volumes/Data" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza suggest</code><button class="copy-mini" type="button" data-copy-text="broza suggest" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<p class="article-install">Not installed yet? <a href="../#quick-start">Install Broza</a> with Homebrew, the installer script, or Cargo.</p>
+<h2>Related guides</h2>
+<ul class="related">
+<li><a href="purgeable-space.html">Purgeable space on Mac: why &quot;available&quot; is not free</a></li>
+<li><a href="time-machine-local-snapshots.html">Time Machine local snapshots eating disk space</a></li>
+<li><a href="library-caches.html">Is it safe to delete ~/Library/Caches on a Mac?</a></li>
+</ul>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>MIT licensed · <em>broza</em> is Spanish for brushwood or useless clutter. Pronounced BRO-zah.</p>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="./">Guides</a></li>
+      <li><a href="https://github.com/borlafu/broza">Source</a></li>
+      <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+    </ul>
+  </div>
+</footer>
+<script src="../ui.js" defer></script>
+</body>
+</html>

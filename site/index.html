@@ -3,15 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Broza — safe disk cleanup CLI for macOS</title>
-<meta name="description" content="Broza is an open-source CLI that maps your Mac's APFS storage, explains what each volume and folder is for, and frees space with a dry run first and a reversible quarantine.">
+<title>Broza — free up disk space on Mac, safely (open-source CLI)</title>
+<meta name="description" content="Broza finds what fills your Mac — Xcode DerivedData, node_modules, Docker, caches, snapshots — and cleans it with a dry run first and a 30-day undo.">
 <link rel="canonical" href="https://borlafu.github.io/broza/">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Broza — safe disk cleanup CLI for macOS">
-<meta property="og:description" content="Maps every APFS volume, explains what each one is for, and frees space with a dry run first and a 30-day undo.">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="Broza — free up disk space on Mac, safely (open-source CLI)">
+<meta property="og:description" content="Find what fills your Mac, understand it, and clean it with a dry run first and a 30-day undo. Free, open source, Apple Silicon.">
 <meta property="og:url" content="https://borlafu.github.io/broza/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Broza: your Mac's disk, explained. Then trimmed.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Broza — free up disk space on Mac, safely (open-source CLI)">
+<meta name="twitter:description" content="Find what fills your Mac, understand it, and clean it with a dry run first and a 30-day undo. Free, open source, Apple Silicon.">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Broza",
+  "description": "Broza finds what fills your Mac — Xcode DerivedData, node_modules, Docker, caches, snapshots — and cleans it with a dry run first and a 30-day undo.",
+  "url": "https://borlafu.github.io/broza/",
+  "applicationCategory": "UtilitiesApplication",
+  "applicationSubCategory": "Disk cleanup",
+  "operatingSystem": "macOS 26, macOS 27 (Apple Silicon)",
+  "softwareVersion": "1.1.0",
+  "downloadUrl": "https://github.com/borlafu/broza/releases/latest",
+  "installUrl": "https://borlafu.github.io/broza/#quick-start",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Borja Lafuente", "url": "https://github.com/borlafu" },
+  "sameAs": ["https://github.com/borlafu/broza"],
+  "image": "https://borlafu.github.io/broza/assets/og.png"
+}
+</script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -29,6 +59,7 @@
       <a href="#demo">demo</a>
       <a href="#features">features</a>
       <a href="#safety">safety</a>
+      <a href="explain/">guides</a>
       <a class="repo" href="https://github.com/borlafu/broza">github</a>
     </nav>
   </div>
@@ -70,7 +101,7 @@
   <div class="wrap">
     <div class="section-head section-head-center">
       <span class="pill">quick start</span>
-      <h2>Three commands from full disk to clear one</h2>
+      <h2>Free up disk space on your Mac in three commands</h2>
       <p>Install it, look at what is there, then trim. The trim step is a dry run until you add <code>--apply</code>.</p>
     </div>
     <div class="cards quick-cards">
@@ -269,22 +300,22 @@ Quarantine: ~/.local/share/broza/quarantine/cln_20260921103608_a1b2
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Detectors</p>
-      <h2>Ten categories, each with a stated risk</h2>
-      <p>Category ids are stable and usable in scripts, with <code>--category</code> and <code>--risk</code>.</p>
+      <h2>What Broza cleans: developer caches, snapshots, backups, duplicates</h2>
+      <p>Category ids are stable and usable in scripts, with <code>--category</code> and <code>--risk</code>. Linked ids have a <a href="explain/">plain-English guide</a>.</p>
     </div>
     <table class="detectors">
       <thead>
         <tr><th scope="col">Category</th><th scope="col">Risk</th><th scope="col">What it finds</th></tr>
       </thead>
       <tbody>
-        <tr><td>user-cache</td><td><span class="risk risk-safe">SAFE</span></td><td>Application caches, logs and incomplete downloads under ~/Library. Regenerated on demand.</td></tr>
-        <tr><td>build-cache</td><td><span class="risk risk-safe">SAFE</span> <span class="risk risk-review">REVIEW</span></td><td>Build artefacts: DerivedData, Archives, orphan node_modules, __pycache__, .gradle, target/.</td></tr>
-        <tr><td>ios-simulators</td><td><span class="risk risk-review">REVIEW</span></td><td>Unused iOS simulator runtimes and simulated devices installed by Xcode.</td></tr>
+        <tr><td><a href="explain/library-caches.html">user-cache</a></td><td><span class="risk risk-safe">SAFE</span></td><td>Application caches, logs and incomplete downloads under ~/Library. Regenerated on demand.</td></tr>
+        <tr><td><a href="explain/xcode-deriveddata.html">build-cache</a></td><td><span class="risk risk-safe">SAFE</span> <span class="risk risk-review">REVIEW</span></td><td>Build artefacts: DerivedData, Archives, orphan node_modules, __pycache__, .gradle, target/.</td></tr>
+        <tr><td><a href="explain/ios-simulators.html">ios-simulators</a></td><td><span class="risk risk-review">REVIEW</span></td><td>Unused iOS simulator runtimes and simulated devices installed by Xcode.</td></tr>
         <tr><td>trash</td><td><span class="risk risk-review">REVIEW</span></td><td>The Trash of every mounted volume. Emptying it is irreversible.</td></tr>
-        <tr><td>snapshots</td><td><span class="risk risk-review">REVIEW</span></td><td>APFS local snapshots (Time Machine, OS update). Managed only via tmutil; sizes not reported by macOS.</td></tr>
-        <tr><td>old-backups</td><td><span class="risk risk-review">REVIEW</span></td><td>iPhone and iPad backups under ~/Library/Application Support/MobileSync/Backup.</td></tr>
+        <tr><td><a href="explain/time-machine-local-snapshots.html">snapshots</a></td><td><span class="risk risk-review">REVIEW</span></td><td>APFS local snapshots (Time Machine, OS update). Managed only via tmutil; sizes not reported by macOS.</td></tr>
+        <tr><td><a href="explain/iphone-backups.html">old-backups</a></td><td><span class="risk risk-review">REVIEW</span></td><td>iPhone and iPad backups under ~/Library/Application Support/MobileSync/Backup.</td></tr>
         <tr><td>unused-apps</td><td><span class="risk risk-review">REVIEW</span> <span class="risk risk-info">INFO ONLY</span></td><td>Applications not opened past the threshold, plus their leftovers in ~/Library.</td></tr>
-        <tr><td>cloud-synced</td><td><span class="risk risk-info">INFO ONLY</span></td><td>Files already synced to iCloud Drive, Dropbox, OneDrive or Google Drive. Reported only, never deleted.</td></tr>
+        <tr><td><a href="explain/cloud-synced-files.html">cloud-synced</a></td><td><span class="risk risk-info">INFO ONLY</span></td><td>Files already synced to iCloud Drive, Dropbox, OneDrive or Google Drive. Reported only, never deleted.</td></tr>
         <tr><td>duplicates</td><td><span class="risk risk-review">REVIEW</span></td><td>Groups of byte-identical files, confirmed by a full content hash.</td></tr>
         <tr><td>large-old-files</td><td><span class="risk risk-review">REVIEW</span></td><td>Large files not opened for a long time, ranked by size.</td></tr>
       </tbody>
@@ -327,6 +358,7 @@ Quarantine: ~/.local/share/broza/quarantine/cln_20260921103608_a1b2
     <ul>
       <li><a href="https://github.com/borlafu/broza">Source</a></li>
       <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+      <li><a href="explain/">Guides</a></li>
       <li><a href="https://github.com/borlafu/broza/blob/main/docs/cli-spec.md">CLI spec</a></li>
       <li><a href="https://ko-fi.com/borlafu">Ko-fi</a></li>
     </ul>

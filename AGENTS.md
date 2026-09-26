@@ -138,3 +138,4 @@ Code, comments, commit messages, documentation, and all CLI text are in English.
 - Spec changes: edit `docs/cli-spec.md`, bump its version, add an ADR, update snapshots. Never leave code and spec disagreeing.
 - Research before writing new utility code: check crates.io and the reuse list in `docs/implementation-plan.md` §2.
 - When a macOS behavior is uncertain (see `docs/implementation-plan.md` §9), write the check as a test with a fixture, not as an assumption in code.
+- The guides under `site/explain/` copy prose verbatim from `crates/broza/src/detect/category_text.rs`, `crates/broza/src/adapters/diskutil/purpose.rs` and the README. When one of those paragraphs changes, update the matching page and its `<lastmod>` in `site/sitemap.xml`.

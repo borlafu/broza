@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Old iPhone backups on your Mac: find and remove them | Broza</title>
+<meta name="description" content="Where Finder keeps iPhone and iPad backups on a Mac, how to tell which are old, and how to remove them with a dry run first and a 30-day undo.">
+<link rel="canonical" href="https://borlafu.github.io/broza/explain/iphone-backups.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="Old iPhone backups on your Mac: find and remove them">
+<meta property="og:description" content="Where Finder keeps iPhone and iPad backups on a Mac, how to tell which are old, and how to remove them with a dry run first and a 30-day undo.">
+<meta property="og:url" content="https://borlafu.github.io/broza/explain/iphone-backups.html">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+[
+ {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Old iPhone backups on your Mac: find and remove them",
+  "description": "Where Finder keeps iPhone and iPad backups on a Mac, how to tell which are old, and how to remove them with a dry run first and a 30-day undo.",
+  "url": "https://borlafu.github.io/broza/explain/iphone-backups.html",
+  "datePublished": "2026-09-26",
+  "dateModified": "2026-09-26",
+  "image": "https://borlafu.github.io/broza/assets/og.png",
+  "inLanguage": "en",
+  "author": {
+   "@type": "Person",
+   "name": "Borja Lafuente",
+   "url": "https://github.com/borlafu"
+  },
+  "publisher": {
+   "@type": "Organization",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  },
+  "about": {
+   "@type": "SoftwareApplication",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  }
+ },
+ {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+   {
+    "@type": "ListItem",
+    "position": 1,
+    "name": "Broza",
+    "item": "https://borlafu.github.io/broza/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 2,
+    "name": "Guides",
+    "item": "https://borlafu.github.io/broza/explain/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 3,
+    "name": "Old iPhone backups on your Mac: find and remove them",
+    "item": "https://borlafu.github.io/broza/explain/iphone-backups.html"
+   }
+  ]
+ }
+]
+</script>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../">
+      <svg width="20" height="20" viewBox="-16 -56 32 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color:var(--leaf)" aria-hidden="true"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -2 L0 -46"/></svg>
+      broza
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#quick-start">quick start</a>
+      <a href="../#features">features</a>
+      <a href="./">guides</a>
+      <a class="repo" href="https://github.com/borlafu/broza">github</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="article wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="../">Broza</a> <span aria-hidden="true">›</span> <a href="./">Guides</a></nav>
+<h1>Old iPhone backups on your Mac: find and remove them</h1>
+<p class="article-meta"><span class="risk risk-review">REVIEW</span> <code>old-backups</code></p>
+<p class="article-lede">iPhone and iPad backups under ~/Library/Application Support/MobileSync/Backup.</p>
+<h2>What it is</h2>
+<p>Full local backups of iPhones and iPads, one directory per device, written by Finder or by the older iTunes.</p>
+<h2>What it is for</h2>
+<p>They restore a phone after a loss or a replacement. They are also kept forever: a device you stopped using years ago still has its backup, and each one can be tens of gigabytes.</p>
+<h2>Is it safe to delete?</h2>
+<p>With judgement. A backup of a device you still own and still back up to iCloud is redundant; a backup of a device that no longer exists may be the only copy of what was on it. Broza shows the device name and the date, moves nothing without confirmation, and quarantines rather than deletes.</p>
+<h2>Which backups Broza proposes</h2><p>A backup under <code>~/Library/Application Support/MobileSync/Backup/</code> is proposed when the <code>Last Backup Date</code> in its <code>Info.plist</code> is older than <code>--unused-after</code> (one year by default). Broza names the device in the reasoning and moves the backup to quarantine. A backup whose <code>Info.plist</code> cannot be read is reported as a warning and never proposed.</p>
+<h2>Check it on your Mac</h2>
+<p>Broza is a free, open-source command-line tool. Every command below is read-only except <code>clean</code>, and <code>clean</code> is a dry run until you add <code>--apply</code>.</p>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza explain old-backups</code><button class="copy-mini" type="button" data-copy-text="broza explain old-backups" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza suggest --category old-backups</code><button class="copy-mini" type="button" data-copy-text="broza suggest --category old-backups" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza clean --category old-backups</code><button class="copy-mini" type="button" data-copy-text="broza clean --category old-backups" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<p class="article-install">Not installed yet? <a href="../#quick-start">Install Broza</a> with Homebrew, the installer script, or Cargo.</p>
+<h2>Related guides</h2>
+<ul class="related">
+<li><a href="cloud-synced-files.html">Free space on a Mac without deleting iCloud or Dropbox files</a></li>
+<li><a href="time-machine-local-snapshots.html">Time Machine local snapshots eating disk space</a></li>
+<li><a href="system-data.html">What is &quot;System Data&quot; on a Mac, and how to shrink it</a></li>
+</ul>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>MIT licensed · <em>broza</em> is Spanish for brushwood or useless clutter. Pronounced BRO-zah.</p>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="./">Guides</a></li>
+      <li><a href="https://github.com/borlafu/broza">Source</a></li>
+      <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+    </ul>
+  </div>
+</footer>
+<script src="../ui.js" defer></script>
+</body>
+</html>

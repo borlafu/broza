@@ -483,3 +483,24 @@ section { padding-block: clamp(40px, 7vw, 72px); }
 @media (prefers-reduced-motion: reduce) {
   .cursor { animation: none; }
 }
+
+/* ---------- guide pages ---------- */
+
+.article { max-width: 760px; padding-block: clamp(28px, 6vw, 56px); }
+.article h1 { font-size: clamp(28px, 4.6vw, 40px); margin-top: 10px; }
+.article h2 { font-size: 21px; margin-top: 34px; margin-bottom: 8px; }
+.article p { margin-top: 10px; }
+.article .cmdline { margin-top: 10px; }
+.article-lede { font-size: 19px; color: var(--ink-soft); margin-top: 14px; }
+.article-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.article-install { color: var(--ink-soft); font-size: 15px; }
+.crumbs { font-size: 14px; color: var(--ink-soft); }
+.crumbs a { color: var(--ink-soft); }
+.term-static { background: var(--term-bg); border-radius: var(--radius-card); margin-top: 12px; }
+.related, .guide-list { padding-left: 0; list-style: none; }
+.related li { margin-top: 8px; }
+.guide-list li { border-bottom: 1px solid var(--line); padding: 16px 0; }
+.guide-list a { font-size: 18px; }
+.guide-list p { color: var(--ink-soft); font-size: 15px; margin-top: 4px; }
+.detectors td a { color: inherit; text-decoration-color: var(--line-strong); }
+.detectors td a:hover { color: var(--leaf); }

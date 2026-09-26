@@ -1,15 +1,16 @@
 # Broza — safe disk cleanup CLI for macOS
 
 Broza is an open-source command-line tool that analyzes your Mac's APFS storage, explains what
-"System Data" and purgeable space really are, and frees disk space with a dry-run first and a
-reversible quarantine. Built in Rust for Apple Silicon.
+"System Data" and purgeable space really are, and frees disk space (Xcode DerivedData,
+`node_modules`, Docker, caches, snapshots) with a dry-run first and a reversible quarantine.
+Built in Rust for Apple Silicon.
 
 [![CI](https://github.com/borlafu/broza/actions/workflows/ci.yml/badge.svg)](https://github.com/borlafu/broza/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/borlafu/broza)](https://github.com/borlafu/broza/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-support-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/borlafu)
 
-Website: [borlafu.github.io/broza](https://borlafu.github.io/broza/)
+Website: [borlafu.github.io/broza](https://borlafu.github.io/broza/) · [Mac disk space guides](https://borlafu.github.io/broza/explain/)
 
 ## Why Broza
 

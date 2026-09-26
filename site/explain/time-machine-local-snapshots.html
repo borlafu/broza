@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Time Machine local snapshots eating disk space | Broza</title>
+<meta name="description" content="Local snapshots are why a Mac shows gigabytes of purgeable space. What they are, why they must go through tmutil, and how to list and remove them safely.">
+<link rel="canonical" href="https://borlafu.github.io/broza/explain/time-machine-local-snapshots.html">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#fcf8f0">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Broza">
+<meta property="og:title" content="Time Machine local snapshots eating disk space">
+<meta property="og:description" content="Local snapshots are why a Mac shows gigabytes of purgeable space. What they are, why they must go through tmutil, and how to list and remove them safely.">
+<meta property="og:url" content="https://borlafu.github.io/broza/explain/time-machine-local-snapshots.html">
+<meta property="og:image" content="https://borlafu.github.io/broza/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://borlafu.github.io/broza/assets/og.png">
+<script type="application/ld+json">
+[
+ {
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Time Machine local snapshots eating disk space",
+  "description": "Local snapshots are why a Mac shows gigabytes of purgeable space. What they are, why they must go through tmutil, and how to list and remove them safely.",
+  "url": "https://borlafu.github.io/broza/explain/time-machine-local-snapshots.html",
+  "datePublished": "2026-09-26",
+  "dateModified": "2026-09-26",
+  "image": "https://borlafu.github.io/broza/assets/og.png",
+  "inLanguage": "en",
+  "author": {
+   "@type": "Person",
+   "name": "Borja Lafuente",
+   "url": "https://github.com/borlafu"
+  },
+  "publisher": {
+   "@type": "Organization",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  },
+  "about": {
+   "@type": "SoftwareApplication",
+   "name": "Broza",
+   "url": "https://borlafu.github.io/broza/"
+  }
+ },
+ {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+   {
+    "@type": "ListItem",
+    "position": 1,
+    "name": "Broza",
+    "item": "https://borlafu.github.io/broza/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 2,
+    "name": "Guides",
+    "item": "https://borlafu.github.io/broza/explain/"
+   },
+   {
+    "@type": "ListItem",
+    "position": 3,
+    "name": "Time Machine local snapshots eating disk space",
+    "item": "https://borlafu.github.io/broza/explain/time-machine-local-snapshots.html"
+   }
+  ]
+ }
+]
+</script>
+<link rel="stylesheet" href="../styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="../">
+      <svg width="20" height="20" viewBox="-16 -56 32 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="color:var(--leaf)" aria-hidden="true"><path d="M0 0 C14 -16 14 -36 0 -52 C-14 -36 -14 -16 0 0 Z"/><path d="M0 -2 L0 -46"/></svg>
+      broza
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#quick-start">quick start</a>
+      <a href="../#features">features</a>
+      <a href="./">guides</a>
+      <a class="repo" href="https://github.com/borlafu/broza">github</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="article wrap">
+<nav class="crumbs" aria-label="Breadcrumb"><a href="../">Broza</a> <span aria-hidden="true">›</span> <a href="./">Guides</a></nav>
+<h1>Time Machine local snapshots eating disk space</h1>
+<p class="article-meta"><span class="risk risk-review">REVIEW</span> <code>snapshots</code></p>
+<p class="article-lede">APFS local snapshots are copy-on-write images made by Time Machine and by system updates. They can take tens of gigabytes and must be managed with <code>tmutil</code>, never by deleting files by hand. Broza uses <code>tmutil</code> for this and never touches update snapshots.</p>
+<h2>What it is</h2>
+<p>Point-in-time images of a volume kept on the volume itself. Time Machine takes one every hour when it cannot reach its backup disk, and macOS takes one before it installs an update.</p>
+<h2>What it is for</h2>
+<p>They are what "enter Time Machine" browses when the backup disk is not attached, and what lets a failed update roll back. They are also why a Mac reports gigabytes of "purgeable" space: macOS deletes snapshots itself when the disk fills.</p>
+<h2>Is it safe to delete?</h2>
+<p>The Time Machine ones, yes, and only through <code>tmutil</code>, which is what Broza uses. macOS reports no size for a snapshot, so Broza lists them by name and never claims a number it cannot measure. Update snapshots (com.apple.os.update-*) are never proposed: a pending update needs them.</p>
+<h2>How Broza removes them</h2><p>Yes, through <code>tmutil</code>, and only after you confirm. macOS does not report per-snapshot sizes, so Broza lists them without a size estimate. Update snapshots are never proposed.</p><p>Deleting a snapshot cannot be undone, so Broza shows a detailed summary flagged irreversible and asks for an explicit confirmation before it runs <code>tmutil</code>.</p>
+<h2>Check it on your Mac</h2>
+<p>Broza is a free, open-source command-line tool. Every command below is read-only except <code>clean</code>, and <code>clean</code> is a dry run until you add <code>--apply</code>.</p>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza explain snapshots</code><button class="copy-mini" type="button" data-copy-text="broza explain snapshots" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza suggest --category snapshots</code><button class="copy-mini" type="button" data-copy-text="broza suggest --category snapshots" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<div class="cmdline"><code><span class="sh" aria-hidden="true">$</span> broza clean --category snapshots</code><button class="copy-mini" type="button" data-copy-text="broza clean --category snapshots" aria-label="Copy the command"><span aria-hidden="true">copy</span></button></div>
+<p class="article-install">Not installed yet? <a href="../#quick-start">Install Broza</a> with Homebrew, the installer script, or Cargo.</p>
+<h2>Related guides</h2>
+<ul class="related">
+<li><a href="purgeable-space.html">Purgeable space on Mac: why &quot;available&quot; is not free</a></li>
+<li><a href="system-data.html">What is &quot;System Data&quot; on a Mac, and how to shrink it</a></li>
+<li><a href="iphone-backups.html">Old iPhone backups on your Mac: find and remove them</a></li>
+</ul>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p>MIT licensed · <em>broza</em> is Spanish for brushwood or useless clutter. Pronounced BRO-zah.</p>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="./">Guides</a></li>
+      <li><a href="https://github.com/borlafu/broza">Source</a></li>
+      <li><a href="https://github.com/borlafu/broza/releases/latest">Releases</a></li>
+    </ul>
+  </div>
+</footer>
+<script src="../ui.js" defer></script>
+</body>
+</html>

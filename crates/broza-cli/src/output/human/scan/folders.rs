@@ -3,7 +3,8 @@
 //! Two shapes, one per volume: the default "largest consumers" list, and the
 //! `--tree` view. Paths under the home directory are shortened to `~/…`, and a
 //! directory is marked as such so a 300 GB `DerivedData` is not mistaken for
-//! one file.
+//! one file. `scan -i` numbers the directories, across volumes in print order,
+//! so the user can open one by its number.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -20,33 +21,98 @@ const TREE_INDENT: &str = "   ";
 const DIRECTORY_MARK: &str = "/";
 /// What an empty walk says instead of a heading with nothing under it.
 const NOTHING_LISTED: &str = "  (nothing at or above --min-size)";
+/// Width of the number column of a numbered list.
+const NUMBER_WIDTH: usize = 4;
+/// Characters a path may hold and still be pasted into a shell unquoted.
+const SHELL_SAFE: &str = "/._-~+,:@%";
 
 /// The consumers lists, one heading per walked volume.
 pub fn render_largest(largest: &[LargestItem], trees: &[VolumeTree], home: Option<&Path>) -> String {
-    trees
-        .iter()
-        .map(|volume| {
-            let items: Vec<&LargestItem> =
-                largest.iter().filter(|item| item.volume_id == volume.volume_id).collect();
-            render_volume_largest(&volume.name, &items, home)
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    render_lists(largest, trees, home, false)
 }
 
-/// `Largest consumers on <volume>:` and its rows, biggest first.
-fn render_volume_largest(name: &str, items: &[&LargestItem], home: Option<&Path>) -> String {
-    let mut text = format!("Largest consumers on {name}:");
+/// [`render_largest`] with every directory numbered, for `scan -i`; the
+/// numbers index [`browsable`].
+pub fn render_largest_numbered(largest: &[LargestItem], trees: &[VolumeTree], home: Option<&Path>) -> String {
+    render_lists(largest, trees, home, true)
+}
+
+/// The directories of the consumers lists, in the order they are printed.
+pub fn browsable<'a>(largest: &'a [LargestItem], trees: &[VolumeTree]) -> Vec<&'a LargestItem> {
+    trees
+        .iter()
+        .flat_map(|volume| {
+            largest
+                .iter()
+                .filter(move |item| item.volume_id == volume.volume_id && item.kind == ItemKind::Directory)
+        })
+        .collect()
+}
+
+/// The line under the consumers list that says how to look inside one.
+pub fn drill_down_hint(largest: &[LargestItem], trees: &[VolumeTree], home: Option<&Path>) -> Option<String> {
+    let first = browsable(largest, trees).into_iter().next()?;
+    Some(format!(
+        "Look inside one: broza scan {}   ·   browse them all: broza scan -i",
+        shell_word(&first.path, home)
+    ))
+}
+
+/// `path` as one shell word: `~/…` when it needs no quoting, else quoted in full.
+fn shell_word(path: &Path, home: Option<&Path>) -> String {
+    let short = abbreviate(path, home);
+    if short.chars().all(|c| c.is_ascii_alphanumeric() || SHELL_SAFE.contains(c)) {
+        return short;
+    }
+    format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+}
+
+fn render_lists(
+    largest: &[LargestItem],
+    trees: &[VolumeTree],
+    home: Option<&Path>,
+    numbered: bool,
+) -> String {
+    let mut next = 1;
+    let mut lists = Vec::new();
+    for volume in trees {
+        let items: Vec<&LargestItem> =
+            largest.iter().filter(|item| item.volume_id == volume.volume_id).collect();
+        let heading = format!("Largest consumers on {}:", volume.name);
+        lists.push(render_listing(&heading, &items, home, numbered.then_some(&mut next)));
+    }
+    lists.join("\n\n")
+}
+
+/// `heading` and its rows, biggest first; with `numbers`, each directory gets
+/// the next number.
+pub fn render_listing(
+    heading: &str,
+    items: &[&LargestItem],
+    home: Option<&Path>,
+    mut numbers: Option<&mut usize>,
+) -> String {
+    let mut text = heading.to_owned();
     if items.is_empty() {
         let _ignored = write!(text, "\n{NOTHING_LISTED}");
         return text;
     }
     let width = items.iter().map(|item| format_bytes(item.size_bytes).len()).max().unwrap_or(0);
     for item in items {
-        let mark = if item.kind == ItemKind::Directory { DIRECTORY_MARK } else { "" };
+        let is_dir = item.kind == ItemKind::Directory;
+        let number = match numbers.as_deref_mut() {
+            Some(next) if is_dir => {
+                let label = format!("{next:>NUMBER_WIDTH$}");
+                *next += 1;
+                label
+            }
+            Some(_) => " ".repeat(NUMBER_WIDTH),
+            None => String::new(),
+        };
+        let mark = if is_dir { DIRECTORY_MARK } else { "" };
         let _ignored = write!(
             text,
-            "\n  {:>width$}  {}{mark}",
+            "\n{number}  {:>width$}  {}{mark}",
             format_bytes(item.size_bytes),
             abbreviate(&item.path, home)
         );
@@ -153,6 +219,47 @@ mod tests {
         assert_eq!(
             text,
             "Largest consumers on Macintosh HD - Data:\n  312.4 GB  ~/Library/Developer/\n   61.7 GB  ~/Movies/film.mov"
+        );
+    }
+
+    #[test]
+    fn numbered_lists_count_directories_across_volumes_and_skip_files() {
+        let largest = vec![
+            item("/Users/dana/Library", 300, ItemKind::Directory),
+            item("/Users/dana/film.mov", 200, ItemKind::File),
+            item("/Users/dana/code", 100, ItemKind::Directory),
+        ];
+        let trees = vec![volume(TreeView { root: leaf("/", "/", 0, 100.0) })];
+
+        let text = render_largest_numbered(&largest, &trees, Some(Path::new("/Users/dana")));
+
+        assert_eq!(
+            text,
+            "Largest consumers on Macintosh HD - Data:\n   1  300 B  ~/Library/\n      200 B  ~/film.mov\n   2  100 B  ~/code/"
+        );
+        let dirs: Vec<&Path> = browsable(&largest, &trees).iter().map(|i| i.path.as_path()).collect();
+        assert_eq!(dirs, vec![Path::new("/Users/dana/Library"), Path::new("/Users/dana/code")]);
+    }
+
+    #[test]
+    fn the_hint_quotes_a_path_only_when_a_shell_needs_it() {
+        let trees = vec![volume(TreeView { root: leaf("/", "/", 0, 100.0) })];
+        let plain = vec![item("/Users/dana/Library/Caches", 1, ItemKind::Directory)];
+        let spaced = vec![item("/Users/dana/Library/Application Support", 1, ItemKind::Directory)];
+        let home = Some(Path::new("/Users/dana"));
+
+        assert_eq!(
+            drill_down_hint(&plain, &trees, home).unwrap(),
+            "Look inside one: broza scan ~/Library/Caches   ·   browse them all: broza scan -i"
+        );
+        assert!(
+            drill_down_hint(&spaced, &trees, home)
+                .unwrap()
+                .contains("broza scan '/Users/dana/Library/Application Support'"),
+        );
+        assert!(
+            drill_down_hint(&[item("/f", 1, ItemKind::File)], &trees, home).is_none(),
+            "files cannot be opened"
         );
     }
 

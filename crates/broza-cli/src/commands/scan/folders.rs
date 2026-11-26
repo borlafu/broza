@@ -7,9 +7,8 @@
 //! as a warning, never as a failure: a partial map is still a map.
 
 use std::collections::BTreeSet;
-use std::io::Write as _;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use broza::BrozaError;
 use broza::model::{Disk, LargestItem, VolumeId, Warning};
@@ -23,10 +22,9 @@ use broza::units::ByteSize;
 
 use crate::args::ScanArgs;
 use crate::args::scan::SCAN_DEFAULT_MIN_SIZE;
-use crate::output::format_bytes;
 
 /// Where the scan cache lives, under the home directory (`docs/cli-spec.md` §7).
-const CACHE_DIR: &str = ".cache/broza";
+pub(super) const CACHE_DIR: &str = ".cache/broza";
 
 /// What the folder scan needs from the run beyond the `scan` flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,14 +82,19 @@ pub fn walk(
 ) -> Result<FolderResults, BrozaError> {
     let request = request_for(args, settings)?;
     let selected = mounts_of(disks, mounts);
-    let progress = settings.show_progress.then_some(&print_progress as &(dyn Fn(ScanProgress) + Sync));
+    if settings.show_progress {
+        super::progress::announce_first_scan(settings.home.as_deref(), settings.no_cache, ports);
+    }
+    let started = Instant::now();
+    let show = move |progress: ScanProgress| super::progress::print(progress, started.elapsed());
+    let progress = settings.show_progress.then_some(&show as &(dyn Fn(ScanProgress) + Sync));
     let scans = if args.paths.is_empty() {
         scan_all(&request, ports, &selected, progress)
     } else {
         scan_paths(&args.paths, &request, ports, &selected, progress)
     };
     if settings.show_progress {
-        clear_progress();
+        super::progress::clear();
     }
     let scans = refused_named_root(scans?, !args.paths.is_empty())?;
     Ok(results_of(scans, &selected, request.top))
@@ -129,6 +132,7 @@ pub fn request_for_home(settings: &FolderSettings) -> Result<ScanRequest, BrozaE
         volume: None,
         no_external: false,
         tree: false,
+        interactive: false,
     };
     let request = request_for(&args, settings)?;
     // The detectors read directory nodes and the file report, never the
@@ -208,25 +212,6 @@ fn volume_name(mounts: &MountTable, id: &VolumeId) -> String {
         .map_or_else(|| id.to_string(), |entry| entry.volume.name.clone())
 }
 
-/// One progress line on stderr, rewritten in place.
-fn print_progress(progress: ScanProgress) {
-    let mut stderr = std::io::stderr();
-    let _ignored = write!(
-        stderr,
-        "\r\x1b[2KScanning… {} entries, {} seen",
-        progress.entries_scanned,
-        format_bytes(progress.bytes_scanned)
-    );
-    let _ignored = stderr.flush();
-}
-
-/// Wipe the progress line before the report is printed.
-fn clear_progress() {
-    let mut stderr = std::io::stderr();
-    let _ignored = write!(stderr, "\r\x1b[2K");
-    let _ignored = stderr.flush();
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -247,6 +232,7 @@ mod tests {
             volume: None,
             no_external: false,
             tree: false,
+            interactive: false,
         }
     }
 

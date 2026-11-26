@@ -54,6 +54,9 @@ pub struct Folders<'a> {
     pub trees: &'a [VolumeTree],
     /// `--tree`: draw the trees instead of the consumers list.
     pub tree_view: bool,
+    /// `-i`: number the directories of the consumers list, and leave out the
+    /// hint that points to `-i`.
+    pub numbered: bool,
     /// The walk measured more than the volume holds: say the sizes are upper bounds.
     pub upper_bounds: bool,
     /// Home directory, so paths under it print as `~/…`.
@@ -79,8 +82,14 @@ pub fn render_with_folders(report: &ScanReport, folders: &Folders<'_>, policy: C
     }
     let below = if folders.tree_view {
         folders::render_trees(folders.trees, folders.home)
+    } else if folders.numbered {
+        folders::render_largest_numbered(&report.largest_items, folders.trees, folders.home)
     } else {
-        folders::render_largest(&report.largest_items, folders.trees, folders.home)
+        let list = folders::render_largest(&report.largest_items, folders.trees, folders.home);
+        match folders::drill_down_hint(&report.largest_items, folders.trees, folders.home) {
+            Some(hint) => format!("{list}\n\n{hint}"),
+            None => list,
+        }
     };
     if folders.upper_bounds {
         return format!("{map}\n\n{UPPER_BOUNDS_NOTE}\n\n{below}");

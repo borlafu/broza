@@ -12,8 +12,14 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
   steps (including quitting and reopening the terminal) and shows where the quarantine store
   and the scan cache live. `--open` opens System Settings at the right pane. Read-only, exit `0`
   (ADR 0011).
+- `broza scan -i` browses the largest consumers: open a folder by its number, `..` to go back,
+  `q` to quit. Each folder is walked from the warm cache. The normal list ends with a line
+  saying how to look inside one.
 
 ### Changed
+
+- The scan progress line shows elapsed seconds, and a first scan says it is building the cache
+  that makes later scans faster.
 
 - `broza scan`: the volumes table is its container's last branch, indented under it, and a
   gutter line separates two containers; it no longer reads as part of what follows.

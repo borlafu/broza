@@ -9,11 +9,15 @@
 //! is a warning, because a partial map of the machine is still worth printing
 //! (`AGENTS.md` §6, `docs/cli-spec.md` §6).
 
+pub mod browse;
 pub mod folders;
+mod progress;
 mod select;
 
 use broza::model::{Envelope, ErrorEntry, Host, ScanReport, VolumeRole, Warning};
 use broza::ports::Ports;
+use std::io::Write as _;
+
 use broza::{BrozaError, ExitCode};
 use jiff::Timestamp;
 
@@ -58,7 +62,14 @@ pub struct ScanContext<'a> {
     pub format: OutputFormat,
     /// Home, cache and progress settings of the folder walk.
     pub folders: FolderSettings,
+    /// stdin, stdout and stderr are terminals, no `CI` and no `--output`:
+    /// what `scan -i` needs to ask anything.
+    pub interactive_terminal: bool,
 }
+
+/// Said when `scan -i` cannot ask anything.
+const NOT_INTERACTIVE: &str = "`scan -i` needs an interactive terminal and the human output: it \
+cannot be combined with --json, --csv or --output, nor run without a terminal or in CI";
 
 /// Enumerate, narrow, walk and render.
 ///
@@ -68,6 +79,10 @@ pub struct ScanContext<'a> {
 /// [`BrozaError::TargetNotFound`] (exit `4`) when it names nothing, and
 /// whatever the enumerator returns when it cannot run at all.
 pub fn run(context: &ScanContext<'_>) -> Result<Outcome, BrozaError> {
+    let interactive = context.args.interactive;
+    if interactive && !(context.interactive_terminal && context.format == OutputFormat::Human) {
+        return Err(BrozaError::Usage(NOT_INTERACTIVE.to_owned()));
+    }
     let enumeration = context.ports.disks.enumerate()?;
     let mount = mount_table(context.ports, &enumeration.disks)?;
     let disks = select::select(enumeration.disks, context.args)?;
@@ -78,6 +93,7 @@ pub fn run(context: &ScanContext<'_>) -> Result<Outcome, BrozaError> {
         trees: walked.trees,
         upper_bounds: warnings.iter().any(|w| w.code == broza::scan::OVERCOUNT_CODE),
         tree_view: context.args.tree,
+        numbered: interactive,
         home: context.folders.home.clone(),
         host: context.host.clone(),
         generated_at: context.generated_at,
@@ -86,7 +102,47 @@ pub fn run(context: &ScanContext<'_>) -> Result<Outcome, BrozaError> {
         policy: context.policy,
     };
     let code = output.exit_code();
-    Ok(Outcome::ok(output.render(context.format)?).with_warnings(warnings).with_code(code))
+    let rendered = output.render(context.format)?;
+    if !interactive {
+        return Ok(Outcome::ok(rendered).with_warnings(warnings).with_code(code));
+    }
+    let browsed = browse_from(context, &output, &mount.table, &rendered);
+    Ok(Outcome::ok(String::new()).with_warnings([warnings, browsed].concat()).with_code(code))
+}
+
+/// `scan -i`: print the first screen, then let the user open folders by number.
+fn browse_from(
+    context: &ScanContext<'_>,
+    output: &ScanOutput,
+    mounts: &broza::scan::MountTable,
+    first_screen: &str,
+) -> Vec<Warning> {
+    let mut stdout = std::io::stdout();
+    // Best effort, like every terminal write: a closed stdout ends the loop at
+    // the next read instead of failing the command.
+    let _ignored = writeln!(stdout, "{first_screen}\n");
+    let first = human_scan::folders::browsable(&output.data.largest_items, &output.trees)
+        .into_iter()
+        .cloned()
+        .collect();
+    let first_listing = human_scan::folders::render_largest_numbered(
+        &output.data.largest_items,
+        &output.trees,
+        context.folders.home.as_deref(),
+    );
+    let mut walk_into = |path: &std::path::Path| {
+        let args = ScanArgs { paths: vec![path.to_path_buf()], interactive: false, ..context.args.clone() };
+        folders::walk(&output.data.disks, mounts, &args, &context.folders, context.ports)
+            .map(|walked| (walked.largest, walked.warnings))
+    };
+    browse::browse(
+        first,
+        first_listing,
+        &mut browse::Terminal,
+        &mut stdout,
+        &mut walk_into,
+        context.folders.home.as_deref(),
+    )
 }
 
 /// A rendered `scan`, in any of the three formats.
@@ -100,6 +156,8 @@ pub struct ScanOutput {
     pub upper_bounds: bool,
     /// `--tree`: draw the trees instead of the consumers list.
     pub tree_view: bool,
+    /// `-i`: number the directories of the consumers list.
+    pub numbered: bool,
     /// Home directory, so paths under it print as `~/…`.
     pub home: Option<std::path::PathBuf>,
     /// `host` block of the envelope.
@@ -139,6 +197,7 @@ impl Renderer for ScanOutput {
             &human_scan::Folders {
                 trees: &self.trees,
                 tree_view: self.tree_view,
+                numbered: self.numbered,
                 upper_bounds: self.upper_bounds,
                 home: self.home.as_deref(),
             },

@@ -153,6 +153,7 @@ broza scan [PATH...] [OPTIONS]
 | `--volume <id>` | string | all | Restrict the scan to one volume (device id, name or mount point). A disk or container identifier selects that whole level. Blank → exit `2`; names nothing → exit `4`. |
 | `--no-external` | bool | `false` | Exclude mounted external disks. By default externals are included. Applied before `--volume`, so a volume on an excluded disk is then "not found". |
 | `--tree` | bool | `false` | Force the hierarchical tree view. |
+| `-i`, `--interactive` | bool | `false` | Browse the largest consumers (see below). Needs an interactive terminal (stdin, stdout and stderr TTYs, no `CI`) and the human format: with `--json`, `--csv`, `--output` or without a terminal it is a usage error (exit `2`). Conflicts with `--tree`. |
 
 Supports `--json` and `--csv`. The CSV output is the **volume table**, one row per volume, with the header:
 
@@ -184,6 +185,12 @@ Largest consumers on Macintosh HD - Data:
    84.1 GB  ~/Library/Caches/
    61.7 GB  ~/Documents/
 ```
+
+Below the consumers list, when it holds a directory, one line says how to look inside: `Look inside one: broza scan <largest directory>   ·   browse them all: broza scan -i` (the path as `~/…`, or quoted in full when a shell would need it).
+
+**Interactive browsing (`-i`).** The report is printed with every directory of the consumers lists numbered, across volumes in print order. Then stderr asks `Open a number, .. to go back, q to quit:`. A number walks that folder — warm from the cache — and prints `Largest consumers in <folder>:` with its own directories numbered; `..` returns to the previous screen and its numbers; `q` or end of input quits. A wrong answer or a folder that cannot be walked is said on stderr and the loop goes on. Warnings from every walk are reported once, after quitting. Nothing is written.
+
+While walking, stderr shows `Scanning… <entries> entries, <bytes> seen  ·  <seconds> s`. Before a scan that has no cache yet, one line says it is the first and that later scans are faster.
 
 A disk macOS does not report as internal is marked `(external)` after its size; a partition
 carrying `HFS+` is announced as `HFS+ volume` rather than as an APFS container. A volume row
@@ -1222,6 +1229,7 @@ Unreleased: everything below ships with the next minor version.
 - §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size and the `broza explain <category> <finding>` that prints their steps; the headline line that sums them is renamed accordingly. Totals are unchanged.
 - §3.2, §4.7: `broza explain <category> <finding>` prints the steps of one finding Broza only reports, without scanning; the JSON carries `finding` and `instructions`.
 - §4.1, §4.7: `schema_version` `1.2`. `explanation.next_steps`, an optional array present for categories only, carries what to do next; `broza explain <category>` prints it as a numbered `What to do next:` section.
+- §3.1: `scan -i` browses the largest consumers by number; the human consumers list ends with a line saying how to look inside one; the progress line shows elapsed seconds, and a first scan says it is building the cache.
 - §3.9, §4.8 (new): `broza doctor` checks Full Disk Access by listing a protected folder under the home, names the terminal application to grant it to, shows where the quarantine store and the scan cache live, and with `--open` opens the right System Settings pane. Read-only, exit `0`. [ADR 0011](adr/0011-doctor-and-full-disk-access-check.md).
 - §6: the Full Disk Access hint is worded by that check, so a Mac with access on is no longer told to grant it because root-owned system folders were refused.
 - §6: warnings on stderr form a block set apart from the report by a blank line, each wrapped under a `warning:` label with a blank line between two. The summary of many refused paths states the fact with three examples, and the Full Disk Access hint now follows it as it follows a single refusal.

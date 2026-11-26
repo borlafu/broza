@@ -86,6 +86,9 @@ pub fn dispatch(
             policy: inputs.policy,
             format: inputs.format,
             folders: folders.clone(),
+            interactive_terminal: inputs.runtime.is_interactive()
+                && inputs.runtime.stdout_is_tty
+                && cli.global.output.is_none(),
         }),
         Command::Suggest(args) => commands::suggest::run(&SuggestContext {
             ports: &inputs.ports,

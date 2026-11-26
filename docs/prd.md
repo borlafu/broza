@@ -243,7 +243,7 @@ Detector notes (normative for v1):
 | ID | Attribute | Requirement |
 |---|---|---|
 | **RNF-01** | Data safety | Dry-run, quarantine, confirmation proportional to risk, untouchable system volumes. |
-| **RNF-02** | Performance | Warm `scan` < 1 s; cold < 10 s; `suggest` < 15 s; first visible result < 500 ms. |
+| **RNF-02** | Performance | Cold `scan` walks ≥ 100 000 entries/s (ADR 0006: a rate, because wall-clock time depends on how many files the disk holds); a warm `scan` re-walks only what changed; `suggest` < 15 s; first visible result < 500 ms. |
 | **RNF-03** | Privacy | No telemetry by default. If it ever exists: opt-in, anonymous, documented. **Zero exfiltration of file names or content.** |
 | **RNF-04** | Compatibility | The two latest macOS major versions (26 and 27 at the date of this document); Apple Silicon only. Policy: support always follows the "two latest majors" window. |
 | **RNF-05** | Supply chain | Signed and notarized binaries; reproducible build; SBOM. |

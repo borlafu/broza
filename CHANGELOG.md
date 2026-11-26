@@ -4,6 +4,26 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
+## [Unreleased]
+
+### Changed
+
+- `broza scan`: the volumes table is its container's last branch, indented under it, and a
+  gutter line separates two containers; it no longer reads as part of what follows.
+- Warnings on stderr form a block after a blank line, each wrapped under a `warning:` label with
+  a blank line between two. The summary of many unreadable locations states the fact with three
+  examples.
+- `broza suggest`: space Broza only reports (Docker's disk image, cloud-synced files,
+  applications with no record of use) has its own "Reclaimable another way" group with its size
+  and the steps that free it, instead of `0 B` rows inside the risk groups.
+- `broza explain <category>` ends with a numbered "What to do next" section; the JSON carries it
+  as `explanation.next_steps` (schema 1.2).
+
+### Fixed
+
+- The Full Disk Access hint was never printed when more than five locations were refused,
+  because the summary that replaces them did not trigger it.
+
 ## [1.1.0] — 2026-09-23
 
 Honest sizes for cloned and very deep trees, and a support message that is seen.

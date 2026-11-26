@@ -147,10 +147,19 @@ impl Command {
     /// Whether the command reads or changes the machine, and so must refuse
     /// an unsupported one (exit `8`). `about`, `config`, `doctor`, the shell
     /// helpers and `explain <category>` describe Broza itself and work anywhere.
+    /// `restore` and `quarantine list` work anywhere too: they only look at or
+    /// undo what Broza already did, and a Mac that dropped out of the supported
+    /// window must still be able to take its files back.
     pub fn needs_supported_host(&self) -> bool {
         match self {
-            Self::About | Self::Config(_) | Self::Doctor(_) | Self::Completions { .. } | Self::Man => false,
+            Self::About
+            | Self::Config(_)
+            | Self::Doctor(_)
+            | Self::Completions { .. }
+            | Self::Man
+            | Self::Restore(_) => false,
             Self::Explain(args) => args.target.parse::<broza::model::Category>().is_err(),
+            Self::Quarantine(args) => !matches!(args.command, QuarantineCommand::List),
             _ => true,
         }
     }

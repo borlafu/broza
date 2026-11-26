@@ -17,6 +17,8 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
   saying how to look inside one.
 - `broza completions <shell>` prints a completion script for bash, zsh, fish, elvish or
   PowerShell; the hidden `broza man` prints the manual page.
+- `broza explain <category> <finding>` also takes the full id `suggest --json` prints, such
+  as `cloud-synced.icloud`.
 
 ### Changed
 
@@ -41,6 +43,8 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 
 ### Fixed
 
+- `restore` and `quarantine list` run on an unsupported Mac too, so quarantined files can
+  always be taken back after an upgrade path drops a machine out of the supported window.
 - Exit code `8` was defined but never raised: Broza now refuses an Intel build or a macOS older
   than 26 before reading anything, instead of running untested. `about`, `config`, `doctor` and
   `explain <category>` still work there. Programs Broza runs no longer inherit

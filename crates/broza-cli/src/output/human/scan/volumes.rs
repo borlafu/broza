@@ -162,7 +162,10 @@ mod tests {
             text.lines().skip(1).filter_map(|line| line.trim_start().chars().next()).collect();
         assert_eq!(prefixes, vec!['├', '├', '└']);
         assert!(text.starts_with("   └─ Volumes"), "{text}");
-        assert!(text.lines().skip(1).all(|line| line.starts_with("      ")), "rows sit under the heading: {text}");
+        assert!(
+            text.lines().skip(1).all(|line| line.starts_with("      ")),
+            "rows sit under the heading: {text}"
+        );
     }
 
     #[test]

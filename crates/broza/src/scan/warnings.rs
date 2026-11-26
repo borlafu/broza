@@ -48,8 +48,10 @@ pub(super) fn cache_key_warning(request: &ScanRequest, volume: &Volume) -> Optio
     Some(Diagnostic { code: cache::BSD_ID_KEY_CODE.to_owned(), message, path: volume.mount_point.clone() })
 }
 
-/// How many refused paths a collapsed warning still names.
-const PERMISSION_EXAMPLES: usize = 5;
+/// Above this many refused paths the walk reports one summary instead.
+const PERMISSION_COLLAPSE_ABOVE: usize = 5;
+/// How many refused paths the summary still names.
+const PERMISSION_EXAMPLES: usize = 3;
 /// Stable code of the one warning that stands in for many refused paths.
 pub const PERMISSION_SUMMARY_CODE: &str = "permission_denied_summary";
 
@@ -57,10 +59,12 @@ pub const PERMISSION_SUMMARY_CODE: &str = "permission_denied_summary";
 ///
 /// A Mac without Full Disk Access refuses hundreds of paths in one scan; one
 /// line per path buries every other warning. The summary keeps the first few
-/// paths as examples; `verbose` keeps them all.
+/// paths as examples; `verbose` keeps them all. The message states the fact
+/// only: what to do about it depends on whether Full Disk Access is the cause,
+/// which the front end decides.
 pub(super) fn collapse_permission_warnings(warnings: Vec<Diagnostic>, verbose: bool) -> Vec<Diagnostic> {
     let refused = warnings.iter().filter(|w| w.code == walker::PERMISSION_DENIED_CODE).count();
-    if verbose || refused <= PERMISSION_EXAMPLES {
+    if verbose || refused <= PERMISSION_COLLAPSE_ABOVE {
         return warnings;
     }
     let examples: Vec<String> = warnings
@@ -72,8 +76,8 @@ pub(super) fn collapse_permission_warnings(warnings: Vec<Diagnostic>, verbose: b
     let summary = Diagnostic {
         code: PERMISSION_SUMMARY_CODE.to_owned(),
         message: format!(
-            "{refused} locations could not be read (for example {}); their sizes are missing from \
-             the totals. Grant Full Disk Access to include them, or pass -v to list every path.",
+            "{refused} locations could not be read, so their sizes are missing from the totals. \
+             Examples: {}. Pass -v to list every path.",
             examples.join(", ")
         ),
         path: None,
@@ -133,5 +137,39 @@ mod tests {
 
         assert_eq!(warned.map(|w| w.code), Some(FILE_REPORT_TRUNCATED_CODE.to_owned()));
         assert!(silent.is_none() && complete.is_none());
+    }
+
+    fn refusal(index: usize) -> Diagnostic {
+        Diagnostic {
+            code: walker::PERMISSION_DENIED_CODE.to_owned(),
+            message: format!("refused {index}"),
+            path: Some(std::path::PathBuf::from(format!("/locked/{index}"))),
+        }
+    }
+
+    #[test]
+    fn many_refusals_become_one_summary_that_states_the_fact_and_three_examples() {
+        let other = Diagnostic { code: "other".to_owned(), message: "kept".to_owned(), path: None };
+        let warnings: Vec<Diagnostic> = (0..421).map(refusal).chain(std::iter::once(other)).collect();
+
+        let collapsed = collapse_permission_warnings(warnings, false);
+
+        assert_eq!(collapsed.len(), 2, "{collapsed:?}");
+        assert_eq!(collapsed[0].code, PERMISSION_SUMMARY_CODE);
+        assert_eq!(
+            collapsed[0].message,
+            "421 locations could not be read, so their sizes are missing from the totals. Examples: \
+             /locked/0, /locked/1, /locked/2. Pass -v to list every path."
+        );
+        assert_eq!(collapsed[1].code, "other");
+    }
+
+    #[test]
+    fn a_few_refusals_or_verbose_keep_every_path() {
+        let few: Vec<Diagnostic> = (0..PERMISSION_COLLAPSE_ABOVE).map(refusal).collect();
+        let many: Vec<Diagnostic> = (0..50).map(refusal).collect();
+
+        assert_eq!(collapse_permission_warnings(few, false).len(), PERMISSION_COLLAPSE_ABOVE);
+        assert_eq!(collapse_permission_warnings(many, true).len(), 50);
     }
 }

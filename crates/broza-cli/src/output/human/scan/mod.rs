@@ -293,7 +293,10 @@ mod tests {
         assert!(text.contains("   └─ Volumes"), "{text}");
         assert!(text.contains("      ├─ Macintosh HD  "), "{text}");
         assert!(text.lines().any(|line| line.trim_start().starts_with("└─ VM")), "{text}");
-        assert!(!text.lines().any(|line| line.trim().is_empty()), "no blank line inside the container: {text}");
+        assert!(
+            !text.lines().any(|line| line.trim().is_empty()),
+            "no blank line inside the container: {text}"
+        );
     }
 
     #[test]

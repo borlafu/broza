@@ -90,7 +90,8 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
         Inputs { runtime, ports, file, effective, host: report.host, warnings, format, policy },
     )?;
     sink.write(&outcome.rendered)?;
-    report_warnings(&outcome.warnings, &cli.global, format);
+    let stderr_policy = if runtime.stderr_is_tty { policy } else { ColorPolicy::Never };
+    report_warnings(&outcome.warnings, &cli.global, format, stderr_policy);
     donate_display::maybe_show(
         &donate_display::Run {
             outcome: &outcome,

@@ -930,8 +930,8 @@ An item of a session has this shape:
 | `path` | Optional. The target path, made absolute and cleaned of `.` and `..` **lexically** — nothing is followed, and `..` never climbs above `/`. Present only for `kind` `path`. |
 | `filesystem` | Optional. The `type` of the container the volume belongs to (same open enum as §4.2), when Broza could determine it. The human header uses it to say `APFS role:` or `HFS+ role:` instead of assuming APFS. |
 | `explanation` | Always present. Three prose fields: `what_it_is`, `what_it_is_for`, `is_it_safe`. English, one paragraph each; the same text the human output prints under its three headings. Since schema `1.2`, an optional `next_steps` array of strings, present only for `kind` `category`: what to do next, in order — the `broza` commands that review and clean the category, then the manual steps for what Broza only reports (Docker's disk image, applications with no record of use, cloud-synced files). The human output prints it as a numbered `What to do next:` section. |
-| `risk` | Optional. Base risk of the category (§3.3). Present only for `kind` `category`. |
-| `action` | Optional. Default action of the category (§3.3). Present only for `kind` `category`. |
+| `risk` | Optional. Base risk of the category (§3.3), or with `finding` that finding's own risk. Present only for `kind` `category`. |
+| `action` | Optional. Default action of the category (§3.3), or with `finding` always `inform_only`: Broza only reports that finding. Present only for `kind` `category`. |
 | `finding` | Optional, schema `1.2`. The id of the finding asked about with `explain <category> <finding>`, for example `cloud-synced.icloud`. |
 | `instructions` | Optional, schema `1.2`. Present with `finding`: the same `Instructions` object as in §4.3 (`provider`, `summary`, `steps`). |
 

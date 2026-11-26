@@ -151,11 +151,16 @@ impl ExplainReport {
     /// Explain one finding of `category` that Broza only reports: the
     /// category, plus the steps that free its space. `None` for a name that is
     /// not one of [`reported_findings`].
+    ///
+    /// The risk and action are the finding's, not the category's: these
+    /// findings are reported only, whatever the category does with the rest.
     pub fn for_finding(category: Category, name: &str) -> Option<Self> {
-        let instructions = finding_instructions(category, name)?;
+        let (risk, instructions) = finding_instructions(category, name)?;
         Some(Self {
             finding: Some(format!("{}.{name}", category.as_str())),
             instructions: Some(instructions),
+            risk: Some(risk),
+            action: Some(Action::InformOnly),
             ..Self::for_category(category)
         })
     }
@@ -193,15 +198,17 @@ pub fn reported_findings(category: Category) -> Vec<&'static str> {
     }
 }
 
-/// The steps that free the space of finding `<category>.<name>` outside Broza.
-fn finding_instructions(category: Category, name: &str) -> Option<Instructions> {
+/// The risk of finding `<category>.<name>` and the steps that free its space
+/// outside Broza.
+fn finding_instructions(category: Category, name: &str) -> Option<(Risk, Instructions)> {
     match category {
-        Category::CloudSynced => detectors::cloud_synced::instructions_for(name).map(|(_, steps)| steps),
+        Category::CloudSynced => detectors::cloud_synced::instructions_for(name)
+            .map(|(_, steps)| (Category::CloudSynced.base_risk(), steps)),
         Category::BuildCache if name == detectors::build_cache::DOCKER_FINDING => {
-            Some(detectors::build_cache::docker_instructions())
+            Some((detectors::build_cache::DOCKER_RISK, detectors::build_cache::docker_instructions()))
         }
         Category::UnusedApps if name == detectors::unused_apps::UNVERIFIED_FINDING => {
-            Some(detectors::unused_apps::unverified_instructions())
+            Some((detectors::unused_apps::UNVERIFIED_RISK, detectors::unused_apps::unverified_instructions()))
         }
         _ => None,
     }
@@ -356,6 +363,11 @@ mod tests {
             }
         }
         assert!(reported_findings(Category::CloudSynced).contains(&"icloud"));
+        let docker =
+            ExplainReport::for_finding(Category::BuildCache, "docker-raw").unwrap_or_else(|| panic!());
+        let apps = ExplainReport::for_finding(Category::UnusedApps, "unverified").unwrap_or_else(|| panic!());
+        assert_eq!((docker.risk, docker.action), (Some(Risk::Amber), Some(Action::InformOnly)));
+        assert_eq!((apps.risk, apps.action), (Some(Risk::Red), Some(Action::InformOnly)));
         assert!(ExplainReport::for_finding(Category::CloudSynced, "nope").is_none());
         assert!(
             ExplainReport::for_finding(Category::Trash, "home").is_none(),

@@ -224,8 +224,8 @@ deletion.",
 from the cloud too, and from every other device, which is exactly the kind of mistake this tool \
 exists to avoid. Broza reports the size and prints the provider's own instructions for freeing it.",
     next_steps: &[
-        "Broza never deletes these. Run `broza suggest --category cloud-synced` to see the \
-provider's own steps.",
+        "Broza never deletes these. Run `broza explain cloud-synced icloud` (or `dropbox`, \
+`onedrive`, `google-drive`) to see the provider's own steps.",
         "iCloud Drive: System Settings → your name → iCloud → iCloud Drive, then turn on \
 Optimize Mac Storage; or right-click a file in the Finder and choose Remove \
 Download.",

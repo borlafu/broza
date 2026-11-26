@@ -146,7 +146,7 @@ fn docker_raw(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaError
     let Ok(meta) = context.fs.metadata(&path) else { return Ok(None) };
     let builder = start(Category::BuildCache, DOCKER_FINDING, "Docker Desktop disk image")?
         .description("The virtual disk every Docker image, container and volume lives in.")
-        .risk(Risk::Amber)
+        .risk(DOCKER_RISK)
         .action(Action::InformOnly)
         .reasoning("Deleting the file would destroy every container; only Docker can shrink it safely.")
         .instructions(docker_instructions());
@@ -155,6 +155,8 @@ fn docker_raw(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaError
 
 /// Name of the Docker finding: `build-cache.docker-raw`.
 pub(crate) const DOCKER_FINDING: &str = "docker-raw";
+/// Risk of the Docker finding, which Broza only reports.
+pub(crate) const DOCKER_RISK: Risk = Risk::Amber;
 
 /// What frees the Docker disk image: Docker's own tools.
 pub(crate) fn docker_instructions() -> Instructions {

@@ -262,6 +262,8 @@ fn applications(mut paths: Vec<FindingPath>) -> Result<Option<Finding>, BrozaErr
 
 /// Name of the finding Broza only reports: `unused-apps.unverified`.
 pub(crate) const UNVERIFIED_FINDING: &str = "unverified";
+/// Risk of that finding: low confidence, so Broza never acts on it.
+pub(crate) const UNVERIFIED_RISK: Risk = Risk::Red;
 
 /// What to do with an application Spotlight has no record of.
 pub(crate) fn unverified_instructions() -> Instructions {
@@ -275,7 +277,7 @@ pub(crate) fn unverified_instructions() -> Instructions {
 fn unverified_applications(mut paths: Vec<FindingPath>) -> Result<Option<Finding>, BrozaError> {
     paths.sort_by(by_size_then_path);
     let builder = start(Category::UnusedApps, UNVERIFIED_FINDING, "Applications with no record of use")?
-        .risk(Risk::Red)
+        .risk(UNVERIFIED_RISK)
         .action(Action::InformOnly)
         .instructions(unverified_instructions())
         .description(

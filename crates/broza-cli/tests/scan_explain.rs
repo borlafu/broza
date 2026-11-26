@@ -228,21 +228,16 @@ fn suggest_lists_the_green_categories_of_the_recorded_home() {
     assert!(text.contains("build-cache"), "{text}");
     assert!(text.contains("Xcode DerivedData"), "{text}");
     assert!(text.contains("user-cache"), "{text}");
-    assert!(
-        text.contains("Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache"),
-        "{text}"
-    );
+    assert!(text.contains("   build-cache       38.6 GB   Docker Desktop disk image"), "{text}");
+    assert!(text.contains("1. Run `docker system prune`"), "the steps are printed: {text}");
     // Docker's disk image, the two cloud roots and the application Spotlight
     // has no record of.
-    assert!(text.contains("Reported, not reclaimable by Broza: 52.3 GB"), "{text}");
+    assert!(text.contains("Reclaimable another way:        52.3 GB"), "{text}");
+    assert!(text.contains("RECLAIMABLE ANOTHER WAY — 52.3 GB"), "{text}");
     assert!(text.contains("Applications with no record of use"), "{text}");
-    assert!(text.contains("INFO ONLY (red)"), "{text}");
-    assert!(
-        text.contains(
-            "Already backed up in iCloud Drive: 12.5 GB — inform only, see: broza explain cloud-synced"
-        ),
-        "{text}"
-    );
+    assert!(!text.contains("INFO ONLY (red)"), "nothing red is actionable here: {text}");
+    assert!(text.contains("   cloud-synced      12.5 GB   Already backed up in iCloud Drive"), "{text}");
+    assert!(text.contains("More: broza explain cloud-synced"), "{text}");
 }
 
 #[test]

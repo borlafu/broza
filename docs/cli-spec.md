@@ -299,7 +299,7 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 
 ```
 Potentially reclaimable space:  234.3 GB
-Reported, not reclaimable by Broza: 51.1 GB
+Reclaimable another way:        51.1 GB   (Broza only reports these; steps below)
 
 SAFE (green) — 138.2 GB
    build-cache      121.4 GB   Xcode DerivedData (94.2 GB), Python bytecode caches (27.2 GB)
@@ -309,20 +309,26 @@ REVIEW (amber) — 96.1 GB
    duplicates        52.3 GB   Duplicate files (52.3 GB)
    unused-apps       28.7 GB   6 apps not opened in more than 1 year
    old-backups       15.1 GB   2 iPhone backups from 2023
-   build-cache          0 B
-                               Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache
    snapshots           0 B     4 Time Machine local snapshots (size not reported by macOS)
 
-INFO ONLY (red) — 0 B
-   cloud-synced         0 B
-                               Already backed up in iCloud Drive: 12.5 GB — inform only, see: broza explain cloud-synced
+RECLAIMABLE ANOTHER WAY — 51.1 GB   (not by Broza)
+   build-cache       38.6 GB   Docker Desktop disk image
+                               Let Docker reclaim the space it no longer uses.
+                               1. Run `docker system prune` to remove unused images, containers
+                                  and build cache.
+                               2. In Docker Desktop, open Settings → Resources → Advanced and
+                                  lower the disk image size.
+                               More: broza explain build-cache
+   cloud-synced      12.5 GB   Already backed up in iCloud Drive
+                               …
+                               More: broza explain cloud-synced
 
 Next step:
   broza clean --risk green            (dry run, deletes nothing)
   broza clean --risk green --apply    (moves to quarantine; space is freed after expiry or purge)
 ```
 
-Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06). The headline and the per-group totals count only actionable findings; inform-only findings are named on their own line with their size and summed on the "Reported, not reclaimable" line, so the number at the top is space Broza can actually make reclaimable. Within a risk group categories are ordered by their actionable bytes, biggest first. The "Next step" footer names the safest risk level that has something actionable, and is omitted when nothing is.
+Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06). The headline and the risk groups count and list only actionable findings, so the number at the top is space Broza can actually make reclaimable; a risk group with nothing actionable is not printed. Inform-only findings are summed on the "Reclaimable another way" line and listed, biggest first, in a closing group of their own: each with its size, the provider's summary and numbered steps (`instructions`), and the `broza explain <category>` to read more. Within a risk group categories are ordered by their actionable bytes, biggest first. The "Next step" footer names the safest risk level that has something actionable, and is omitted when nothing is.
 
 ---
 

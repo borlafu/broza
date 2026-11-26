@@ -28,3 +28,8 @@ cargo-cyclonedx = true
 # The generated workflow is hand-patched (`steps.cargo-cyclonedx.outputs.paths`,
 # which dist 0.32 writes as `.output.`), so `dist generate` must not overwrite it.
 allow-dirty = ["ci"]
+
+# GitHub retired the macos-14 image dist 0.32 picks by default for this target;
+# build on the same runner the CI workflow uses.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-26"

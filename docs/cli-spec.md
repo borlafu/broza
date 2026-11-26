@@ -535,7 +535,7 @@ broza doctor [--open]
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `--open` | bool | `false` | Ask macOS to open System Settings at Privacy & Security → Full Disk Access (`open x-apple.systempreferences:…`). Changes no setting by itself. If it fails, a `settings_not_opened` warning says so and the command still exits `0`. |
+| `--open` | bool | `false` | Ask macOS to open System Settings at Privacy & Security → Full Disk Access (`/usr/bin/open x-apple.systempreferences:…`). Changes no setting by itself. If it fails, a `settings_not_opened` warning says so and the command still exits `0`. |
 
 **Full Disk Access** is checked by listing the first of `~/Library/Application Support/com.apple.TCC`, `~/Library/Safari`, `~/Library/Mail` and `~/Library/Messages` that exists: listed → `granted`, refused by macOS → `missing`, none exists or another error → `unknown`. The folders are under the home, so a refusal there is the privacy control and not file ownership. Root-owned system folders (`.Spotlight-V100`, `.fseventsd`, `.DocumentRevisions-V100`) are refused with or without Full Disk Access; `doctor` says so when access is granted. See [ADR 0011](adr/0011-doctor-and-full-disk-access-check.md).
 
@@ -1005,7 +1005,7 @@ volume the working directory happens to be on.
 | `full_disk_access.probe_path` | Optional. The protected folder the verdict rests on; absent when none exists. |
 | `terminal` | Optional. The application to grant access to, when `TERM_PROGRAM` names one Broza knows. |
 | `settings_url` | The link that opens the Full Disk Access pane. |
-| `opened_settings` | `true` when this run asked macOS to open it (`--open`) and `open` succeeded. |
+| `opened_settings` | `true` when this run asked macOS to open it (`--open`) and `/usr/bin/open` succeeded. |
 | `quarantine_path`, `cache_path` | Optional; absent without a home directory. Where the quarantine store and the scan cache live. |
 
 ---

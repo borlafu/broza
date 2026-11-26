@@ -21,8 +21,9 @@ use crate::output::{OutputFormat, Renderer, envelope_to_json};
 
 /// The Full Disk Access pane of System Settings.
 pub const SETTINGS_URL: &str = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles";
-/// The program that opens it.
-const OPEN_PROGRAM: &str = "open";
+/// The program that opens it; never resolved through `PATH`, like `sw_vers`,
+/// so a directory early in `PATH` cannot stand in for it.
+const OPEN_PROGRAM: &str = "/usr/bin/open";
 /// How long `open` may take before Broza gives up on it.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 /// Warning code: System Settings could not be opened.
@@ -83,7 +84,7 @@ fn open_settings(ports: &Ports) -> (bool, Option<Warning>) {
         Ok(output) if output.success => return (true, None),
         Ok(output) if output.stderr_text().trim().is_empty() => {
             format!(
-                "`open` exited with {}",
+                "{OPEN_PROGRAM} exited with {}",
                 output.code.map_or_else(|| "a signal".to_owned(), |c| c.to_string())
             )
         }
@@ -179,6 +180,7 @@ mod tests {
         assert_eq!(json["data"]["opened_settings"], true);
         assert_eq!(json["data"]["terminal"], "Terminal");
         assert_eq!(handles.process.calls().len(), 1);
+        assert_eq!(handles.process.calls()[0].program, "/usr/bin/open", "never looked up through PATH");
         assert!(outcome.warnings.is_empty());
     }
 

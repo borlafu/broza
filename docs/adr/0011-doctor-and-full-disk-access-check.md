@@ -27,7 +27,7 @@ established technique is to list a folder that only such a process may list.
 - A new read-only command, `broza doctor`, reports the verdict, the folder it rests on, the
   terminal application to grant access to (from `TERM_PROGRAM`), the numbered steps including
   "quit and reopen the application", and where the quarantine store and the scan cache live.
-  `--open` runs `open x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles`
+  `--open` runs `/usr/bin/open x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles`
   through the process port. It always exits `0`: the state is data.
 - The stderr hint after a run that met a refusal is worded by the same check, run once and
   only then: off → `broza doctor --open`; on → privacy protection is not the cause, folders owned

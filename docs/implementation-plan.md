@@ -425,13 +425,17 @@ M5 progress:
       dist 0.32 writes `steps.cargo-cyclonedx.output.paths`, which uploads nothing; `allow-dirty =
       ["ci"]` keeps the fix); CI builds `--locked`; signing and notarization stay Phase 2.
 - [x] 6. README, PRD §16 traceability ("Covered by" column), spec 1.3.
-- [ ] Open after review, post-1.0: a time budget for the cloud-root walks (a slow File Provider can
-      stall `suggest`; bounded today only by the provider not descending into evicted directories);
+- [x] Time budget for the cloud-root walks (1.2): `WalkOptions::stop`, 10 s per root,
+      `cloud_walk_timed_out` warning.
+- [ ] Open after review, post-1.0:
       a warning for a symlinked `scan <PATH>` root (today reported as the link's own size);
       leftovers under `~/Library/Caches` are credited to `user-cache` when both run, so
       `clean --category unused-apps` plans items `suggest` showed under `user-cache`.
-- [ ] Post-1.0 test debt: `assert_cmd` coverage for exit codes `4`, `5`, `6`, `8`, `9` at the CLI
-      level (AGENTS.md §7 asks for every code; today `0`–`3` and `7` are covered end to end).
+- [ ] Post-1.0 test debt, narrowed in 1.2: `4` and `8` are now covered end to end (`8` was never
+      raised before 1.2). `5` and `6` are covered at the command level (`quarantine_tests.rs`,
+      `clean_tests.rs`) and `9` in `tests/scan_cache_pipeline.rs`; driving them through the binary
+      needs a terminal (`6`) or a fault-injection seam (`5`, `9`) that the fixture recording does
+      not have yet.
 - [x] Reviewed (two Opus passes on the M5 commits, findings fixed) and released: version 1.0.0,
       `CHANGELOG.md`, spec 1.3; published 2026-09-22 as the first GitHub release
       (`github.com/borlafu/broza`, tag `v1.0.0` on `a66daf7`) with the Homebrew formula.

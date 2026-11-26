@@ -78,6 +78,9 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
 
     let ports = wiring::ports(runtime)?;
     let report = crate::host::provider(runtime.host_override.as_deref(), Arc::clone(&ports.process)).report();
+    if command.needs_supported_host() {
+        crate::host::check_supported(&report.host)?;
+    }
     let warnings: Vec<Warning> = report.warning.into_iter().collect();
     let format = OutputFormat::resolve(cli.global.json, cli.global.csv);
     let policy = ColorPolicy::resolve(cli.global.no_color, effective.color, runtime, format);

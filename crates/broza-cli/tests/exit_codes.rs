@@ -154,3 +154,16 @@ fn version_reports_the_schema_version() {
     let expected = format!("JSON schema {}", broza::SCHEMA_VERSION);
     broza(home.path()).arg("--version").assert().code(0).stdout(contains(expected));
 }
+
+/// §2: a Mac outside the supported window is refused with exit `8` by every
+/// command that reads the machine; `about` still answers.
+#[test]
+fn an_unsupported_mac_exits_eight_and_about_still_works() {
+    for host in ["25.6/arm64", "26.1/x86_64"] {
+        let home = temp_home();
+        let refused = broza(home.path()).env("BROZA_HOST", host).args(["suggest"]).output().unwrap();
+        assert_eq!(refused.status.code(), Some(8), "{host}: {}", String::from_utf8_lossy(&refused.stderr));
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("Broza"), "{host}");
+        broza(home.path()).env("BROZA_HOST", host).arg("about").assert().code(0);
+    }
+}

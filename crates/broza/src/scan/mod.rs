@@ -348,6 +348,7 @@ fn walk_volume(
         cache_files_min_size: request.cache_root.is_some().then_some(CACHE_FILE_FLOOR_BYTES),
         report_files_top: files.top,
         progress: reporter,
+        stop: None,
     };
     walk(root, &options, ports.fs.as_ref())
 }

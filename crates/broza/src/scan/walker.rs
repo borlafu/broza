@@ -133,6 +133,9 @@ fn walk_dir(
     if let Some(subtree) = cached(&identity, depth, context).filter(|subtree| !subtree.nodes.is_empty()) {
         return cached_dir(&identity, subtree, depth, context);
     }
+    if context.options.stop.is_some_and(|stop| stop()) {
+        return stopped_dir(&identity, context);
+    }
     let dir = match anchor::open_checked(path, meta, anchor.as_deref(), context) {
         Ok(dir) => dir,
         Err(error) => return unreadable_dir(&identity, &error, context),
@@ -270,6 +273,17 @@ fn unreadable_dir(identity: &DirIdentity, error: &BrozaError, context: &Context<
         nodes: vec![parts::truncated_node(identity, totals)],
         totals,
         errors: vec![parts::diagnostic(&identity.path, error)],
+        ..Partial::empty(context.options.report_files_top)
+    }
+}
+
+/// A directory left unwalked because the caller said stop: truncated, with no
+/// warning of its own — the caller knows why and says it once.
+fn stopped_dir(identity: &DirIdentity, context: &Context<'_>) -> Partial {
+    let totals = Totals::default().with_truncation(true);
+    Partial {
+        nodes: vec![parts::truncated_node(identity, totals)],
+        totals,
         ..Partial::empty(context.options.report_files_top)
     }
 }

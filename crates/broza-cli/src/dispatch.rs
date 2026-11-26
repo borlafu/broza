@@ -119,6 +119,8 @@ pub fn dispatch(
         Command::Quarantine(args) => {
             commands::quarantine::run(&args.command, &store_context(&inputs, generated_at))
         }
+        Command::Completions { shell } => commands::shell::completions(*shell, inputs.format),
+        Command::Man => commands::shell::man(inputs.format),
         Command::Doctor(args) => commands::doctor::run(&commands::doctor::DoctorContext {
             ports: &inputs.ports,
             args,

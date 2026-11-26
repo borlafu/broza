@@ -138,3 +138,27 @@ fn an_unreadable_cloud_storage_directory_is_a_warning_and_the_rest_still_reports
     assert_eq!(ids, vec!["cloud-synced.icloud", "cloud-synced.google-drive"]);
     assert_eq!(detected.warnings.len(), 1, "{:?}", detected.warnings);
 }
+
+#[test]
+fn a_root_walked_out_of_time_is_a_warning_and_never_hangs_the_detector() {
+    let fs = fs();
+    let world = context_over(&fs, home());
+
+    let detected = detect_within(&world.context(), Duration::ZERO).unwrap();
+
+    let timed_out: Vec<_> =
+        detected.warnings.iter().filter(|w| w.code == CLOUD_WALK_TIMED_OUT_CODE).collect();
+    assert!(!timed_out.is_empty(), "{:?}", detected.warnings);
+    assert!(timed_out.iter().all(|w| w.message.contains("is a floor")), "{timed_out:?}");
+}
+
+#[test]
+fn a_generous_budget_changes_nothing() {
+    let fs = fs();
+    let world = context_over(&fs, home());
+
+    let detected = detect_within(&world.context(), Duration::from_secs(3600)).unwrap();
+
+    assert!(detected.warnings.iter().all(|w| w.code != CLOUD_WALK_TIMED_OUT_CODE), "{:?}", detected.warnings);
+    assert_eq!(detected.findings.len(), detect(&fs).findings.len());
+}

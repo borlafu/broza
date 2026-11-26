@@ -43,6 +43,12 @@ Or build from source with Cargo:
 cargo install --locked --git https://github.com/borlafu/broza broza-cli
 ```
 
+Tab completion for your shell (zsh shown; `bash` and `fish` work the same way):
+
+```bash
+mkdir -p ~/.zfunc && broza completions zsh > ~/.zfunc/_broza
+```
+
 See what is using your disk:
 
 ```bash

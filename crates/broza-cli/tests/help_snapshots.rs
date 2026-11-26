@@ -7,7 +7,7 @@
 use assert_cmd::Command;
 
 /// Every `--help` page of the CLI, as argument lists.
-const HELP_PAGES: [(&str, &[&str]); 18] = [
+const HELP_PAGES: [(&str, &[&str]); 19] = [
     ("root", &[]),
     ("scan", &["scan"]),
     ("explain", &["explain"]),
@@ -25,6 +25,7 @@ const HELP_PAGES: [(&str, &[&str]); 18] = [
     ("quarantine_expire", &["quarantine", "expire"]),
     ("quarantine_purge", &["quarantine", "purge"]),
     ("doctor", &["doctor"]),
+    ("completions", &["completions"]),
     ("about", &["about"]),
 ];
 

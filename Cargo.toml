@@ -20,6 +20,8 @@ toml_edit = "0.25"
 thiserror = "2"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4"
+clap_mangen = "0.2"
 jiff = { version = "0.2", features = ["serde"] }
 globset = "0.4"
 tempfile = "3"

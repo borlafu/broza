@@ -25,6 +25,7 @@ pub mod quarantine;
 mod quarantine_tests;
 pub mod restore;
 pub mod scan;
+pub mod shell;
 pub mod store;
 pub mod suggest;
 pub mod target;

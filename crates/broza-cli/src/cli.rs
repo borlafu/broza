@@ -99,6 +99,14 @@ pub enum Command {
     Doctor(DoctorArgs),
     /// Version, license, schema version and support link.
     About,
+    /// Print a shell completion script, for example: broza completions zsh > ~/.zfunc/_broza
+    Completions {
+        /// Shell to generate the script for.
+        shell: clap_complete::Shell,
+    },
+    /// Print the manual page in roff, for example: broza man > broza.1
+    #[command(hide = true)]
+    Man,
 }
 
 impl Command {
@@ -114,6 +122,8 @@ impl Command {
             Self::Quarantine(_) => "quarantine",
             Self::Doctor(_) => "doctor",
             Self::About => "about",
+            Self::Completions { .. } => "completions",
+            Self::Man => "man",
         }
     }
 
@@ -130,6 +140,16 @@ impl Command {
             ),
             _ => false,
         }
+    }
+
+    /// Whether the command reads or changes the machine, and so must refuse
+    /// an unsupported one (exit `8`). `about`, `config` and `doctor` describe
+    /// Broza itself and work anywhere.
+    pub const fn needs_supported_host(&self) -> bool {
+        !matches!(
+            self,
+            Self::About | Self::Config(_) | Self::Doctor(_) | Self::Completions { .. } | Self::Man
+        )
     }
 
     /// Whether `--csv` is accepted (`docs/cli-spec.md` §1.1).

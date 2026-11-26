@@ -11,6 +11,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use broza::BrozaError;
 use broza::model::{Host, Warning};
 use broza::ports::{ProcessOutput, ProcessRunner};
 
@@ -117,6 +118,39 @@ impl FixedHost {
 impl HostInfo for FixedHost {
     fn report(&self) -> HostReport {
         HostReport::certain(self.0.clone())
+    }
+}
+
+/// Oldest macOS major Broza supports (PRD RNF-04: the two latest majors).
+pub const MIN_MACOS_MAJOR: u32 = 26;
+/// The only architecture Broza supports (PRD D5).
+pub const SUPPORTED_ARCH: &str = "arm64";
+
+/// Refuse a Mac outside the supported window (`docs/cli-spec.md` §2, exit `8`).
+///
+/// A version Broza could not read is not refused: the `host_version_unknown`
+/// warning already says so, and refusing on a missing fact would lock out a
+/// supported Mac whose `sw_vers` misbehaved. A newer major than Broza knows
+/// is allowed too: the window moves forward, and the parsers tolerate keys
+/// they have not seen.
+///
+/// # Errors
+///
+/// [`BrozaError::UnsupportedSystem`] for another architecture or an older major.
+pub fn check_supported(host: &Host) -> Result<(), BrozaError> {
+    if host.arch != SUPPORTED_ARCH {
+        return Err(BrozaError::UnsupportedSystem(format!(
+            "Broza runs on Apple Silicon (arm64) only; this Mac reports {}",
+            host.arch
+        )));
+    }
+    let major = host.macos_version.split('.').next().and_then(|major| major.parse::<u32>().ok());
+    match major {
+        Some(major) if major < MIN_MACOS_MAJOR => Err(BrozaError::UnsupportedSystem(format!(
+            "Broza supports macOS {MIN_MACOS_MAJOR} and later; this Mac runs macOS {}",
+            host.macos_version
+        ))),
+        _ => Ok(()),
     }
 }
 
@@ -254,5 +288,19 @@ mod tests {
         assert_eq!(report.host.macos_version, UNKNOWN_VERSION);
         let message = report.warning.map(|w| w.message).unwrap_or_default();
         assert!(message.contains("no such file"), "{message}");
+    }
+
+    fn host(version: &str, arch: &str) -> Host {
+        Host { macos_version: version.to_owned(), arch: arch.to_owned() }
+    }
+
+    #[test]
+    fn only_an_older_major_or_another_architecture_is_refused() {
+        assert!(check_supported(&host("26.1", "arm64")).is_ok());
+        assert!(check_supported(&host("27.0", "arm64")).is_ok());
+        assert!(check_supported(&host("28.0", "arm64")).is_ok(), "a newer major is let through");
+        assert!(check_supported(&host("unknown", "arm64")).is_ok(), "a missing fact is a warning");
+        assert!(matches!(check_supported(&host("25.6", "arm64")), Err(BrozaError::UnsupportedSystem(_))));
+        assert!(matches!(check_supported(&host("26.1", "x86_64")), Err(BrozaError::UnsupportedSystem(_))));
     }
 }

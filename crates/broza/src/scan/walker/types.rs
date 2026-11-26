@@ -234,6 +234,10 @@ pub struct WalkOptions<'a> {
     pub report_files_top: usize,
     /// Where progress updates go.
     pub progress: Option<&'a ProgressReporter<'a>>,
+    /// Asked before each directory is listed; `true` leaves that directory
+    /// unwalked and its subtree truncated, so a caller can bound how long a
+    /// walk of a slow filesystem (a File Provider root) may take.
+    pub stop: Option<&'a (dyn Fn() -> bool + Sync)>,
 }
 
 impl Default for WalkOptions<'_> {
@@ -248,6 +252,7 @@ impl Default for WalkOptions<'_> {
             cache_files_min_size: None,
             report_files_top: 0,
             progress: None,
+            stop: None,
         }
     }
 }

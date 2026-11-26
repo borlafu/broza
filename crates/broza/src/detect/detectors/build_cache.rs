@@ -19,6 +19,7 @@ use crate::model::{Action, Category, Finding, Instructions, Risk};
 
 use super::node_modules::orphan_node_modules;
 use super::support::{by_size_then_path, finish, path_of, path_with, start};
+use crate::detect::category_text::{DOCKER_PRUNE_STEP, DOCKER_SHRINK_STEP};
 use crate::detect::detector::{DetectContext, Detected, Detector};
 
 /// Where Docker Desktop keeps its virtual disk, relative to the home.
@@ -143,21 +144,27 @@ fn cargo_targets(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaEr
 fn docker_raw(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaError> {
     let path = context.under_home(DOCKER_RAW);
     let Ok(meta) = context.fs.metadata(&path) else { return Ok(None) };
-    let builder = start(Category::BuildCache, "docker-raw", "Docker Desktop disk image")?
+    let builder = start(Category::BuildCache, DOCKER_FINDING, "Docker Desktop disk image")?
         .description("The virtual disk every Docker image, container and volume lives in.")
-        .risk(Risk::Amber)
+        .risk(DOCKER_RISK)
         .action(Action::InformOnly)
         .reasoning("Deleting the file would destroy every container; only Docker can shrink it safely.")
-        .instructions(Instructions {
-            provider: "Docker Desktop".to_owned(),
-            summary: "Let Docker reclaim the space it no longer uses.".to_owned(),
-            steps: vec![
-                "Run `docker system prune` to remove unused images, containers and build cache.".to_owned(),
-                "In Docker Desktop, open Settings → Resources → Advanced and lower the disk image size."
-                    .to_owned(),
-            ],
-        });
+        .instructions(docker_instructions());
     finish(builder, vec![path_with(&path, context.settled_allocated(&path, &meta), meta.modified)])
+}
+
+/// Name of the Docker finding: `build-cache.docker-raw`.
+pub(crate) const DOCKER_FINDING: &str = "docker-raw";
+/// Risk of the Docker finding, which Broza only reports.
+pub(crate) const DOCKER_RISK: Risk = Risk::Amber;
+
+/// What frees the Docker disk image: Docker's own tools.
+pub(crate) fn docker_instructions() -> Instructions {
+    Instructions {
+        provider: "Docker Desktop".to_owned(),
+        summary: "Let Docker reclaim the space it no longer uses.".to_owned(),
+        steps: vec![DOCKER_PRUNE_STEP.to_owned(), DOCKER_SHRINK_STEP.to_owned()],
+    }
 }
 
 #[cfg(test)]

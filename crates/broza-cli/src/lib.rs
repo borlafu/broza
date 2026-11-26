@@ -25,7 +25,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use broza::config::{CliOverrides, Config, EnvSnapshot};
-use broza::model::Warning;
+use broza::model::{AccessState, Warning};
 use broza::units::{ByteSize, DurationSpec};
 use broza::{BrozaError, ExitCode};
 use clap::Parser;
@@ -78,11 +78,15 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
 
     let ports = wiring::ports(runtime)?;
     let report = crate::host::provider(runtime.host_override.as_deref(), Arc::clone(&ports.process)).report();
+    if command.needs_supported_host() {
+        crate::host::check_supported(&report.host)?;
+    }
     let warnings: Vec<Warning> = report.warning.into_iter().collect();
     let format = OutputFormat::resolve(cli.global.json, cli.global.csv);
     let policy = ColorPolicy::resolve(cli.global.no_color, effective.color, runtime, format);
 
     let donate_prompt = effective.donate_prompt;
+    let fs = Arc::clone(&ports.fs);
     let outcome = dispatch(
         command,
         cli,
@@ -90,7 +94,19 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
         Inputs { runtime, ports, file, effective, host: report.host, warnings, format, policy },
     )?;
     sink.write(&outcome.rendered)?;
-    report_warnings(&outcome.warnings, &cli.global, format);
+    let stderr_policy = if runtime.stderr_is_tty { policy } else { ColorPolicy::Never };
+    // One check of Full Disk Access, only for a run that met a refusal and
+    // will print the hint.
+    let speaks = !cli.global.quiet && !format.is_machine_readable();
+    let hint = if speaks && reporting::needs_full_disk_access(&outcome.warnings) {
+        let state = dispatch::walked_home(runtime).map_or(AccessState::Unknown, |home| {
+            broza::access::check_full_disk_access(fs.as_ref(), &home).state
+        });
+        reporting::access_hint(state, runtime.terminal_app())
+    } else {
+        String::new()
+    };
+    report_warnings(&outcome.warnings, &cli.global, format, stderr_policy, &hint);
     donate_display::maybe_show(
         &donate_display::Run {
             outcome: &outcome,

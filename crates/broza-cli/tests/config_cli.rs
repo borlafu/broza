@@ -117,7 +117,7 @@ fn list_json_uses_the_envelope() {
     assert_eq!(output.status.code(), Some(0));
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("invalid json: {e}"));
-    assert_eq!(parsed["schema_version"], "1.1");
+    assert_eq!(parsed["schema_version"], "1.2");
     assert_eq!(parsed["command"], "config");
     assert_eq!(parsed["data"]["quarantine-ttl"], serde_json::json!("30d"));
     assert_eq!(parsed["data"]["donate-prompt"], serde_json::json!(true), "booleans stay booleans");

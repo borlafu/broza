@@ -54,6 +54,9 @@ pub struct Folders<'a> {
     pub trees: &'a [VolumeTree],
     /// `--tree`: draw the trees instead of the consumers list.
     pub tree_view: bool,
+    /// `-i`: number the directories of the consumers list, and leave out the
+    /// hint that points to `-i`.
+    pub numbered: bool,
     /// The walk measured more than the volume holds: say the sizes are upper bounds.
     pub upper_bounds: bool,
     /// Home directory, so paths under it print as `~/…`.
@@ -79,8 +82,14 @@ pub fn render_with_folders(report: &ScanReport, folders: &Folders<'_>, policy: C
     }
     let below = if folders.tree_view {
         folders::render_trees(folders.trees, folders.home)
+    } else if folders.numbered {
+        folders::render_largest_numbered(&report.largest_items, folders.trees, folders.home)
     } else {
-        folders::render_largest(&report.largest_items, folders.trees, folders.home)
+        let list = folders::render_largest(&report.largest_items, folders.trees, folders.home);
+        match folders::drill_down_hint(&report.largest_items, folders.trees, folders.home) {
+            Some(hint) => format!("{list}\n\n{hint}"),
+            None => list,
+        }
     };
     if folders.upper_bounds {
         return format!("{map}\n\n{UPPER_BOUNDS_NOTE}\n\n{below}");
@@ -103,6 +112,11 @@ fn render_disk(disk: &Disk, policy: ColorPolicy) -> String {
         let branch = if is_last { "└─" } else { "├─" };
         let indent = if is_last { LAST_INDENT } else { CONTINUED_INDENT };
         let _ignored = write!(text, "\n{}", render_container(container, branch, indent, policy));
+        if !is_last {
+            // A gutter line of its own, so the next container never reads as
+            // part of this one's volumes.
+            let _ignored = write!(text, "\n{}", indent.trim_end());
+        }
     }
     text
 }
@@ -118,10 +132,10 @@ fn render_container(container: &Container, branch: &str, indent: &str, policy: C
         container.id,
         format_bytes(container.size_bytes)
     );
-    let _ignored = write!(text, "\n{}", render_capacity(container, indent, policy));
-    if !container.volumes.is_empty() {
-        let _ignored =
-            write!(text, "\n{}\n{}", indent.trim_end(), volumes::render(container, indent, policy));
+    let has_volumes = !container.volumes.is_empty();
+    let _ignored = write!(text, "\n{}", render_capacity(container, indent, has_volumes, policy));
+    if has_volumes {
+        let _ignored = write!(text, "\n{}", volumes::render(container, indent, policy));
     }
     text
 }
@@ -135,8 +149,10 @@ pub fn container_kind(kind: &FsKind) -> String {
     }
 }
 
-/// The three capacity lines, purgeable always on its own.
-fn render_capacity(container: &Container, indent: &str, policy: ColorPolicy) -> String {
+/// The three capacity lines, purgeable always on its own. Purgeable closes the
+/// container unless the volumes branch follows it.
+fn render_capacity(container: &Container, indent: &str, has_volumes: bool, policy: ColorPolicy) -> String {
+    let purgeable_branch = if has_volumes { "├─" } else { "└─" };
     let sizes = [container.used_bytes, container.free_bytes, container.purgeable_bytes].map(format_bytes);
     let width = sizes.iter().map(String::len).max().unwrap_or(0);
     let bar = usage_bar(container.used_bytes, container.size_bytes);
@@ -146,7 +162,7 @@ fn render_capacity(container: &Container, indent: &str, policy: ColorPolicy) -> 
     format!(
         "{indent}├─ {:<CAPACITY_LABEL_WIDTH$}{:>width$}  {painted_bar}  {percentage}\n\
          {indent}├─ {:<CAPACITY_LABEL_WIDTH$}{:>width$}\n\
-         {indent}└─ {:<CAPACITY_LABEL_WIDTH$}{:>width$}  {PURGEABLE_NOTE}",
+         {indent}{purgeable_branch} {:<CAPACITY_LABEL_WIDTH$}{:>width$}  {PURGEABLE_NOTE}",
         "Used", sizes[0], "Free", sizes[1], "Purgeable", sizes[2],
     )
 }
@@ -282,9 +298,42 @@ mod tests {
     fn the_volumes_table_is_delegated_and_present() {
         let text = plain(&sketch());
 
-        assert!(text.contains("Volumes in this container:"), "{text}");
-        assert!(text.contains("┌ Macintosh HD  "), "{text}");
-        assert!(text.lines().any(|line| line.trim_start().starts_with("└ VM")), "{text}");
+        assert!(text.contains("├─ Purgeable"), "purgeable no longer closes the container: {text}");
+        assert!(text.contains("   └─ Volumes"), "{text}");
+        assert!(text.contains("      ├─ Macintosh HD  "), "{text}");
+        assert!(text.lines().any(|line| line.trim_start().starts_with("└─ VM")), "{text}");
+        assert!(
+            !text.lines().any(|line| line.trim().is_empty()),
+            "no blank line inside the container: {text}"
+        );
+    }
+
+    #[test]
+    fn the_sketch_of_the_specification_is_what_is_printed() {
+        let expected = "\
+Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
+└─ APFS container  disk3  (994.7 GB)
+   ├─ Used        812.4 GB  ████████████████░░░░  81.7%
+   ├─ Free         98.1 GB
+   ├─ Purgeable    84.1 GB  ← estimate; macOS shows this as \"available\"
+   └─ Volumes
+      ├─ Macintosh HD         System     11.3 GB   read-only, sealed
+      ├─ Macintosh HD - Data  Data      798.2 GB   ← your data
+      ├─ Preboot              Preboot     6.5 GB
+      ├─ Recovery             Recovery    1.2 GB
+      └─ VM                   VM          3.0 GB   swap";
+        assert_eq!(plain(&sketch()), expected);
+    }
+
+    #[test]
+    fn a_container_without_volumes_closes_on_purgeable() {
+        let mut report = sketch();
+        report.disks[0].containers[0].volumes.clear();
+
+        let text = plain(&report);
+
+        assert!(text.ends_with(&format!("└─ Purgeable    84.1 GB  {PURGEABLE_NOTE}")), "{text}");
+        assert!(!text.contains("Volumes"), "{text}");
     }
 
     #[test]
@@ -354,9 +403,12 @@ mod tests {
         let used_lines: Vec<&str> = text.lines().filter(|line| line.contains("Used")).collect();
         let last_used = used_lines.last().copied().unwrap_or_default();
         assert!(last_used.starts_with(LAST_INDENT), "{last_used:?}");
-        // The gutter runs unbroken down to the last container's header.
+        // The gutter runs unbroken down to the last container's header, with a
+        // line of its own between the two containers.
         let gutter = text.lines().filter(|line| line.starts_with('│')).count();
-        assert!(gutter >= 9, "{text}");
+        assert!(gutter >= 10, "{text}");
+        let second = text.lines().position(|line| line.contains("disk5")).unwrap_or_default();
+        assert_eq!(text.lines().nth(second - 1), Some("│"), "{text}");
     }
 
     #[test]

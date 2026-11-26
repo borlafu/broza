@@ -378,12 +378,17 @@ expression: "json_of(&[\"scan\", \"--json\"])"
     "arch": "arm64",
     "macos_version": "26.1"
   },
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "warnings": [
     {
       "code": "permission_denied",
       "message": "permission denied: /System/Volumes/Data/Users/dana/Library/Accounts",
       "path": "/System/Volumes/Data/Users/dana/Library/Accounts"
+    },
+    {
+      "code": "permission_denied",
+      "message": "permission denied: /System/Volumes/Data/Users/dana/Library/Application Support/com.apple.TCC",
+      "path": "/System/Volumes/Data/Users/dana/Library/Application Support/com.apple.TCC"
     },
     {
       "code": "size_exceeds_volume",

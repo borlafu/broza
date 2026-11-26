@@ -54,6 +54,7 @@ fn args() -> ScanArgs {
         volume: None,
         no_external: false,
         tree: false,
+        interactive: false,
     }
 }
 
@@ -74,6 +75,7 @@ fn output(disks: Vec<Disk>) -> ScanOutput {
         trees: Vec::new(),
         upper_bounds: false,
         tree_view: false,
+        numbered: false,
         home: None,
         host: Host { macos_version: "26.1".into(), arch: "arm64".into() },
         generated_at: "2026-09-21T10:36:08Z".parse().unwrap_or_else(|e| panic!("{e}")),
@@ -98,6 +100,7 @@ fn run_with(disks: Vec<Disk>, args: &ScanArgs, format: OutputFormat) -> Result<O
         policy: ColorPolicy::Never,
         format,
         folders: no_folders(),
+        interactive_terminal: false,
     })
 }
 
@@ -131,6 +134,7 @@ fn a_run_carries_the_enumerator_s_own_warnings_forward() {
         policy: ColorPolicy::Never,
         format: OutputFormat::Json,
         folders: no_folders(),
+        interactive_terminal: false,
     })
     .unwrap_or_else(|e| panic!("{e}"));
 
@@ -175,6 +179,7 @@ fn a_run_walks_the_writable_volumes_and_lists_their_largest_items() {
             verbose: false,
             own_stores: Vec::new(),
         },
+        interactive_terminal: false,
     })
     .unwrap_or_else(|e| panic!("{e}"));
 
@@ -274,4 +279,13 @@ fn the_upper_bounds_note_is_printed_when_the_walk_overcounted() {
     let text = out.to_human();
 
     assert!(text.contains("Sizes below are upper bounds"), "{text}");
+}
+
+#[test]
+fn interactive_mode_without_a_terminal_is_a_usage_error() {
+    let args = ScanArgs { interactive: true, ..args() };
+
+    let error = run_with(machine(), &args, OutputFormat::Human).expect_err("no terminal");
+
+    assert!(matches!(error, BrozaError::Usage(ref message) if message.contains("scan -i")), "{error}");
 }

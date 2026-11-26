@@ -9,48 +9,90 @@
 use std::error::Error as _;
 use std::io::Write as _;
 
-use broza::model::Warning;
+use broza::model::{AccessState, Warning};
 use broza::{BrozaError, ExitCode};
 use clap::error::ErrorKind;
 
 use crate::cli::GlobalArgs;
-use crate::output::OutputFormat;
+use crate::output::style::{Style, paint};
+use crate::output::wrap::{hang, wrap};
+use crate::output::{ColorPolicy, OutputFormat};
 
 /// Warning code the mount table and the adapters use for a path macOS refused.
 pub const PERMISSION_DENIED_CODE: &str = "permission_denied";
-/// The one hint that follows a run which had to skip something (§6).
-pub const FULL_DISK_ACCESS_HINT: &str = "Some locations were skipped. Grant Full Disk Access: \
-System Settings → Privacy & Security → Full Disk Access, then add your terminal application (or \
-the broza binary).";
+/// Label in front of every warning.
+const WARNING_LABEL: &str = "warning:";
+/// Hanging indent of a wrapped warning: the label's width plus its space.
+const WARNING_INDENT: &str = "         ";
+/// What to call the terminal when `TERM_PROGRAM` did not say.
+pub const ANY_TERMINAL: &str = "your terminal application";
+
+/// The one hint that follows a run which had to skip something (§6), worded
+/// by what a check of Full Disk Access found. Root-owned system folders are
+/// refused even with access on, so "grant it" is only said when it is off.
+pub fn access_hint(state: AccessState, terminal: Option<&str>) -> String {
+    let app = terminal.unwrap_or(ANY_TERMINAL);
+    match state {
+        AccessState::Missing => format!(
+            "Full Disk Access is off for {app}, so macOS kept Broza out of protected folders. Run \
+             `broza doctor --open` to turn it on, then quit and reopen {app}."
+        ),
+        AccessState::Granted => "Full Disk Access is on, so privacy protection is not the cause. \
+                                 Locations owned by macOS or by other users stay unreadable and scans \
+                                 leave them out. If one of them is your own folder, check its \
+                                 permissions with `ls -ld <path>`."
+            .to_owned(),
+        _ => format!(
+            "Some locations were skipped. `broza doctor` checks whether Full Disk Access is on for \
+             {app} and shows how to turn it on."
+        ),
+    }
+}
 
 /// Warnings go to stderr; `--quiet` and the machine-readable formats silence them.
 ///
 /// When any of them is a permission refusal the run ends with one hint rather
 /// than with one hint per path: missing Full Disk Access is a single fact
-/// about the machine, and repeating it per skipped volume is noise.
-pub fn report_warnings(warnings: &[Warning], global: &GlobalArgs, format: OutputFormat) {
-    if global.quiet || format.is_machine_readable() {
+/// about the machine, and repeating it per skipped volume is noise. `policy`
+/// must already account for stderr being a terminal; `hint` is the
+/// [`access_hint`] for this machine.
+pub fn report_warnings(
+    warnings: &[Warning],
+    global: &GlobalArgs,
+    format: OutputFormat,
+    policy: ColorPolicy,
+    hint: &str,
+) {
+    if global.quiet || format.is_machine_readable() || warnings.is_empty() {
         return;
     }
-    let mut stderr = std::io::stderr();
-    for line in warning_lines(warnings) {
-        let _ignored = writeln!(stderr, "{line}");
+    // Best effort: a closed stderr must not change the exit code.
+    let _ignored = std::io::stderr().write_all(warning_block(warnings, hint, policy).as_bytes());
+}
+
+/// Exactly what [`report_warnings`] writes: a blank line to set the block
+/// apart from the report, then each warning wrapped under its label, a blank
+/// line between two, then at most one Full Disk Access hint however many
+/// paths were refused. Empty when there is nothing to say.
+pub fn warning_block(warnings: &[Warning], hint: &str, policy: ColorPolicy) -> String {
+    let label = paint(policy, Style::Yellow, WARNING_LABEL);
+    let reported = warnings.iter().map(|warning| {
+        hang(WARNING_LABEL, &warning.message, WARNING_INDENT).replacen(WARNING_LABEL, &label, 1)
+    });
+    let hint = needs_full_disk_access(warnings).then(|| wrap(hint, ""));
+    let paragraphs: Vec<String> = reported.chain(hint).collect();
+    if paragraphs.is_empty() {
+        return String::new();
     }
+    format!("\n{}\n", paragraphs.join("\n\n"))
 }
 
-/// Exactly what [`report_warnings`] would write, as lines.
-///
-/// Split out so the shape can be tested: one line per warning, then at most
-/// one Full Disk Access hint however many paths were refused.
-pub fn warning_lines(warnings: &[Warning]) -> Vec<String> {
-    let reported = warnings.iter().map(|warning| format!("warning: {}", warning.message));
-    let hint = needs_full_disk_access(warnings).then(|| FULL_DISK_ACCESS_HINT.to_owned());
-    reported.chain(hint).collect()
-}
-
-/// `true` when at least one warning is a permission refusal.
+/// `true` when at least one warning is a permission refusal, one at a time or
+/// collapsed into a summary.
 pub fn needs_full_disk_access(warnings: &[Warning]) -> bool {
-    warnings.iter().any(|warning| warning.code == PERMISSION_DENIED_CODE)
+    warnings.iter().any(|warning| {
+        warning.code == PERMISSION_DENIED_CODE || warning.code == broza::scan::PERMISSION_SUMMARY_CODE
+    })
 }
 
 /// `--help` and `--version` are successes; every other clap error is exit `2`.
@@ -74,9 +116,9 @@ pub fn report_error(error: &BrozaError, global: &GlobalArgs) -> ExitCode {
         }
     }
     // A refusal that ended the command gets the same hint a skipped path does
-    // (§6): the fix is the same setting.
+    // (§6), in the form that sends the user to `broza doctor` to find out.
     if matches!(error, BrozaError::PermissionDenied { .. }) {
-        let _ignored = writeln!(stderr, "{FULL_DISK_ACCESS_HINT}");
+        let _ignored = writeln!(stderr, "{}", wrap(&access_hint(AccessState::Unknown, None), ""));
     }
     ExitCode::from(error)
 }
@@ -94,6 +136,10 @@ mod tests {
         Warning { code: code.to_owned(), message: format!("something about {code}"), path: None }
     }
 
+    fn hint() -> String {
+        access_hint(AccessState::Unknown, None)
+    }
+
     fn quiet() -> GlobalArgs {
         GlobalArgs::default()
     }
@@ -101,6 +147,10 @@ mod tests {
     #[test]
     fn a_permission_warning_earns_the_full_disk_access_hint() {
         assert!(needs_full_disk_access(&[warning(PERMISSION_DENIED_CODE)]));
+        assert!(
+            needs_full_disk_access(&[warning(broza::scan::PERMISSION_SUMMARY_CODE)]),
+            "the summary of many refusals is the case that needs the hint most"
+        );
         assert!(needs_full_disk_access(&[warning("firmlinks_unreadable"), warning(PERMISSION_DENIED_CODE)]));
     }
 
@@ -118,27 +168,73 @@ mod tests {
             warning(PERMISSION_DENIED_CODE),
         ];
 
-        let lines = warning_lines(&warnings);
+        let block = warning_block(&warnings, &hint(), ColorPolicy::Never);
 
-        assert_eq!(lines.len(), 4, "three warnings and one hint: {lines:?}");
-        assert_eq!(lines.iter().filter(|line| line.contains("Full Disk Access")).count(), 1);
-        assert_eq!(lines.last().map(String::as_str), Some(FULL_DISK_ACCESS_HINT), "the hint comes last");
+        let paragraphs: Vec<&str> = block.trim().split("\n\n").collect();
+        assert_eq!(paragraphs.len(), 4, "three warnings and one hint: {block}");
+        assert_eq!(block.matches("Full Disk Access").count(), 1, "one hint however many refusals");
+        assert!(paragraphs[3].starts_with("Some locations were skipped."), "the hint comes last: {block}");
+    }
+
+    #[test]
+    fn the_hint_tells_the_user_to_grant_access_only_when_it_is_off() {
+        let missing = access_hint(AccessState::Missing, Some("Terminal"));
+        let granted = access_hint(AccessState::Granted, Some("Terminal"));
+        let unknown = access_hint(AccessState::Unknown, None);
+
+        assert!(
+            missing.contains("off for Terminal") && missing.contains("`broza doctor --open`"),
+            "{missing}"
+        );
+        assert!(missing.ends_with("quit and reopen Terminal."), "{missing}");
+        assert!(granted.contains("not the cause") && granted.contains("ls -ld"), "{granted}");
+        assert!(!granted.contains("doctor"), "{granted}");
+        assert!(
+            unknown.contains("`broza doctor`") && unknown.contains("your terminal application"),
+            "{unknown}"
+        );
     }
 
     #[test]
     fn without_a_permission_warning_nothing_extra_is_printed() {
-        let lines = warning_lines(&[warning("host_version_unknown")]);
+        let block = warning_block(&[warning("host_version_unknown")], &hint(), ColorPolicy::Never);
 
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].starts_with("warning: "), "{lines:?}");
-        assert!(warning_lines(&[]).is_empty());
+        assert_eq!(block, "\nwarning: something about host_version_unknown\n");
+        assert!(warning_block(&[], &hint(), ColorPolicy::Never).is_empty());
     }
 
     #[test]
-    fn the_hint_names_the_setting_the_user_has_to_open() {
-        assert!(FULL_DISK_ACCESS_HINT.contains("Full Disk Access"));
-        assert!(FULL_DISK_ACCESS_HINT.contains("System Settings"));
-        assert!(FULL_DISK_ACCESS_HINT.contains("Privacy & Security"));
+    fn a_long_warning_wraps_under_its_label_and_stands_apart_from_the_report() {
+        let long = Warning {
+            code: "permission_denied_summary".to_owned(),
+            message: "421 locations could not be read, so their sizes are missing from the totals. \
+                      Examples: /System/Volumes/Data/.fseventsd, /System/Volumes/Data/.Spotlight-V100. \
+                      Pass -v to list every path."
+                .to_owned(),
+            path: None,
+        };
+
+        let block = warning_block(&[long], &hint(), ColorPolicy::Never);
+
+        assert!(block.starts_with("\nwarning: 421 locations"), "a blank line first: {block:?}");
+        let lines: Vec<&str> = block.lines().skip(1).take_while(|line| !line.is_empty()).collect();
+        assert!(lines.len() > 1, "{block}");
+        assert!(lines[1..].iter().all(|line| line.starts_with(WARNING_INDENT)), "hanging indent: {block}");
+        assert!(lines.iter().all(|line| line.chars().count() <= crate::output::wrap::WRAP_WIDTH), "{block}");
+    }
+
+    #[test]
+    fn an_empty_warning_message_prints_its_label_and_never_panics() {
+        let empty = Warning { code: "x".to_owned(), message: String::new(), path: None };
+
+        assert_eq!(warning_block(&[empty], &hint(), ColorPolicy::Never), "\nwarning:\n");
+    }
+
+    #[test]
+    fn only_the_label_is_coloured() {
+        let block = warning_block(&[warning("host_version_unknown")], &hint(), ColorPolicy::Always);
+
+        assert!(block.starts_with("\n\u{1b}[33mwarning:\u{1b}[0m something"), "{block:?}");
     }
 
     #[test]
@@ -180,9 +276,9 @@ mod tests {
         let hushed = GlobalArgs { quiet: true, ..GlobalArgs::default() };
         // Exercises every branch; the visible effect is stderr only, so the
         // assertion is that none of them panics or changes an exit code.
-        report_warnings(&warnings, &loud, OutputFormat::Human);
-        report_warnings(&warnings, &hushed, OutputFormat::Human);
-        report_warnings(&warnings, &loud, OutputFormat::Json);
+        report_warnings(&warnings, &loud, OutputFormat::Human, ColorPolicy::Never, &hint());
+        report_warnings(&warnings, &hushed, OutputFormat::Human, ColorPolicy::Never, &hint());
+        report_warnings(&warnings, &loud, OutputFormat::Json, ColorPolicy::Never, &hint());
         assert_eq!(report_error(&BrozaError::Usage("x".into()), &hushed), ExitCode::UsageError);
     }
 }

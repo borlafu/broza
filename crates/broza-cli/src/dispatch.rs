@@ -57,6 +57,7 @@ pub fn dispatch(
 ) -> Result<Outcome, BrozaError> {
     let generated_at = jiff::Timestamp::now();
     let folders = folder_settings(cli, &inputs);
+    let doctor_home = walked_home(inputs.runtime);
     match command {
         Command::About => {
             let rendered = commands::about::About::new(inputs.host, generated_at, inputs.warnings.clone())
@@ -85,6 +86,9 @@ pub fn dispatch(
             policy: inputs.policy,
             format: inputs.format,
             folders: folders.clone(),
+            interactive_terminal: inputs.runtime.is_interactive()
+                && inputs.runtime.stdout_is_tty
+                && cli.global.output.is_none(),
         }),
         Command::Suggest(args) => commands::suggest::run(&SuggestContext {
             ports: &inputs.ports,
@@ -115,6 +119,19 @@ pub fn dispatch(
         Command::Quarantine(args) => {
             commands::quarantine::run(&args.command, &store_context(&inputs, generated_at))
         }
+        Command::Completions { shell } => commands::shell::completions(*shell, inputs.format),
+        Command::Man => commands::shell::man(inputs.format),
+        Command::Doctor(args) => commands::doctor::run(&commands::doctor::DoctorContext {
+            ports: &inputs.ports,
+            args,
+            home: doctor_home.as_deref(),
+            terminal: inputs.runtime.terminal_app(),
+            quarantine_path: doctor_home.as_deref().map(|home| inputs.effective.quarantine_dir(home)),
+            host: inputs.host,
+            generated_at,
+            warnings: inputs.warnings,
+            format: inputs.format,
+        }),
         Command::Explain(args) => commands::explain::run(&ExplainContext {
             ports: &inputs.ports,
             args,
@@ -144,7 +161,7 @@ fn store_context<'a>(inputs: &'a Inputs<'a>, generated_at: jiff::Timestamp) -> S
 
 /// The home a folder walk starts from: the real one, or the recording's under
 /// the debug-only fixture seam, where the real one does not exist.
-fn walked_home(runtime: &RuntimeEnv) -> Option<PathBuf> {
+pub fn walked_home(runtime: &RuntimeEnv) -> Option<PathBuf> {
     crate::wiring::fixture_home(runtime).or_else(|| runtime.home.clone())
 }
 

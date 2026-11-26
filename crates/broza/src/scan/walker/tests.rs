@@ -468,3 +468,23 @@ fn a_depth_limit_does_not_resurrect_a_discounted_link_below_it() {
     assert!(node(&limited, "/vol/mid").largest_item_bytes <= node(&limited, "/vol/mid").allocated_bytes);
     assert!(limited.nodes.iter().all(|n| n.path != Path::new("/vol/mid/deep")), "hidden stays hidden");
 }
+
+#[test]
+fn a_stop_hook_leaves_the_rest_of_the_tree_unwalked_and_marked_truncated() {
+    let fs = FakeFileOps::new()
+        .with_root("/vol", 1)
+        .with_file("/vol/top.bin", &[0; 10])
+        .with_file("/vol/a/inner.bin", &[0; 10])
+        .with_file("/vol/b/inner.bin", &[0; 10]);
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    // The root is listed; every directory after it is refused.
+    let stop = || calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0;
+    let options = WalkOptions { stop: Some(&stop), ..WalkOptions::default() };
+
+    let result = walk(Path::new("/vol"), &options, &fs);
+
+    let root = result.root().unwrap_or_else(|| panic!("the root was listed"));
+    assert!(root.has_truncation, "something inside was not walked: {root:?}");
+    assert_eq!(root.file_count, 1, "only the root's own file was counted: {root:?}");
+    assert!(result.errors.is_empty(), "stopping is the caller's to report: {:?}", result.errors);
+}

@@ -52,4 +52,8 @@ pub struct ScanArgs {
     /// Force the hierarchical tree view.
     #[arg(long)]
     pub tree: bool,
+
+    /// Browse the largest consumers: open a folder by its number, .. to go back, q to quit.
+    #[arg(short = 'i', long, conflicts_with = "tree")]
+    pub interactive: bool,
 }

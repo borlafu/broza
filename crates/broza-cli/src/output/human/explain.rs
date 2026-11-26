@@ -25,6 +25,7 @@ use broza::model::{FsKind, Volume};
 
 use crate::output::human::scan::role_label;
 use crate::output::human::{action_label, risk_chip, role_style};
+use crate::output::wrap::numbered;
 use crate::output::{ColorPolicy, format_bytes, paint, wrap};
 
 /// Separator between the fields of a header or a `--short` line.
@@ -35,22 +36,42 @@ const SHORT_SEPARATOR: &str = "  ·  ";
 const PARAGRAPH_INDENT: &str = "  ";
 /// The three section titles, in order.
 const SECTIONS: [&str; 3] = ["What it is:", "What it is for:", "Is it safe to touch?"];
+/// Title of the closing section a category carries.
+const NEXT_STEPS: &str = "What to do next:";
 /// Said when a report somehow carries neither a volume nor a category.
 const UNKNOWN_TARGET: &str = "Unknown target";
 
 /// Render `report` in full.
 pub fn render(report: &ExplainReport, policy: ColorPolicy) -> String {
     let mut text = header(report, policy);
+    if let (Some(id), Some(instructions)) = (&report.finding, &report.instructions) {
+        let _ignored = write!(
+            text,
+            "\n\nHow to free {id} ({}):\n{}\n{}",
+            instructions.provider,
+            wrap(&instructions.summary, PARAGRAPH_INDENT),
+            numbered(&instructions.steps, PARAGRAPH_INDENT)
+        );
+        return text;
+    }
     let paragraphs =
         [&report.explanation.what_it_is, &report.explanation.what_it_is_for, &report.explanation.is_it_safe];
     for (title, body) in SECTIONS.iter().zip(paragraphs) {
         let _ignored = write!(text, "\n\n{title}\n{}", wrap(body, PARAGRAPH_INDENT));
+    }
+    if !report.explanation.next_steps.is_empty() {
+        let _ignored =
+            write!(text, "\n\n{NEXT_STEPS}\n{}", numbered(&report.explanation.next_steps, PARAGRAPH_INDENT));
     }
     text
 }
 
 /// Render `report` as the single line of `--short`.
 pub fn render_short(report: &ExplainReport, policy: ColorPolicy) -> String {
+    if let (Some(id), Some(instructions)) = (&report.finding, &report.instructions) {
+        return [id.as_str(), instructions.provider.as_str(), instructions.summary.as_str()]
+            .join(SHORT_SEPARATOR);
+    }
     match (report.kind, report.category, report.volume.as_ref()) {
         (ExplainKind::Category, Some(category), _) => {
             let risk = report.risk.map_or_else(String::new, |risk| risk_chip(policy, risk));
@@ -187,6 +208,64 @@ mod tests {
     }
 
     #[test]
+    fn a_category_ends_with_numbered_next_steps_and_a_volume_has_none() {
+        let apps = plain(&ExplainReport::for_category(Category::UnusedApps));
+        let volume = plain(&ExplainReport::for_volume(data_volume()));
+
+        let next = &apps[apps.find(NEXT_STEPS).unwrap_or_else(|| panic!("no next steps: {apps}"))..];
+        assert!(next.contains("\n  1. Run `broza suggest --category unused-apps --explain`"), "{next}");
+        assert!(next.contains("\n  2. Run `broza clean --category unused-apps`"), "{next}");
+        assert!(
+            next.contains("drag it from /Applications to the Trash"),
+            "the manual way is spelled out: {next}"
+        );
+        let continuation = next.lines().nth(2).unwrap_or_default();
+        assert!(continuation.starts_with("     "), "a wrapped step hangs under its text: {continuation:?}");
+        assert!(!volume.contains(NEXT_STEPS), "{volume}");
+    }
+
+    #[test]
+    fn every_category_has_next_steps_and_every_command_they_quote_parses() {
+        use clap::Parser as _;
+
+        for category in Category::all() {
+            let steps = ExplainReport::for_category(category).explanation.next_steps;
+            assert!(!steps.is_empty(), "{} has no next steps", category.as_str());
+            for command in steps.iter().flat_map(|step| step.split('`').skip(1).step_by(2)) {
+                if !command.starts_with("broza ") {
+                    continue;
+                }
+                let argv: Vec<&str> = command.split_whitespace().collect();
+                assert!(
+                    crate::cli::Cli::try_parse_from(&argv).is_ok_and(|cli| cli.validate().is_ok()),
+                    "{}: `{command}` is not a valid command",
+                    category.as_str()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_finding_prints_only_its_steps_under_the_category_header() {
+        let report = ExplainReport::for_finding(Category::BuildCache, "docker-raw")
+            .unwrap_or_else(|| panic!("docker"));
+
+        let text = plain(&report);
+        let short = render_short(&report, ColorPolicy::Never);
+
+        assert!(
+            text.contains("\n\nHow to free build-cache.docker-raw (Docker Desktop):\n  Let Docker"),
+            "{text}"
+        );
+        assert!(text.contains("\n  1. Run `docker system prune`"), "{text}");
+        assert!(!text.contains("What it is:"), "the finding needs no category essay: {text}");
+        assert_eq!(
+            short,
+            "build-cache.docker-raw  ·  Docker Desktop  ·  Let Docker reclaim the space it no longer uses."
+        );
+    }
+
+    #[test]
     fn a_path_says_which_volume_it_is_on() {
         let text = plain(&ExplainReport::for_path(Path::new("/Users/dana"), data_volume()));
 
@@ -236,8 +315,10 @@ mod tests {
     fn every_paragraph_is_wrapped_and_indented() {
         let text = plain(&ExplainReport::for_category(Category::BuildCache));
 
-        let body: Vec<&str> =
-            text.lines().filter(|line| !line.is_empty() && !SECTIONS.contains(line)).collect();
+        let body: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.is_empty() && !SECTIONS.contains(line) && *line != NEXT_STEPS)
+            .collect();
         assert!(body.len() > 3, "the paragraphs must wrap: {text}");
         for line in body.iter().skip(1) {
             assert!(line.starts_with(PARAGRAPH_INDENT), "{line:?}");

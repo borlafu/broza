@@ -4,6 +4,54 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
+## [Unreleased]
+
+### Added
+
+- `broza doctor` checks Full Disk Access, names the terminal app to grant it to, lists the
+  steps (including quitting and reopening the terminal) and shows where the quarantine store
+  and the scan cache live. `--open` opens System Settings at the right pane. Read-only, exit `0`
+  (ADR 0011).
+- `broza scan -i` browses the largest consumers: open a folder by its number, `..` to go back,
+  `q` to quit. Each folder is walked from the warm cache. The normal list ends with a line
+  saying how to look inside one.
+- `broza completions <shell>` prints a completion script for bash, zsh, fish, elvish or
+  PowerShell; the hidden `broza man` prints the manual page.
+
+### Changed
+
+- The scan progress line shows elapsed seconds, and a first scan says it is building the cache
+  that makes later scans faster.
+
+- `broza scan`: the volumes table is its container's last branch, indented under it, and a
+  gutter line separates two containers; it no longer reads as part of what follows.
+- Warnings on stderr form a block after a blank line, each wrapped under a `warning:` label with
+  a blank line between two. The summary of many unreadable locations states the fact with three
+  examples.
+- `broza suggest`: space Broza only reports (Docker's disk image, cloud-synced files,
+  applications with no record of use) has its own "Reclaimable another way" group with its size
+  and the command that prints the steps, instead of `0 B` rows inside the risk groups.
+- `broza explain <category> <finding>` (for example `broza explain cloud-synced icloud`) prints
+  the steps that free one such finding, without scanning.
+- `broza explain <category>` ends with a numbered "What to do next" section; the JSON carries it
+  as `explanation.next_steps` (schema 1.2).
+
+- `suggest` walks the cloud-synced roots within 10 seconds in all; a File Provider that answers
+  slowly leaves the rest out with a `cloud_walk_timed_out` warning instead of stalling the run.
+
+### Fixed
+
+- Exit code `8` was defined but never raised: Broza now refuses an Intel build or a macOS older
+  than 26 before reading anything, instead of running untested. `about`, `config`, `doctor` and
+  `explain <category>` still work there. Programs Broza runs no longer inherit
+  `SYSTEM_VERSION_COMPAT`, which made `sw_vers` report a legacy version.
+- A Mac with Full Disk Access on was told to grant it, because root-owned system folders
+  (`.Spotlight-V100`, `.fseventsd`) are refused either way. The hint after a scan now follows a
+  check of the setting: off, it sends you to `broza doctor --open`; on, it says privacy
+  protection is not the cause and points to the folder's own permissions.
+- The Full Disk Access hint was never printed when more than five locations were refused,
+  because the summary that replaces them did not trigger it.
+
 ## [1.1.0] — 2026-09-23
 
 Honest sizes for cloned and very deep trees, and a support message that is seen.

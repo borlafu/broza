@@ -59,8 +59,8 @@ expression: envelope
         "instructions": {
           "provider": "Docker Desktop",
           "steps": [
-            "Run `docker system prune` to remove unused images, containers and build cache.",
-            "In Docker Desktop, open Settings → Resources → Advanced and lower the disk image size."
+            "Run `docker system prune` to remove the images, containers and build cache Docker no longer uses; Broza only reports Docker's disk image.",
+            "To shrink Docker's disk image itself, open Docker Desktop → Settings → Resources → Advanced and lower the disk image size."
           ],
           "summary": "Let Docker reclaim the space it no longer uses."
         },
@@ -202,8 +202,8 @@ expression: envelope
         "instructions": {
           "provider": "Finder",
           "steps": [
-            "Open the application once if you still use it; Spotlight records the date and Broza stops listing it",
-            "Otherwise drag it from /Applications to the Trash, then run `broza suggest` again for its leftovers"
+            "Applications with no record of use are never moved by Broza: open each one once if you still use it, and Spotlight records the date.",
+            "Otherwise drag it from /Applications to the Trash, then run `broza suggest` again for its leftovers."
           ],
           "summary": "Check these yourself: Spotlight has no record of them being opened."
         },
@@ -323,12 +323,17 @@ expression: envelope
     "arch": "arm64",
     "macos_version": "26.1"
   },
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "warnings": [
     {
       "code": "permission_denied",
       "message": "permission denied: /System/Volumes/Data/Users/dana/Library/Accounts",
       "path": "/System/Volumes/Data/Users/dana/Library/Accounts"
+    },
+    {
+      "code": "permission_denied",
+      "message": "permission denied: /System/Volumes/Data/Users/dana/Library/Application Support/com.apple.TCC",
+      "path": "/System/Volumes/Data/Users/dana/Library/Application Support/com.apple.TCC"
     }
   ]
 }

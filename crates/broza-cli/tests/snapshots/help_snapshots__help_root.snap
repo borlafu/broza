@@ -7,14 +7,16 @@ Safe, explainable disk analysis and cleanup for macOS
 Usage: broza [OPTIONS] [COMMAND]
 
 Commands:
-  scan        Analyse storage and show disks, containers, volumes and real usage
-  explain     Explain what a volume, path or cleanup category is
-  suggest     Detect cleanable categories and estimate reclaimable space
-  clean       Execute the cleanup. Dry run by default
-  restore     Recover items from quarantine
-  config      Read and write configuration keys
-  quarantine  Manage the quarantine store
-  about       Version, license, schema version and support link
+  scan         Analyse storage and show disks, containers, volumes and real usage
+  explain      Explain what a volume, path or cleanup category is
+  suggest      Detect cleanable categories and estimate reclaimable space
+  clean        Execute the cleanup. Dry run by default
+  restore      Recover items from quarantine
+  config       Read and write configuration keys
+  quarantine   Manage the quarantine store
+  doctor       Check Full Disk Access and show where Broza keeps its files
+  about        Version, license, schema version and support link
+  completions  Print a shell completion script
 
 Options:
       --json            JSON output on stdout. Disables color, progress and interactivity

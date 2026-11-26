@@ -7,8 +7,8 @@ use broza::BrozaError;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::args::{
-    CleanArgs, ConfigArgs, ConfigCommand, ExplainArgs, QuarantineArgs, QuarantineCommand, RestoreArgs,
-    ScanArgs, SuggestArgs,
+    CleanArgs, ConfigArgs, ConfigCommand, DoctorArgs, ExplainArgs, QuarantineArgs, QuarantineCommand,
+    RestoreArgs, ScanArgs, SuggestArgs,
 };
 
 /// `-V/--version` text: binary version plus the JSON schema version, both read
@@ -95,8 +95,20 @@ pub enum Command {
     Config(ConfigArgs),
     /// Manage the quarantine store.
     Quarantine(QuarantineArgs),
+    /// Check Full Disk Access and show where Broza keeps its files.
+    Doctor(DoctorArgs),
     /// Version, license, schema version and support link.
     About,
+    /// Print a shell completion script.
+    ///
+    /// For example: broza completions zsh > ~/.zfunc/_broza
+    Completions {
+        /// Shell to generate the script for.
+        shell: clap_complete::Shell,
+    },
+    /// Print the manual page in roff, for example: broza man > broza.1
+    #[command(hide = true)]
+    Man,
 }
 
 impl Command {
@@ -110,7 +122,10 @@ impl Command {
             Self::Restore(_) => "restore",
             Self::Config(_) => "config",
             Self::Quarantine(_) => "quarantine",
+            Self::Doctor(_) => "doctor",
             Self::About => "about",
+            Self::Completions { .. } => "completions",
+            Self::Man => "man",
         }
     }
 
@@ -126,6 +141,17 @@ impl Command {
                 ConfigCommand::Set { .. } | ConfigCommand::Reset { .. } | ConfigCommand::Path
             ),
             _ => false,
+        }
+    }
+
+    /// Whether the command reads or changes the machine, and so must refuse
+    /// an unsupported one (exit `8`). `about`, `config`, `doctor`, the shell
+    /// helpers and `explain <category>` describe Broza itself and work anywhere.
+    pub fn needs_supported_host(&self) -> bool {
+        match self {
+            Self::About | Self::Config(_) | Self::Doctor(_) | Self::Completions { .. } | Self::Man => false,
+            Self::Explain(args) => args.target.parse::<broza::model::Category>().is_err(),
+            _ => true,
         }
     }
 

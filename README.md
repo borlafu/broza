@@ -43,6 +43,12 @@ Or build from source with Cargo:
 cargo install --locked --git https://github.com/borlafu/broza broza-cli
 ```
 
+Tab completion for your shell (zsh shown; `bash` and `fish` work the same way):
+
+```bash
+mkdir -p ~/.zfunc && broza completions zsh > ~/.zfunc/_broza
+```
+
 See what is using your disk:
 
 ```bash
@@ -99,14 +105,13 @@ Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
 └─ APFS container  disk3  (994.7 GB)
    ├─ Used        812.4 GB  ████████████████░░░░  81.7%
    ├─ Free         98.1 GB
-   └─ Purgeable    84.1 GB  ← estimate; macOS shows this as "available"
-
-   Volumes in this container:
-   ┌ Macintosh HD         System     11.3 GB   read-only, sealed
-   ├ Macintosh HD - Data  Data      798.2 GB   ← your data
-   ├ Preboot              Preboot     6.5 GB
-   ├ Recovery             Recovery    1.2 GB
-   └ VM                   VM          3.0 GB   swap
+   ├─ Purgeable    84.1 GB  ← estimate; macOS shows this as "available"
+   └─ Volumes
+      ├─ Macintosh HD         System     11.3 GB   read-only, sealed
+      ├─ Macintosh HD - Data  Data      798.2 GB   ← your data
+      ├─ Preboot              Preboot     6.5 GB
+      ├─ Recovery             Recovery    1.2 GB
+      └─ VM                   VM          3.0 GB   swap
 
 Largest consumers on Macintosh HD - Data:
   312.4 GB  ~/Library/Developer/Xcode/DerivedData/
@@ -177,9 +182,10 @@ by deleting files by hand. Broza uses `tmutil` for this and never touches update
 - Apple Silicon (M-series). Intel Macs are not supported.
 - No special permissions to enumerate disks or scan your home folder.
 - Full Disk Access is optional. It lets Broza scan protected areas such as Mail, Safari, and
-  device backups. Without it, Broza scans what it can and tells you what it skipped: System
-  Settings → Privacy & Security → Full Disk Access, then add your terminal (or the `broza`
-  binary). Only a path you name that macOS refuses outright ends the command (exit `3`).
+  device backups. Without it, Broza scans what it can and tells you what it skipped. Run
+  `broza doctor` to check whether it is on and for which terminal app; `broza doctor --open`
+  opens the right System Settings pane. Quit and reopen the terminal after turning it on. Only
+  a path you name that macOS refuses outright ends the command (exit `3`).
 
 ## Scripting and JSON
 
@@ -187,7 +193,7 @@ Every command supports `--json`. Output is a stable envelope:
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "broza_version": "1.0.0",
   "generated_at": "2026-09-21T10:36:08Z",
   "command": "suggest",

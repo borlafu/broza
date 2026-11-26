@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::BrozaError;
+use crate::detect::category_text::{APP_OPEN_ONCE_STEP, APP_TRASH_STEP};
 use crate::model::{Action, Category, Finding, FindingPath, Instructions, Risk};
 use crate::scan::{WalkOptions, walk};
 
@@ -259,23 +260,26 @@ fn applications(mut paths: Vec<FindingPath>) -> Result<Option<Finding>, BrozaErr
     finish(builder, paths)
 }
 
+/// Name of the finding Broza only reports: `unused-apps.unverified`.
+pub(crate) const UNVERIFIED_FINDING: &str = "unverified";
+/// Risk of that finding: low confidence, so Broza never acts on it.
+pub(crate) const UNVERIFIED_RISK: Risk = Risk::Red;
+
+/// What to do with an application Spotlight has no record of.
+pub(crate) fn unverified_instructions() -> Instructions {
+    Instructions {
+        provider: "Finder".to_owned(),
+        summary: "Check these yourself: Spotlight has no record of them being opened.".to_owned(),
+        steps: vec![APP_OPEN_ONCE_STEP.to_owned(), APP_TRASH_STEP.to_owned()],
+    }
+}
+
 fn unverified_applications(mut paths: Vec<FindingPath>) -> Result<Option<Finding>, BrozaError> {
     paths.sort_by(by_size_then_path);
-    let builder = start(Category::UnusedApps, "unverified", "Applications with no record of use")?
-        .risk(Risk::Red)
+    let builder = start(Category::UnusedApps, UNVERIFIED_FINDING, "Applications with no record of use")?
+        .risk(UNVERIFIED_RISK)
         .action(Action::InformOnly)
-        .instructions(Instructions {
-            provider: "Finder".to_owned(),
-            summary: "Check these yourself: Spotlight has no record of them being opened.".to_owned(),
-            steps: vec![
-                "Open the application once if you still use it; Spotlight records the date and Broza \
-                 stops listing it"
-                    .to_owned(),
-                "Otherwise drag it from /Applications to the Trash, then run `broza suggest` again for \
-                 its leftovers"
-                    .to_owned(),
-            ],
-        })
+        .instructions(unverified_instructions())
         .description(
             "Applications Spotlight has no last-opened date for, judged by the bundle's own times alone.",
         )

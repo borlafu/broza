@@ -6,6 +6,7 @@
 //! in, a `String` out, so a layout can be snapshot-tested without a terminal.
 
 pub mod clean;
+pub mod doctor;
 pub mod explain;
 pub mod quarantine;
 pub mod restore;

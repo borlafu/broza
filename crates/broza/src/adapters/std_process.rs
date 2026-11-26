@@ -90,27 +90,38 @@ impl ProcessRunner for StdProcessRunner {
     }
 }
 
+/// Environment variable that makes macOS tools report a legacy version
+/// (`sw_vers` says 10.16, or 16.0 on macOS 26). Some Python and Rosetta shells
+/// export it; Broza's children must see the real system.
+const VERSION_COMPAT_VAR: &str = "SYSTEM_VERSION_COMPAT";
+
 /// Start `program` as the leader of its own process group, with both pipes captured.
 ///
 /// The group is what makes the deadline enforceable: killing the child alone would
 /// leave anything it started holding the pipe open.
 fn spawn(program: &str, args: &[&str]) -> Result<Child, BrozaError> {
+    command(program, args).spawn().map_err(|source| match source.kind() {
+        std::io::ErrorKind::NotFound => ProcessError::new(ProcessErrorKind::NotFound, program).into(),
+        std::io::ErrorKind::PermissionDenied => {
+            ProcessError::new(ProcessErrorKind::NotExecutable, program).into()
+        }
+        _ => BrozaError::Io { context: format!("run `{program}`"), source },
+    })
+}
+
+/// The command [`spawn`] starts, before it starts.
+fn command(program: &str, args: &[&str]) -> Command {
     use std::os::unix::process::CommandExt;
 
-    Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
+        .env_remove(VERSION_COMPAT_VAR)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(OWN_PROCESS_GROUP)
-        .spawn()
-        .map_err(|source| match source.kind() {
-            std::io::ErrorKind::NotFound => ProcessError::new(ProcessErrorKind::NotFound, program).into(),
-            std::io::ErrorKind::PermissionDenied => {
-                ProcessError::new(ProcessErrorKind::NotExecutable, program).into()
-            }
-            _ => BrozaError::Io { context: format!("run `{program}`"), source },
-        })
+        .process_group(OWN_PROCESS_GROUP);
+    command
 }
 
 /// Start draining both pipes.
@@ -218,7 +229,7 @@ fn kill_process_group(child: &Child) {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{Deadline, FAR_FUTURE, StdProcessRunner};
+    use super::{Deadline, FAR_FUTURE, StdProcessRunner, VERSION_COMPAT_VAR, command};
     use crate::BrozaError;
     use crate::ports::ProcessRunner;
 
@@ -331,5 +342,13 @@ mod tests {
 
         assert!(deadline.remaining() > FAR_FUTURE / 2);
         assert!(Deadline::start(Duration::ZERO).remaining().is_zero());
+    }
+
+    #[test]
+    fn children_never_inherit_the_legacy_version_switch() {
+        let built = command("/usr/bin/sw_vers", &["-productVersion"]);
+
+        let removed = built.get_envs().any(|(key, value)| key == VERSION_COMPAT_VAR && value.is_none());
+        assert!(removed, "SYSTEM_VERSION_COMPAT must be cleared for every child");
     }
 }

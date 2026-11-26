@@ -88,7 +88,17 @@ pub fn run(context: &ExplainContext<'_>) -> Result<Outcome, BrozaError> {
 fn resolve(context: &ExplainContext<'_>) -> Result<(ExplainReport, Vec<Warning>), BrozaError> {
     let target = context.args.target.as_str();
     if let Ok(category) = target.parse::<Category>() {
-        return Ok((ExplainReport::for_category(category), context.warnings.clone()));
+        let report = match context.args.finding.as_deref() {
+            None => ExplainReport::for_category(category),
+            Some(name) => ExplainReport::for_finding(category, name)
+                .ok_or_else(|| BrozaError::TargetNotFound(unknown_finding(category, name)))?,
+        };
+        return Ok((report, context.warnings.clone()));
+    }
+    if context.args.finding.is_some() {
+        return Err(BrozaError::Usage(format!(
+            "a finding can only follow a category id, and `{target}` is not one; try `broza explain cloud-synced icloud`"
+        )));
     }
     let enumeration = context.ports.disks.enumerate()?;
     let warnings = [context.warnings.clone(), enumeration.warnings].concat();
@@ -139,6 +149,23 @@ fn unresolved(target: &str) -> String {
     format!(
         "`{target}` is not a category id, a volume, or an existing path on a volume Broza can see; \
          try `broza scan` to list the volumes"
+    )
+}
+
+/// Why `explain <category> <name>` found nothing, with the names that work.
+fn unknown_finding(category: Category, name: &str) -> String {
+    let known = broza::detect::reported_findings(category);
+    if known.is_empty() {
+        return format!(
+            "{} has no finding Broza only reports; `broza explain {}` says how to clean it",
+            category.as_str(),
+            category.as_str()
+        );
+    }
+    format!(
+        "{} has no finding `{name}` Broza only reports; try one of: {}",
+        category.as_str(),
+        known.join(", ")
     )
 }
 
@@ -273,7 +300,15 @@ mod tests {
         handles.fs.add_root("/System/Volumes/Data", 2);
         handles.fs.add_dir("/Users");
         handles.fs.add_file("/usr/share/firmlinks", b"/Users\tUsers\n");
-        let args = ExplainArgs { target: target.to_owned(), short };
+        // `<category> <finding>` in one string; anything else is one target,
+        // spaces and all (`No Such Volume`).
+        let (target, finding) = match target.split_once(' ') {
+            Some((first, finding)) if first.parse::<Category>().is_ok() || first == "disk3s5" => {
+                (first, Some(finding.to_owned()))
+            }
+            _ => (target, None),
+        };
+        let args = ExplainArgs { target: target.to_owned(), finding, short };
         run(&ExplainContext {
             ports: &ports,
             args: &args,
@@ -287,9 +322,34 @@ mod tests {
     }
 
     #[test]
+    fn a_finding_broza_only_reports_is_answered_with_its_steps() {
+        let outcome =
+            run_with("cloud-synced icloud", false, OutputFormat::Json).unwrap_or_else(|e| panic!("{e}"));
+        let json: serde_json::Value =
+            serde_json::from_str(&outcome.rendered).unwrap_or_else(|e| panic!("{e}"));
+
+        assert_eq!(json["data"]["finding"], "cloud-synced.icloud");
+        assert_eq!(json["data"]["instructions"]["provider"], "iCloud Drive");
+    }
+
+    #[test]
+    fn an_unknown_finding_is_not_found_and_names_the_ones_that_exist() {
+        let error = run_with("cloud-synced nope", false, OutputFormat::Human).expect_err("no such finding");
+        let trash = run_with("trash home", false, OutputFormat::Human).expect_err("trash reports nothing");
+        let volume = run_with("disk3s5 icloud", false, OutputFormat::Human).expect_err("not a category");
+
+        assert!(
+            matches!(error, BrozaError::TargetNotFound(ref m) if m.contains("icloud, dropbox")),
+            "{error}"
+        );
+        assert!(matches!(trash, BrozaError::TargetNotFound(_)), "{trash}");
+        assert!(matches!(volume, BrozaError::Usage(_)), "{volume}");
+    }
+
+    #[test]
     fn a_category_target_is_answered_without_enumerating_anything() {
         let (ports, handles) = broza::testing::fake_ports();
-        let args = ExplainArgs { target: "snapshots".to_owned(), short: false };
+        let args = ExplainArgs { target: "snapshots".to_owned(), finding: None, short: false };
 
         let outcome = run(&ExplainContext {
             ports: &ports,
@@ -351,7 +411,7 @@ mod tests {
         unmounted[0].containers[0].volumes = vec![volume("disk3s2", "Preboot", VolumeRole::Preboot, None)];
         handles.disks.set_disks(unmounted);
         handles.fs.add_dir("/Users");
-        let args = ExplainArgs { target: "/Users".to_owned(), short: false };
+        let args = ExplainArgs { target: "/Users".to_owned(), finding: None, short: false };
 
         let error = run(&ExplainContext {
             ports: &ports,

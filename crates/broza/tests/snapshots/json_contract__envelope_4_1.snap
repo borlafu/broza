@@ -12,6 +12,6 @@ expression: value
     "arch": "arm64",
     "macos_version": "26.1"
   },
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "warnings": []
 }

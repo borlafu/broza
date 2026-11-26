@@ -18,9 +18,11 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::BrozaError;
-use crate::model::{Category, FindingPath, Instructions};
+use crate::model::{Category, Diagnostic, FindingPath, Instructions};
 use crate::scan::{WalkOptions, walk};
 
 use super::support::{by_size_then_path, start};
@@ -28,6 +30,12 @@ use crate::detect::detector::{DetectContext, Detected, Detector};
 
 /// iCloud Drive and every iCloud-backed app container.
 const ICLOUD_ROOT: &str = "Library/Mobile Documents";
+/// How long the cloud roots may be walked, all of them together. A File
+/// Provider that answers slowly must not stall `suggest`; what is left
+/// unwalked makes the figure a floor.
+const CLOUD_WALK_BUDGET: Duration = Duration::from_secs(10);
+/// Warning code: a cloud root's walk ran out of time.
+pub const CLOUD_WALK_TIMED_OUT_CODE: &str = "cloud_walk_timed_out";
 /// Where File Provider extensions mount their roots, one per account.
 const CLOUD_STORAGE_DIR: &str = "Library/CloudStorage";
 /// Sync clients from before File Provider put their folder in the home.
@@ -36,6 +44,16 @@ const LEGACY_ROOTS: [(&str, Provider); 3] = [
     ("OneDrive", Provider::OneDrive),
     ("Google Drive", Provider::GoogleDrive),
 ];
+
+/// The provider's steps for the finding `cloud-synced.<name>`, by its name.
+pub(crate) fn instructions_for(name: &str) -> Option<(&'static str, Instructions)> {
+    Provider::ALL.into_iter().find(|provider| provider.slug() == name).map(|p| (p.slug(), p.instructions()))
+}
+
+/// Every finding name this detector can produce, in a stable order.
+pub(crate) fn finding_names() -> Vec<&'static str> {
+    Provider::ALL.iter().map(|provider| provider.slug()).collect()
+}
 
 /// A cloud provider Broza knows the official eviction steps of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,6 +66,9 @@ enum Provider {
 }
 
 impl Provider {
+    /// Every provider, in the order findings are listed.
+    const ALL: [Self; 5] = [Self::ICloud, Self::Dropbox, Self::OneDrive, Self::GoogleDrive, Self::Other];
+
     /// The provider a `~/Library/CloudStorage` entry belongs to, by its prefix.
     fn of_storage_entry(name: &str) -> Self {
         if name.starts_with("Dropbox") {
@@ -146,36 +167,46 @@ impl Detector for CloudSynced {
     }
 
     fn detect(&self, context: &DetectContext<'_>) -> Result<Detected, BrozaError> {
-        let mut detected = Detected::default();
-        let mut by_provider: BTreeMap<Provider, Vec<Measured>> = BTreeMap::new();
-        for (provider, root) in roots(context, &mut detected) {
-            match measure(context, &root) {
-                Ok(Some(measured)) => {
-                    // A hole in the root makes the figure a floor, and says so.
-                    if let Some(error) = measured.unreadable.first() {
-                        detected.warnings.push(Detected::unreadable(
-                            Category::CloudSynced,
-                            error.path.as_deref().unwrap_or(&root),
-                            "part of its synced files",
-                            &BrozaError::Other(error.message.clone()),
-                        ));
-                    }
-                    by_provider.entry(provider).or_default().push(measured);
-                }
-                Ok(None) => {}
-                Err(error) => detected.warnings.push(Detected::unreadable(
-                    Category::CloudSynced,
-                    &root,
-                    "its synced files",
-                    &error,
-                )),
-            }
-        }
-        for (provider, measured) in by_provider {
-            detected = detected.with_finding(Some(finding(provider, measured)?));
-        }
-        Ok(detected)
+        detect_within(context, CLOUD_WALK_BUDGET)
     }
+}
+
+/// [`CloudSynced::detect`], every root's walk bounded by one shared `budget`.
+fn detect_within(context: &DetectContext<'_>, budget: Duration) -> Result<Detected, BrozaError> {
+    let deadline = Instant::now() + budget;
+    let mut detected = Detected::default();
+    let mut by_provider: BTreeMap<Provider, Vec<Measured>> = BTreeMap::new();
+    for (provider, root) in roots(context, &mut detected) {
+        let (outcome, timed_out) = measure(context, &root, deadline);
+        if timed_out {
+            detected.warnings.push(timed_out_warning(&root, budget));
+        }
+        match outcome {
+            Ok(Some(measured)) => {
+                // A hole in the root makes the figure a floor, and says so.
+                if let Some(error) = measured.unreadable.first() {
+                    detected.warnings.push(Detected::unreadable(
+                        Category::CloudSynced,
+                        error.path.as_deref().unwrap_or(&root),
+                        "part of its synced files",
+                        &BrozaError::Other(error.message.clone()),
+                    ));
+                }
+                by_provider.entry(provider).or_default().push(measured);
+            }
+            Ok(None) => {}
+            Err(error) => detected.warnings.push(Detected::unreadable(
+                Category::CloudSynced,
+                &root,
+                "its synced files",
+                &error,
+            )),
+        }
+    }
+    for (provider, measured) in by_provider {
+        detected = detected.with_finding(Some(finding(provider, measured)?));
+    }
+    Ok(detected)
 }
 
 /// Every cloud root present under the home, with its provider.
@@ -234,10 +265,49 @@ fn is_directory(context: &DetectContext<'_>, path: &Path, detected: &mut Detecte
     }
 }
 
+/// The warning for a root whose walk ran out of time.
+fn timed_out_warning(root: &Path, budget: Duration) -> Diagnostic {
+    Diagnostic {
+        code: CLOUD_WALK_TIMED_OUT_CODE.to_owned(),
+        message: format!(
+            "the cloud-synced detector stopped walking {}: the cloud roots had {} s in all and the \
+             providers answered slowly, so its size is a floor",
+            root.display(),
+            budget.as_secs()
+        ),
+        path: Some(root.to_path_buf()),
+    }
+}
+
 /// The local bytes and files of one root: a walk that counts placeholders as
-/// nothing and never enters a directory the provider has not downloaded.
-fn measure(context: &DetectContext<'_>, root: &Path) -> Result<Option<Measured>, BrozaError> {
-    let walked = walk(root, &WalkOptions::default(), context.fs);
+/// nothing and never enters a directory the provider has not downloaded, and
+/// stops descending at `deadline`. The flag says whether it had to stop.
+fn measure(
+    context: &DetectContext<'_>,
+    root: &Path,
+    deadline: Instant,
+) -> (Result<Option<Measured>, BrozaError>, bool) {
+    let timed_out = AtomicBool::new(false);
+    // ponytail: one wall-clock deadline for every root, checked before each
+    // directory; a single listing that hangs is still bounded only by the provider.
+    let stop = || {
+        let over = Instant::now() >= deadline;
+        if over {
+            timed_out.store(true, Ordering::Relaxed);
+        }
+        over
+    };
+    let options = WalkOptions { stop: Some(&stop), ..WalkOptions::default() };
+    let measured = measure_with(context, root, &options);
+    (measured, timed_out.load(Ordering::Relaxed))
+}
+
+fn measure_with(
+    context: &DetectContext<'_>,
+    root: &Path,
+    options: &WalkOptions<'_>,
+) -> Result<Option<Measured>, BrozaError> {
+    let walked = walk(root, options, context.fs);
     let Some(node) = walked.root() else {
         let reason = walked
             .errors

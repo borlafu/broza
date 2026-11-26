@@ -54,6 +54,9 @@ pub struct RuntimeEnv {
     /// `TMPDIR`: macOS points it inside the per-uid temporary directory, which
     /// is one of the roots Broza may write under (`docs/cli-spec.md` §3.4).
     pub tmpdir: Option<PathBuf>,
+    /// `TERM_PROGRAM`: which terminal application runs Broza, the one Full
+    /// Disk Access has to be granted to.
+    pub term_program: Option<String>,
 }
 
 /// Where macOS keeps the per-uid temporary directories.
@@ -75,6 +78,23 @@ impl RuntimeEnv {
             host_override: host_override(),
             fake_diskutil_fixtures: fake_diskutil_fixtures(),
             tmpdir: std::env::var_os("TMPDIR").map(PathBuf::from),
+            term_program: std::env::var("TERM_PROGRAM").ok().filter(|name| !name.is_empty()),
+        }
+    }
+
+    /// The terminal application by the name macOS lists it under in System
+    /// Settings, when `TERM_PROGRAM` names one Broza knows.
+    pub fn terminal_app(&self) -> Option<&'static str> {
+        match self.term_program.as_deref()? {
+            "Apple_Terminal" => Some("Terminal"),
+            "iTerm.app" => Some("iTerm"),
+            "vscode" => Some("Visual Studio Code"),
+            "WarpTerminal" => Some("Warp"),
+            "ghostty" => Some("Ghostty"),
+            "WezTerm" => Some("WezTerm"),
+            "Hyper" => Some("Hyper"),
+            "Tabby" => Some("Tabby"),
+            _ => None,
         }
     }
 
@@ -120,6 +140,7 @@ impl RuntimeEnv {
             host_override: None,
             fake_diskutil_fixtures: None,
             tmpdir: None,
+            term_program: None,
         }
     }
 
@@ -242,5 +263,18 @@ mod tests {
             assert!(env.uid_temp_dirs().is_empty(), "{raw}");
         }
         assert!(RuntimeEnv::for_tests(PathBuf::from("/Users/d")).uid_temp_dirs().is_empty());
+    }
+
+    #[test]
+    fn the_terminal_is_named_as_system_settings_lists_it_or_not_at_all() {
+        let with = |name: &str| RuntimeEnv {
+            term_program: Some(name.to_owned()),
+            ..RuntimeEnv::for_tests(PathBuf::from("/Users/d"))
+        };
+
+        assert_eq!(with("Apple_Terminal").terminal_app(), Some("Terminal"));
+        assert_eq!(with("iTerm.app").terminal_app(), Some("iTerm"));
+        assert_eq!(with("tmux").terminal_app(), None, "inside tmux the app is unknown");
+        assert_eq!(RuntimeEnv::for_tests(PathBuf::from("/Users/d")).terminal_app(), None);
     }
 }

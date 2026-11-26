@@ -1,11 +1,14 @@
 //! The human rendering of `broza suggest` (`docs/cli-spec.md` §3.3).
 //!
-//! Findings are grouped by risk, each group headed by its text label and its
-//! total, then by category, biggest first. Every risk carries a word as well as
-//! a colour (RNF-06). The headline counts only what Broza can act on; inform-only
-//! findings are named on their own line with their size, so the number at the
-//! top is never inflated by space Broza will not free. The footer names the two
-//! commands that come next — the dry run first — for the safest non-empty group.
+//! Actionable findings are grouped by risk, each group headed by its text label
+//! and its total, then by category, biggest first. Every risk carries a word as
+//! well as a colour (RNF-06). The headline counts only what Broza can act on.
+//! Inform-only findings — space the user can reclaim another way, such as
+//! Docker's disk image — get a group of their own after the risk groups, with
+//! their size and the steps that free it, so the number at the top is never
+//! inflated by space Broza will not free and a `0 B` row never hides gigabytes.
+//! The footer names the two commands that come next — the dry run first — for
+//! the safest non-empty group.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -14,6 +17,7 @@ use broza::model::{Category, Finding, Risk, SuggestReport};
 
 use crate::output::human::risk_chip;
 use crate::output::human::scan::folders::abbreviate;
+
 use crate::output::{ColorPolicy, format_bytes};
 
 /// Width of the category column.
@@ -22,6 +26,10 @@ const CATEGORY_WIDTH: usize = 16;
 const SIZE_WIDTH: usize = 9;
 /// How many paths `--explain` prints per finding.
 const EXPLAIN_PATHS: usize = 5;
+/// Label of the headline line and of the group for inform-only findings.
+const ANOTHER_WAY: &str = "Reclaimable another way";
+/// Indent of the line under an inform-only finding's description column.
+const DETAIL_INDENT: &str = "                               ";
 /// What is printed when no detector found anything.
 const NOTHING_FOUND: &str =
     "Nothing to suggest: no finding passed the --category, --risk and --min-size filters.";
@@ -34,15 +42,20 @@ pub fn render(report: &SuggestReport, explain: bool, home: &Path, policy: ColorP
     let mut text =
         format!("Potentially reclaimable space:  {}", format_bytes(report.total_reclaimable_bytes));
     if report.inform_only_bytes > 0 {
-        let _ignored =
-            write!(text, "\nReported, not reclaimable by Broza: {}", format_bytes(report.inform_only_bytes));
+        let _ignored = write!(
+            text,
+            "\n{:<32}{}   (Broza only reports these; how below)",
+            format!("{ANOTHER_WAY}:"),
+            format_bytes(report.inform_only_bytes)
+        );
     }
     for (risk, total) in [
         (Risk::Green, report.by_risk.green),
         (Risk::Amber, report.by_risk.amber),
         (Risk::Red, report.by_risk.red),
     ] {
-        let findings: Vec<&Finding> = report.findings.iter().filter(|f| f.risk() == risk).collect();
+        let findings: Vec<&Finding> =
+            report.findings.iter().filter(|f| f.risk() == risk && f.is_actionable()).collect();
         if findings.is_empty() {
             continue;
         }
@@ -51,6 +64,7 @@ pub fn render(report: &SuggestReport, explain: bool, home: &Path, policy: ColorP
             render_category(&mut text, category, &of_category, explain, home);
         }
     }
+    render_another_way(&mut text, report, explain, home);
     if let Some(footer) = footer(report) {
         let _ignored = write!(text, "\n\n{footer}");
     }
@@ -86,30 +100,56 @@ fn actionable_total(findings: &[&Finding]) -> u64 {
 
 /// One category line, with its actionable findings summarised, plus their details.
 fn render_category(text: &mut String, category: Category, findings: &[&Finding], explain: bool, home: &Path) {
-    let summary =
-        findings.iter().filter(|f| f.is_actionable()).map(|f| summary_of(f)).collect::<Vec<_>>().join(", ");
+    let summary = findings.iter().map(|f| summary_of(f)).collect::<Vec<_>>().join(", ");
     let _ignored = write!(
         text,
         "\n   {:<CATEGORY_WIDTH$}{:>SIZE_WIDTH$}   {summary}",
         category.as_str(),
         format_bytes(actionable_total(findings))
     );
-    for finding in findings {
-        if !finding.is_actionable() {
-            let _ignored = write!(
-                text,
-                "\n   {:<CATEGORY_WIDTH$}{:>SIZE_WIDTH$}   {}: {} — inform only, see: broza explain {}",
-                "",
-                "",
-                finding.title(),
-                format_bytes(finding.reclaimable_bytes()),
-                category.as_str()
-            );
+    if explain {
+        for finding in findings {
+            render_reasoning(text, finding, home);
         }
+    }
+}
+
+/// The inform-only findings, biggest first, each with its size and the steps
+/// that free the space outside Broza. Nothing when there are none.
+fn render_another_way(text: &mut String, report: &SuggestReport, explain: bool, home: &Path) {
+    let mut informed: Vec<&Finding> = report.findings.iter().filter(|f| !f.is_actionable()).collect();
+    if informed.is_empty() {
+        return;
+    }
+    informed.sort_by_key(|f| std::cmp::Reverse(f.reclaimable_bytes()));
+    let _ignored = write!(
+        text,
+        "\n\n{} — {}   (not by Broza)",
+        ANOTHER_WAY.to_uppercase(),
+        format_bytes(report.inform_only_bytes)
+    );
+    for finding in informed {
+        let _ignored = write!(
+            text,
+            "\n   {:<CATEGORY_WIDTH$}{:>SIZE_WIDTH$}   {}",
+            finding.category().as_str(),
+            format_bytes(finding.reclaimable_bytes()),
+            finding.title()
+        );
+        let _ignored = write!(text, "\n{DETAIL_INDENT}How: {}", how_command(finding));
         if explain {
             render_reasoning(text, finding, home);
         }
     }
+}
+
+/// The command that prints the steps for an inform-only finding:
+/// `broza explain <category> <finding>`.
+fn how_command(finding: &Finding) -> String {
+    let category = finding.category().as_str();
+    let id = finding.id().to_string();
+    let name = id.strip_prefix(category).and_then(|rest| rest.strip_prefix('.')).unwrap_or(&id);
+    format!("broza explain {category} {name}")
 }
 
 /// `Title (size)`, or `N Title (reason)` for a finding whose size macOS does
@@ -172,8 +212,8 @@ mod tests {
         b = if inform {
             b.action(Action::InformOnly).instructions(Instructions {
                 provider: "iCloud Drive".into(),
-                summary: "s".into(),
-                steps: Vec::new(),
+                summary: "Let the provider keep the file online only.".into(),
+                steps: vec!["Open Finder.".into(), "Choose Remove Download.".into()],
             })
         } else {
             b.paths(vec![FindingPath {
@@ -196,16 +236,36 @@ mod tests {
         let text = render(&report, false, Path::new("/Users/dana"), ColorPolicy::Never);
 
         assert!(text.starts_with("Potentially reclaimable space:  138.2 GB"), "{text}");
-        assert!(text.contains("Reported, not reclaimable by Broza: 12.5 GB"), "{text}");
-        assert!(text.contains("SAFE (green) — 138.2 GB"), "{text}");
-        assert!(text.contains("   build-cache      121.4 GB   Title of build-cache (121.4 GB)"), "{text}");
-        assert!(text.contains("INFO ONLY (red) — 0 B"), "{text}");
         assert!(
-            text.contains("Title of cloud-synced: 12.5 GB — inform only, see: broza explain cloud-synced"),
+            text.contains("Reclaimable another way:        12.5 GB   (Broza only reports these; how below)"),
             "{text}"
         );
+        assert!(text.contains("SAFE (green) — 138.2 GB"), "{text}");
+        assert!(text.contains("   build-cache      121.4 GB   Title of build-cache (121.4 GB)"), "{text}");
+        assert!(!text.contains("INFO ONLY"), "a risk group with nothing actionable is not printed: {text}");
+        assert!(!text.contains(" 0 B"), "no zero row hides the inform-only size: {text}");
+        assert!(text.contains("RECLAIMABLE ANOTHER WAY — 12.5 GB   (not by Broza)"), "{text}");
+        assert!(text.contains("   cloud-synced      12.5 GB   Title of cloud-synced"), "{text}");
         assert!(text.contains("broza clean --risk green            (dry run"), "{text}");
         assert!(text.ends_with("(moves to quarantine; space is freed after expiry or purge)"), "{text}");
+    }
+
+    #[test]
+    fn an_inform_only_finding_shows_its_size_and_the_command_with_its_steps() {
+        let report = SuggestReport::from_findings(vec![
+            finding("user-cache.a", Category::UserCache, 16_800_000_000, false),
+            finding("cloud-synced.c", Category::CloudSynced, 12_500_000_000, true),
+        ]);
+
+        let text = render(&report, false, Path::new("/Users/dana"), ColorPolicy::Never);
+
+        let group = &text[text.find("RECLAIMABLE ANOTHER WAY").unwrap()..text.find("Next step").unwrap()];
+        assert_eq!(
+            group.trim_end(),
+            "RECLAIMABLE ANOTHER WAY — 12.5 GB   (not by Broza)
+   cloud-synced      12.5 GB   Title of cloud-synced
+                               How: broza explain cloud-synced c"
+        );
     }
 
     #[test]

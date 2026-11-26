@@ -100,11 +100,11 @@ fn about_json_is_a_valid_envelope() {
     assert_eq!(output.status.code(), Some(0));
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("invalid json: {e}"));
-    assert_eq!(parsed["schema_version"], "1.1");
+    assert_eq!(parsed["schema_version"], "1.2");
     assert_eq!(parsed["command"], "about");
     assert_eq!(parsed["data"]["donate_url"], "https://ko-fi.com/borlafu");
     assert_eq!(parsed["data"]["license"], "MIT");
-    assert_eq!(parsed["data"]["schema_version"], "1.1");
+    assert_eq!(parsed["data"]["schema_version"], "1.2");
     assert!(parsed["warnings"].is_array());
     assert!(!parsed["generated_at"].as_str().unwrap_or_default().contains('.'));
     assert!(parsed["errors"].is_array());
@@ -151,5 +151,36 @@ fn invalid_config_file_exits_two() {
 #[test]
 fn version_reports_the_schema_version() {
     let home = temp_home();
-    broza(home.path()).arg("--version").assert().code(0).stdout(contains("JSON schema 1.1"));
+    let expected = format!("JSON schema {}", broza::SCHEMA_VERSION);
+    broza(home.path()).arg("--version").assert().code(0).stdout(contains(expected));
+}
+
+/// §2: a Mac outside the supported window is refused with exit `8` by every
+/// command that reads the machine; `about` still answers.
+#[test]
+fn an_unsupported_mac_exits_eight_and_about_still_works() {
+    for host in ["25.6/arm64", "26.1/x86_64"] {
+        let home = temp_home();
+        for command in [
+            &["suggest"][..],
+            &["scan"],
+            &["explain", "/"],
+            &["clean", "--risk", "green"],
+            &["quarantine", "list"],
+        ] {
+            let refused = broza(home.path()).env("BROZA_HOST", host).args(command).output().unwrap();
+            let stderr = String::from_utf8_lossy(&refused.stderr);
+            assert_eq!(refused.status.code(), Some(8), "{host} {command:?}: {stderr}");
+        }
+        for command in [&["about"][..], &["explain", "trash"], &["completions", "zsh"]] {
+            broza(home.path()).env("BROZA_HOST", host).args(command).assert().code(0);
+        }
+    }
+}
+
+#[test]
+fn the_shell_helpers_have_no_machine_readable_form() {
+    let home = temp_home();
+    broza(home.path()).args(["completions", "zsh", "--json"]).assert().code(2);
+    broza(home.path()).args(["man", "--csv"]).assert().code(2);
 }

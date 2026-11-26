@@ -212,7 +212,7 @@ fn a_named_path_macos_refuses_exits_three_while_the_volume_scan_only_warns() {
     let whole = json_of(&["scan", "--json", "--volume", "disk3s5"]);
 
     assert_eq!(code, Some(3), "{stderr}");
-    assert!(stderr.contains("Full Disk Access"), "{stderr}");
+    assert!(stderr.contains("Full Disk Access") && stderr.contains("`broza doctor`"), "{stderr}");
     assert!(
         whole["warnings"].as_array().is_some_and(|w| w.iter().any(|w| w["code"] == "permission_denied")),
         "{whole}"
@@ -228,21 +228,22 @@ fn suggest_lists_the_green_categories_of_the_recorded_home() {
     assert!(text.contains("build-cache"), "{text}");
     assert!(text.contains("Xcode DerivedData"), "{text}");
     assert!(text.contains("user-cache"), "{text}");
-    assert!(
-        text.contains("Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache"),
-        "{text}"
-    );
+    assert!(text.contains("   build-cache       38.6 GB   Docker Desktop disk image"), "{text}");
+    assert!(text.contains("How: broza explain build-cache docker-raw"), "{text}");
     // Docker's disk image, the two cloud roots and the application Spotlight
     // has no record of.
-    assert!(text.contains("Reported, not reclaimable by Broza: 52.3 GB"), "{text}");
+    assert!(text.contains("Reclaimable another way:        52.3 GB"), "{text}");
+    assert!(text.contains("RECLAIMABLE ANOTHER WAY — 52.3 GB"), "{text}");
     assert!(text.contains("Applications with no record of use"), "{text}");
-    assert!(text.contains("INFO ONLY (red)"), "{text}");
-    assert!(
-        text.contains(
-            "Already backed up in iCloud Drive: 12.5 GB — inform only, see: broza explain cloud-synced"
-        ),
-        "{text}"
-    );
+    assert!(!text.contains("INFO ONLY (red)"), "nothing red is actionable here: {text}");
+    assert!(text.contains("   cloud-synced      12.5 GB   Already backed up in iCloud Drive"), "{text}");
+    assert!(text.contains("How: broza explain cloud-synced icloud"), "{text}");
+    // Every command suggest names runs and prints the steps.
+    for line in text.lines().filter_map(|line| line.trim().strip_prefix("How: broza ")) {
+        let args: Vec<&str> = line.split_whitespace().collect();
+        let steps = stdout_of(&args);
+        assert!(steps.contains("How to free ") && steps.contains("  1. "), "{line}: {steps}");
+    }
 }
 
 #[test]
@@ -466,5 +467,43 @@ fn the_json_of_both_commands_is_a_valid_envelope() {
         assert_eq!(envelope["schema_version"], broza::SCHEMA_VERSION, "{args:?}");
         assert_eq!(envelope["host"]["macos_version"], "26.1", "{args:?}");
         assert_eq!(envelope["errors"], serde_json::json!([]), "{args:?}");
+    }
+}
+
+/// §6: a run that met a refusal on a machine without Full Disk Access ends
+/// with the hint that says so and how to turn it on.
+#[test]
+fn a_scan_without_full_disk_access_says_it_is_off_and_how_to_turn_it_on() {
+    let home = temp_home();
+    let output = broza(home.path()).env("TERM_PROGRAM", "Apple_Terminal").args(["scan"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("Full Disk Access is off for Terminal"), "{stderr}");
+    assert!(stderr.contains("`broza doctor --open`"), "{stderr}");
+}
+
+#[test]
+fn doctor_reports_the_recorded_machine_without_full_disk_access() {
+    let json = json_of(&["doctor", "--json"]);
+
+    assert_eq!(json["command"], "doctor");
+    assert_eq!(json["data"]["full_disk_access"]["state"], "missing");
+    assert_eq!(
+        json["data"]["full_disk_access"]["probe_path"],
+        "/System/Volumes/Data/Users/dana/Library/Application Support/com.apple.TCC"
+    );
+    assert_eq!(json["data"]["opened_settings"], false);
+    let human = stdout_of(&["doctor"]);
+    assert!(human.starts_with("Full Disk Access   missing"), "{human}");
+    assert!(human.contains("Turn on your terminal application."), "{human}");
+}
+
+/// §3.1: `scan -i` asks questions, so it refuses to run where it cannot.
+#[test]
+fn scan_interactive_without_a_terminal_or_with_a_machine_format_is_a_usage_error() {
+    for args in [&["scan", "-i"][..], &["scan", "-i", "--json"], &["scan", "-i", "--tree"]] {
+        let (code, stderr) = failure_of(args);
+        assert_eq!(code, Some(2), "{args:?}: {stderr}");
     }
 }

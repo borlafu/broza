@@ -36,6 +36,9 @@ Options:
       --tree
           Force the hierarchical tree view
 
+  -i, --interactive
+          Browse the largest consumers: open a folder by its number, .. to go back, q to quit
+
       --json
           JSON output on stdout. Disables color, progress and interactivity
 

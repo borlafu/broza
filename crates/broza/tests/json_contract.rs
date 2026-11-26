@@ -8,8 +8,8 @@
 use std::path::Path;
 
 use broza::model::{
-    CleanPlan, Envelope, Finding, FsKind, QuarantineList, ReclaimReport, RestoreReport, ScanReport,
-    SessionState, SuggestReport, VolumeRole,
+    CleanPlan, DoctorReport, Envelope, Finding, FsKind, QuarantineList, ReclaimReport, RestoreReport,
+    ScanReport, SessionState, SuggestReport, VolumeRole,
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -197,6 +197,12 @@ fn a_clean_plan_that_contradicts_the_invariants_cannot_be_parsed() {
         serde_json::from_value::<DataOnly<CleanPlan>>(value).is_err(),
         "a quarantined item must not carry an error"
     );
+}
+
+#[test]
+fn doctor_4_8_round_trips() {
+    let value = round_trip::<DataOnly<DoctorReport>>("4_8_doctor.json");
+    insta::assert_json_snapshot!("doctor_4_8", value);
 }
 
 #[test]

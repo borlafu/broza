@@ -183,14 +183,13 @@
 └─ APFS container  disk3  (994.7 GB)
    ├─ Used        812.4 GB  <span class="review">████████████████░░░░</span>  81.7%
    ├─ Free         98.1 GB
-   └─ Purgeable    84.1 GB  <span class="dim">← estimate; macOS shows this as "available"</span>
-
-   Volumes in this container:
-   ┌ Macintosh HD         System     11.3 GB   <span class="dim">read-only, sealed</span>
-   ├ Macintosh HD - Data  Data      798.2 GB   <span class="strong">← your data</span>
-   ├ Preboot              Preboot     6.5 GB
-   ├ Recovery             Recovery    1.2 GB
-   └ VM                   VM          3.0 GB   <span class="dim">swap</span>
+   ├─ Purgeable    84.1 GB  <span class="dim">← estimate; macOS shows this as "available"</span>
+   └─ Volumes
+      ├─ Macintosh HD         System     11.3 GB   <span class="dim">read-only, sealed</span>
+      ├─ Macintosh HD - Data  Data      798.2 GB   <span class="strong">← your data</span>
+      ├─ Preboot              Preboot     6.5 GB
+      ├─ Recovery             Recovery    1.2 GB
+      └─ VM                   VM          3.0 GB   <span class="dim">swap</span>
 
 Largest consumers on Macintosh HD - Data:
   312.4 GB  ~/Library/Developer/Xcode/DerivedData/
@@ -198,7 +197,7 @@ Largest consumers on Macintosh HD - Data:
    61.7 GB  ~/Documents/</span></span>
 <span class="term-step" data-step="suggest" data-work="2600"><span class="line-cmd"><span class="prompt">$</span> <span class="cmd">broza suggest</span></span>
 <span class="out">Potentially reclaimable space:  <span class="strong">234.3 GB</span>
-Reported, not reclaimable by Broza: 51.1 GB
+Reclaimable another way:        51.1 GB   (Broza only reports these; how below)
 
 <span class="safe">SAFE (green) — 138.2 GB</span>
    build-cache      121.4 GB   Xcode DerivedData (94.2 GB), Python bytecode caches (27.2 GB)
@@ -208,13 +207,13 @@ Reported, not reclaimable by Broza: 51.1 GB
    duplicates        52.3 GB   Duplicate files (52.3 GB)
    unused-apps       28.7 GB   6 apps not opened in more than 1 year
    old-backups       15.1 GB   2 iPhone backups from 2023
-   build-cache          0 B
-                               Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache
    snapshots           0 B     4 Time Machine local snapshots (size not reported by macOS)
 
-<span class="info">INFO ONLY (red) — 0 B</span>
-   cloud-synced         0 B
-                               Already backed up in iCloud Drive: 12.5 GB — inform only, see: broza explain cloud-synced
+<span class="info">RECLAIMABLE ANOTHER WAY — 51.1 GB   (not by Broza)</span>
+   build-cache       38.6 GB   Docker Desktop disk image
+                               How: broza explain build-cache docker-raw
+   cloud-synced      12.5 GB   Already backed up in iCloud Drive
+                               How: broza explain cloud-synced icloud
 
 <span class="dim">Next step:
   broza clean --risk green            (dry run, deletes nothing)

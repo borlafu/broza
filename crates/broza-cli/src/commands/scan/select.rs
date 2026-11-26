@@ -154,6 +154,7 @@ mod tests {
             volume: None,
             no_external: false,
             tree: false,
+            interactive: false,
         }
     }
 

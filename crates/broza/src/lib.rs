@@ -6,6 +6,7 @@
 //!
 //! Safety invariants are documented in `AGENTS.md` §2 and `docs/prd.md` §7.3.
 
+pub mod access;
 pub mod adapters;
 pub mod clean;
 pub mod config;
@@ -24,7 +25,7 @@ pub use error::BrozaError;
 pub use safety::exit_code::ExitCode;
 
 /// Version of the JSON contract produced by this crate (see `docs/cli-spec.md` §4).
-pub const SCHEMA_VERSION: &str = "1.1";
+pub const SCHEMA_VERSION: &str = "1.2";
 
 /// Crate version, as published.
 pub const BROZA_VERSION: &str = env!("CARGO_PKG_VERSION");

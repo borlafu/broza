@@ -1,12 +1,12 @@
 # Broza — CLI Specification
 
-**Specification version:** 1.4
+**Specification version:** 1.5
 **Status:** Approved for implementation
 **Scope:** Phase 1 (open source CLI, MIT)
 **Platform:** macOS 26 and 27 (the two latest major versions), Apple Silicon only
-**Date:** 2026-09-23
+**Date:** 2026-11-26
 
-> This document supersedes draft 1.0 (`broza-cli-spec.md`, Spanish). All changes relative to 1.0 are listed in §9 "Changelog 1.0 → 1.1", §10 "Changelog 1.1 → 1.2", §11 "Changelog 1.2 → 1.3" and §12 "Changelog 1.3 → 1.4". Requirement identifiers (`RF-xx`, `RNF-xx`) refer to the Broza PRD. This specification is normative: "MUST", "MUST NOT", "SHOULD" and "MAY" are used in their RFC 2119 sense.
+> This document supersedes draft 1.0 (`broza-cli-spec.md`, Spanish). All changes relative to 1.0 are listed in §9 "Changelog 1.0 → 1.1", §10 "Changelog 1.1 → 1.2", §11 "Changelog 1.2 → 1.3", §12 "Changelog 1.3 → 1.4" and §13 "Changelog 1.4 → 1.5". Requirement identifiers (`RF-xx`, `RNF-xx`) refer to the Broza PRD. This specification is normative: "MUST", "MUST NOT", "SHOULD" and "MAY" are used in their RFC 2119 sense.
 
 ---
 
@@ -130,6 +130,7 @@ A single code space for the whole CLI. Scripts MUST be able to distinguish "I di
 | An item's path no longer exists at `--apply` time | Item `skipped` with `error: "not_found"`; the plan continues; exit `5` if other items succeeded |
 | OS denies reading or acting on a path (`EACCES`/`EPERM`) | Item `failed` with `error: "permission_denied"`; whole-command `3` only when the operation was impossible without the permission |
 | `clean` dry run whose selection contains only `inform_only` findings | `0` with a warning; the plan lists nothing and stderr points to `broza explain <category>` |
+| A Mac whose architecture is not `arm64`, or whose macOS major is older than 26, running any command that reads or changes the machine | `8`, before anything is read (after the configuration is resolved, so a broken configuration still exits `2`). `about`, `config`, `doctor`, `completions`, `man` and `explain <category>` still work. A macOS version Broza could not read is only the `host_version_unknown` warning; a newer major than 27 is allowed, and so are 10.x and 16.x, which are what `sw_vers` reports in compatibility mode (`SYSTEM_VERSION_COMPAT`, which Broza also clears for every program it runs) |
 
 > **Rule:** `clean` in dry-run mode always returns `0` if the analysis succeeded, even if it proposes removing 200 GB. A dry run is not a failure.
 
@@ -153,6 +154,7 @@ broza scan [PATH...] [OPTIONS]
 | `--volume <id>` | string | all | Restrict the scan to one volume (device id, name or mount point). A disk or container identifier selects that whole level. Blank → exit `2`; names nothing → exit `4`. |
 | `--no-external` | bool | `false` | Exclude mounted external disks. By default externals are included. Applied before `--volume`, so a volume on an excluded disk is then "not found". |
 | `--tree` | bool | `false` | Force the hierarchical tree view. |
+| `-i`, `--interactive` | bool | `false` | Browse the largest consumers (see below). Needs an interactive terminal (stdin, stdout and stderr TTYs, no `CI`) and the human format: with `--json`, `--csv`, `--output` or without a terminal it is a usage error (exit `2`). Conflicts with `--tree`. |
 
 Supports `--json` and `--csv`. The CSV output is the **volume table**, one row per volume, with the header:
 
@@ -171,20 +173,25 @@ Physical disk  disk0  —  APPLE SSD AP1024Z  (1.00 TB)
 └─ APFS container  disk3  (994.7 GB)
    ├─ Used        812.4 GB  ████████████████░░░░  81.7%
    ├─ Free         98.1 GB
-   └─ Purgeable    84.1 GB  ← estimate; macOS shows this as "available"
-
-   Volumes in this container:
-   ┌ Macintosh HD         System     11.3 GB   read-only, sealed
-   ├ Macintosh HD - Data  Data      798.2 GB   ← your data
-   ├ Preboot              Preboot     6.5 GB
-   ├ Recovery             Recovery    1.2 GB
-   └ VM                   VM          3.0 GB   swap
+   ├─ Purgeable    84.1 GB  ← estimate; macOS shows this as "available"
+   └─ Volumes
+      ├─ Macintosh HD         System     11.3 GB   read-only, sealed
+      ├─ Macintosh HD - Data  Data      798.2 GB   ← your data
+      ├─ Preboot              Preboot     6.5 GB
+      ├─ Recovery             Recovery    1.2 GB
+      └─ VM                   VM          3.0 GB   swap
 
 Largest consumers on Macintosh HD - Data:
   312.4 GB  ~/Library/Developer/Xcode/DerivedData/
    84.1 GB  ~/Library/Caches/
    61.7 GB  ~/Documents/
 ```
+
+Below the consumers list, when it holds a directory, one line says how to look inside: `Look inside one: broza scan <largest directory>   ·   browse them all: broza scan -i` (the path as `~/…`, or quoted in full when a shell would need it).
+
+**Interactive browsing (`-i`).** The report is printed with every directory of the consumers lists numbered, across volumes in print order. Then stderr asks `Open a number, .. to go back, q to quit:`. A number walks that folder — warm from the cache — and prints `Largest consumers in <folder>:` with its own directories numbered; `..` prints the previous screen again and its numbers apply; `q` (or `quit`, any case) or end of input quits. A wrong answer or a folder that cannot be walked is said on stderr and the loop goes on. Warnings from every walk are reported once, after quitting. Nothing is written.
+
+While walking, stderr shows `Scanning… <entries> entries, <bytes> seen  ·  <seconds> s`. Before a scan that has no cache yet, one line says it is the first and that later scans are faster.
 
 A disk macOS does not report as internal is marked `(external)` after its size; a partition
 carrying `HFS+` is announced as `HFS+ volume` rather than as an APFS container. A volume row
@@ -201,12 +208,14 @@ a standing explanation.
 Explains in plain language what a volume, path or cleanup category is and what it is for. This command embodies principle 3: *understand* before cleaning.
 
 ```
-broza explain <PATH|VOLUME|CATEGORY> [OPTIONS]
+broza explain <PATH|VOLUME|CATEGORY> [FINDING] [OPTIONS]
 ```
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `--short` | bool | `false` | One-line summary only. |
+
+`FINDING` follows a category id and names one finding Broza only reports: `cloud-synced` `icloud`, `dropbox`, `onedrive`, `google-drive` or `other`; `build-cache` `docker-raw`; `unused-apps` `unverified`. The output is the category header and `How to free <category>.<finding> (<provider>):` with the provider's summary and numbered steps, the `instructions` of that finding; no scan runs. `--short` prints `<id>  ·  <provider>  ·  <summary>`. An unknown name exits `4` and lists the names that work; a `FINDING` after a volume or a path is a usage error (exit `2`). `suggest` names this command under every finding it only reports.
 
 The target is resolved in this order: exact category id (§3.3) → volume (device id, name or mount point) → filesystem path. Unknown targets exit `4`. A path target is made absolute against the working directory and cleaned of `.` and `..` **lexically** — nothing is followed and `..` never climbs above `/` — and it must exist: a path that does not exist is an unknown target, not an excuse to describe the working directory's volume. The explanation of a path is the explanation of the volume it lives on, plus one line naming that volume. The JSON form is §4.7; `--csv` exits `2`.
 
@@ -300,7 +309,7 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 
 ```
 Potentially reclaimable space:  234.3 GB
-Reported, not reclaimable by Broza: 51.1 GB
+Reclaimable another way:        51.1 GB   (Broza only reports these; how below)
 
 SAFE (green) — 138.2 GB
    build-cache      121.4 GB   Xcode DerivedData (94.2 GB), Python bytecode caches (27.2 GB)
@@ -310,20 +319,20 @@ REVIEW (amber) — 96.1 GB
    duplicates        52.3 GB   Duplicate files (52.3 GB)
    unused-apps       28.7 GB   6 apps not opened in more than 1 year
    old-backups       15.1 GB   2 iPhone backups from 2023
-   build-cache          0 B
-                               Docker Desktop disk image: 38.6 GB — inform only, see: broza explain build-cache
    snapshots           0 B     4 Time Machine local snapshots (size not reported by macOS)
 
-INFO ONLY (red) — 0 B
-   cloud-synced         0 B
-                               Already backed up in iCloud Drive: 12.5 GB — inform only, see: broza explain cloud-synced
+RECLAIMABLE ANOTHER WAY — 51.1 GB   (not by Broza)
+   build-cache       38.6 GB   Docker Desktop disk image
+                               How: broza explain build-cache docker-raw
+   cloud-synced      12.5 GB   Already backed up in iCloud Drive
+                               How: broza explain cloud-synced icloud
 
 Next step:
   broza clean --risk green            (dry run, deletes nothing)
   broza clean --risk green --apply    (moves to quarantine; space is freed after expiry or purge)
 ```
 
-Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06). The headline and the per-group totals count only actionable findings; inform-only findings are named on their own line with their size and summed on the "Reported, not reclaimable" line, so the number at the top is space Broza can actually make reclaimable. Within a risk group categories are ordered by their actionable bytes, biggest first. The "Next step" footer names the safest risk level that has something actionable, and is omitted when nothing is.
+Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06). The headline and the risk groups count and list only actionable findings, so the number at the top is space Broza can actually make reclaimable; a risk group with nothing actionable is not printed. Inform-only findings are summed on the "Reclaimable another way" line and listed, biggest first, in a closing group of their own: each with its size and, below it, the `broza explain <category> <finding>` that prints its steps (§3.2). Within a risk group categories are ordered by their actionable bytes, biggest first. The "Next step" footer names the safest risk level that has something actionable, and is omitted when nothing is.
 
 ---
 
@@ -476,7 +485,7 @@ Prints version, license, JSON schema version, platform support and the support l
 
 ```
 $ broza about
-Broza 1.0.0  ·  MIT License  ·  JSON schema 1.1
+Broza 1.2.0  ·  MIT License  ·  JSON schema 1.2
 Safe disk cleanup for macOS 26/27 on Apple Silicon.
 Source:   https://github.com/borlafu/broza
 Support:  https://ko-fi.com/borlafu  (donation, nothing in return)
@@ -524,6 +533,59 @@ Freed 138.2 GB.
 
 ---
 
+### 3.9 `broza doctor`
+
+Checks what stands between Broza and a complete scan, and where Broza keeps its own files. Read-only; exits `0` whatever it finds, because the state is data, not an error. Supports `--json`; not `--csv` (exit `2`). Never shows the donation message.
+
+```
+broza doctor [--open]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--open` | bool | `false` | Ask macOS to open System Settings at Privacy & Security → Full Disk Access (`/usr/bin/open x-apple.systempreferences:…`). Changes no setting by itself. If it fails, a `settings_not_opened` warning says so and the command still exits `0`. |
+
+**Full Disk Access** is checked by listing the first of `~/Library/Application Support/com.apple.TCC`, `~/Library/Safari`, `~/Library/Mail` and `~/Library/Messages` that exists: listed → `granted`, refused by macOS → `missing`, none exists or another error → `unknown`. The folders are under the home, so a refusal there is the privacy control and not file ownership. Root-owned system folders (`.Spotlight-V100`, `.fseventsd`, `.DocumentRevisions-V100`) are refused with or without Full Disk Access; `doctor` says so when access is granted. See [ADR 0011](adr/0011-doctor-and-full-disk-access-check.md).
+
+The **terminal application** comes from `TERM_PROGRAM` (`Apple_Terminal` → Terminal, `iTerm.app` → iTerm, `vscode` → Visual Studio Code, `WarpTerminal` → Warp, `ghostty` → Ghostty, `WezTerm`, `Hyper`, `Tabby`); anything else is called "your terminal application".
+
+```
+$ broza doctor
+Full Disk Access   missing
+  macOS refused to let Broza list ~/Library/Application Support/com.apple.TCC.
+  Without Full Disk Access, scans leave out Mail, Messages, Safari and other
+  protected data, and their sizes are missing from the totals.
+
+  To turn it on:
+  1. Run `broza doctor --open`, or open System Settings → Privacy & Security →
+     Full Disk Access.
+  2. Turn on Terminal. Not in the list? Click +, then add it from the
+     Applications folder.
+  3. Quit Terminal and open it again: macOS applies the change to new processes
+     only.
+  4. Run `broza doctor` again to check.
+
+Broza's own files
+  Quarantine  ~/.local/share/broza/quarantine
+  Scan cache  ~/.cache/broza
+```
+
+### 3.10 `broza completions` and `broza man`
+
+```
+broza completions <bash|zsh|fish|elvish|powershell>
+broza man
+```
+
+Print a shell completion script, or the manual page in roff, to stdout. Both are generated from the CLI definition, so they never describe a flag that does not exist. No `--json` or `--csv` (exit `2`); they read nothing and work on any Mac. `man` is hidden from the command list.
+
+```
+$ broza completions zsh > ~/.zfunc/_broza
+$ broza man > /usr/local/share/man/man1/broza.1
+```
+
+---
+
 ## 4. JSON contract
 
 > **This is the most important artefact in the specification.** It is the contract between the Rust core and the future SwiftUI GUI. Changing it later is expensive; designing it well now means Phase 2 rewrites nothing.
@@ -534,7 +596,7 @@ Every `--json` output shares this structure:
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "broza_version": "1.0.0",
   "generated_at": "2026-09-21T10:36:08Z",
   "command": "suggest",
@@ -585,6 +647,8 @@ Every `--json` output shares this structure:
 | `inform_only_skipped` | `warnings[]` | An inform-only finding of a selected, otherwise actionable category was left out of the plan; `broza explain <category>` says what to do instead. |
 | `expiry_pending` | `warnings[]` (dry run) | Sessions past their retention exist; `--apply` would expire them. `path` is the store. |
 | `expiry_declined` | `warnings[]` | The user declined the expiry prompt; the sessions stay and `broza quarantine expire` removes them. |
+| `cloud_walk_timed_out` | `warnings[]` | The cloud roots share a 10-second budget; this root (`path` names it) was not walked to the end within it. What was left unwalked is missing, so the provider's figure is a floor, and a root stopped before any byte gives no finding. A slow File Provider never stalls `suggest`. |
+| `settings_not_opened` | `warnings[]` | `doctor --open` could not open System Settings; the printed steps still apply. |
 | `expiry_unreadable` | `warnings[]` | The store could not be read for the expiry step; the plan still ran. |
 | `<item error code>` | `errors[]` | One entry per item that was `skipped` or `failed`, with the item's `error` as the code (`cross_volume`, `not_found`, …) and its path; these make the run partial (exit `5`). |
 | `snapshot_needs_admin` | `warnings[]` | `diskutil` refused a snapshot deletion for lack of privileges; the item is `failed` with `permission_denied` and the message carries the exact `sudo diskutil apfs deleteSnapshot <volume> -uuid <uuid>` command. Broza never escalates (§6). |
@@ -928,9 +992,11 @@ An item of a session has this shape:
 | `category` | Optional. A value of the `category` enum of §4.1. Present only for `kind` `category`. |
 | `path` | Optional. The target path, made absolute and cleaned of `.` and `..` **lexically** — nothing is followed, and `..` never climbs above `/`. Present only for `kind` `path`. |
 | `filesystem` | Optional. The `type` of the container the volume belongs to (same open enum as §4.2), when Broza could determine it. The human header uses it to say `APFS role:` or `HFS+ role:` instead of assuming APFS. |
-| `explanation` | Always present. Three prose fields: `what_it_is`, `what_it_is_for`, `is_it_safe`. English, one paragraph each; the same text the human output prints under its three headings. |
-| `risk` | Optional. Base risk of the category (§3.3). Present only for `kind` `category`. |
-| `action` | Optional. Default action of the category (§3.3). Present only for `kind` `category`. |
+| `explanation` | Always present. Three prose fields: `what_it_is`, `what_it_is_for`, `is_it_safe`. English, one paragraph each; the same text the human output prints under its three headings. Since schema `1.2`, an optional `next_steps` array of strings, present only for `kind` `category`: what to do next, in order — the `broza` commands that review and clean the category, then the manual steps for what Broza only reports (Docker's disk image, applications with no record of use, cloud-synced files). The human output prints it as a numbered `What to do next:` section. |
+| `risk` | Optional. Base risk of the category (§3.3), or with `finding` that finding's own risk. Present only for `kind` `category`. |
+| `action` | Optional. Default action of the category (§3.3), or with `finding` always `inform_only`: Broza only reports that finding. Present only for `kind` `category`. |
+| `finding` | Optional, schema `1.2`. The id of the finding asked about with `explain <category> <finding>`, for example `cloud-synced.icloud`. |
+| `instructions` | Optional, schema `1.2`. Present with `finding`: the same `Instructions` object as in §4.3 (`provider`, `summary`, `steps`). |
 
 A `path` target is explained through the volume it lives on: `volume` and `path` are both present,
 and the human output adds one line saying which volume the path is on. A path that does not exist
@@ -938,6 +1004,33 @@ is not a target: it exits `4` like any other unknown target, rather than being a
 volume the working directory happens to be on.
 
 `explain` supports `--json` and `--short`. It does **not** support `--csv` (exit `2`).
+
+### 4.8 `doctor`
+
+```json
+{
+  "data": {
+    "full_disk_access": {
+      "state": "missing",
+      "probe_path": "/Users/dana/Library/Application Support/com.apple.TCC"
+    },
+    "terminal": "Terminal",
+    "settings_url": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+    "opened_settings": false,
+    "quarantine_path": "/Users/dana/.local/share/broza/quarantine",
+    "cache_path": "/Users/dana/.cache/broza"
+  }
+}
+```
+
+| Field | Contract |
+|---|---|
+| `full_disk_access.state` | `granted` · `missing` · `unknown` (§3.9). Closed enum, produced by Broza only. |
+| `full_disk_access.probe_path` | Optional. The protected folder the verdict rests on; absent when none exists. |
+| `terminal` | Optional. The application to grant access to, when `TERM_PROGRAM` names one Broza knows. |
+| `settings_url` | The link that opens the Full Disk Access pane. |
+| `opened_settings` | `true` when this run asked macOS to open it (`--open`) and `/usr/bin/open` succeeded. |
+| `quarantine_path`, `cache_path` | Optional; absent without a home directory. Where the quarantine store and the scan cache live. |
 
 ---
 
@@ -982,7 +1075,7 @@ The figures follow principle 8: pending and freed bytes are reported separately 
 | List snapshots (`diskutil apfs listSnapshots`) | None |
 | Delete snapshots (`diskutil apfs deleteSnapshot -uuid`) | May require ownership of the disk or administrator privileges on macOS 26/27; Broza does not escalate |
 
-If *Full Disk Access* is missing, Broza **does not fail**: it completes what it can, adds a warning to `warnings[]` and explains on stderr how to grant it: **System Settings → Privacy & Security → Full Disk Access**, then add the terminal application (or the `broza` binary). It returns exit code `3` only when the operation was impossible without it: a `scan <PATH>` whose root itself macOS refuses to list. A refusal inside a readable root, or anywhere in a volume-wide scan, is a warning (`permission_denied`, summarised as `permission_denied_summary`).
+If *Full Disk Access* is missing, Broza **does not fail**: it completes what it can and adds a warning to `warnings[]`. When a run met a refusal, the stderr warning block ends with one hint, worded by a check of Full Disk Access (§3.9): **off** → it names the terminal application and sends the user to `broza doctor --open`, then to quit and reopen the application; **on** → it says privacy protection is not the cause, that locations owned by macOS or by other users stay unreadable, and that a refused folder of the user's own has its own permissions to check (`ls -ld <path>`); **unknown** → it points to `broza doctor`. A command that ends on a refused path (exit `3`) prints the last form. `broza doctor` gives the full steps. It returns exit code `3` only when the operation was impossible without it: a `scan <PATH>` whose root itself macOS refuses to list. A refusal inside a readable root, or anywhere in a volume-wide scan, is a warning (`permission_denied`, summarised as `permission_denied_summary`).
 
 If `diskutil` refuses a snapshot deletion for lack of privileges, the item is marked `failed` with `error: "permission_denied"`, the exit code is `5`, and the `snapshot_needs_admin` warning carries the exact `diskutil` command the user may run with `sudo`. Broza never invokes `sudo` itself. The action keeps its historical name `tmutil_delete` in the contract.
 
@@ -1142,3 +1235,21 @@ Shipped with 1.1.0.
 - §5 (post-1.0): the message is set apart by blank lines and a `─` rule above and below; the first line is bold and the rest dim where color is enabled. Bold and dim only; no hues.
 - §8.2: "APFS clone-aware sizes" leaves the deferred list; what remains deferred is the accounting of the blocks a diverged clone owns.
 - §7 (post-1.0): the walk lists directories by descriptor and reaches deep ones by relative steps, so a tree deeper than `PATH_MAX` allows is measured to the bottom instead of ending in one `unreadable_entry` warning per blocked entry. [ADR 0010](adr/0010-walk-by-directory-descriptor.md).
+
+---
+
+## 13. Changelog 1.4 → 1.5
+
+Unreleased: everything below ships with the next minor version.
+
+- §3.1: the volumes table is the container's last branch (`└─ Volumes`, rows indented under it) instead of a block after a blank line, and a gutter line separates two containers, so the table never reads as part of what follows it.
+- §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size and the `broza explain <category> <finding>` that prints their steps; the headline line that sums them is renamed accordingly. Totals are unchanged.
+- §3.2, §4.7: `broza explain <category> <finding>` prints the steps of one finding Broza only reports, without scanning; the JSON carries `finding` and `instructions`.
+- §4.1, §4.7: `schema_version` `1.2`. `explanation.next_steps`, an optional array present for categories only, carries what to do next; `broza explain <category>` prints it as a numbered `What to do next:` section.
+- §3.3, §4.1: the `cloud-synced` roots are walked within 10 seconds in all; past that the rest is left out with a `cloud_walk_timed_out` warning, so a slow File Provider cannot stall `suggest`. `settings_not_opened` is listed.
+- §3.10 (new): `broza completions <shell>` and the hidden `broza man`, generated from the CLI definition.
+- §2: exit `8` is raised, as the table always said: another architecture than `arm64`, or a macOS major older than 26, ends every machine-reading command before anything is read. An unreadable version and a newer major are let through.
+- §3.1: `scan -i` browses the largest consumers by number; the human consumers list ends with a line saying how to look inside one; the progress line shows elapsed seconds, and a first scan says it is building the cache.
+- §3.9, §4.8 (new): `broza doctor` checks Full Disk Access by listing a protected folder under the home, names the terminal application to grant it to, shows where the quarantine store and the scan cache live, and with `--open` opens the right System Settings pane. Read-only, exit `0`. [ADR 0011](adr/0011-doctor-and-full-disk-access-check.md).
+- §6: the Full Disk Access hint is worded by that check, so a Mac with access on is no longer told to grant it because root-owned system folders were refused.
+- §6: warnings on stderr form a block set apart from the report by a blank line, each wrapped under a `warning:` label with a blank line between two. The summary of many refused paths states the fact with three examples, and the Full Disk Access hint now follows it as it follows a single refusal.

@@ -4,7 +4,10 @@ All notable changes to Broza are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow semver.
 The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.1).
 
-## [Unreleased]
+## [1.2.0] — 2026-11-26
+
+A friendlier first run: a permission check that says what to do, output that reads at a glance,
+and a way to look inside the biggest folders.
 
 ### Added
 

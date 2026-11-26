@@ -1240,7 +1240,7 @@ Shipped with 1.1.0.
 
 ## 13. Changelog 1.4 → 1.5
 
-Unreleased: everything below ships with the next minor version.
+Shipped with 1.2.0.
 
 - §3.1: the volumes table is the container's last branch (`└─ Volumes`, rows indented under it) instead of a block after a blank line, and a gutter line separates two containers, so the table never reads as part of what follows it.
 - §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size and the `broza explain <category> <finding>` that prints their steps; the headline line that sums them is renamed accordingly. Totals are unchanged.

@@ -150,6 +150,7 @@ fn a_root_walked_out_of_time_is_a_warning_and_never_hangs_the_detector() {
         detected.warnings.iter().filter(|w| w.code == CLOUD_WALK_TIMED_OUT_CODE).collect();
     assert!(!timed_out.is_empty(), "{:?}", detected.warnings);
     assert!(timed_out.iter().all(|w| w.message.contains("is a floor")), "{timed_out:?}");
+    assert!(detected.findings.is_empty(), "a root stopped before any byte is not a 0 B finding");
 }
 
 #[test]

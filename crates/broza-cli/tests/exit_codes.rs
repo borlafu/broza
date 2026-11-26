@@ -161,9 +161,26 @@ fn version_reports_the_schema_version() {
 fn an_unsupported_mac_exits_eight_and_about_still_works() {
     for host in ["25.6/arm64", "26.1/x86_64"] {
         let home = temp_home();
-        let refused = broza(home.path()).env("BROZA_HOST", host).args(["suggest"]).output().unwrap();
-        assert_eq!(refused.status.code(), Some(8), "{host}: {}", String::from_utf8_lossy(&refused.stderr));
-        assert!(String::from_utf8_lossy(&refused.stderr).contains("Broza"), "{host}");
-        broza(home.path()).env("BROZA_HOST", host).arg("about").assert().code(0);
+        for command in [
+            &["suggest"][..],
+            &["scan"],
+            &["explain", "/"],
+            &["clean", "--risk", "green"],
+            &["quarantine", "list"],
+        ] {
+            let refused = broza(home.path()).env("BROZA_HOST", host).args(command).output().unwrap();
+            let stderr = String::from_utf8_lossy(&refused.stderr);
+            assert_eq!(refused.status.code(), Some(8), "{host} {command:?}: {stderr}");
+        }
+        for command in [&["about"][..], &["explain", "trash"], &["completions", "zsh"]] {
+            broza(home.path()).env("BROZA_HOST", host).args(command).assert().code(0);
+        }
     }
+}
+
+#[test]
+fn the_shell_helpers_have_no_machine_readable_form() {
+    let home = temp_home();
+    broza(home.path()).args(["completions", "zsh", "--json"]).assert().code(2);
+    broza(home.path()).args(["man", "--csv"]).assert().code(2);
 }

@@ -130,7 +130,7 @@ A single code space for the whole CLI. Scripts MUST be able to distinguish "I di
 | An item's path no longer exists at `--apply` time | Item `skipped` with `error: "not_found"`; the plan continues; exit `5` if other items succeeded |
 | OS denies reading or acting on a path (`EACCES`/`EPERM`) | Item `failed` with `error: "permission_denied"`; whole-command `3` only when the operation was impossible without the permission |
 | `clean` dry run whose selection contains only `inform_only` findings | `0` with a warning; the plan lists nothing and stderr points to `broza explain <category>` |
-| A Mac whose architecture is not `arm64`, or whose macOS major is older than 26, running any command that reads or changes the machine | `8`, before anything is read. `about`, `config`, `doctor`, `completions` and `man` still work. A macOS version Broza could not read is only the `host_version_unknown` warning; a newer major than 27 is allowed |
+| A Mac whose architecture is not `arm64`, or whose macOS major is older than 26, running any command that reads or changes the machine | `8`, before anything is read (after the configuration is resolved, so a broken configuration still exits `2`). `about`, `config`, `doctor`, `completions`, `man` and `explain <category>` still work. A macOS version Broza could not read is only the `host_version_unknown` warning; a newer major than 27 is allowed, and so are 10.x and 16.x, which are what `sw_vers` reports in compatibility mode (`SYSTEM_VERSION_COMPAT`, which Broza also clears for every program it runs) |
 
 > **Rule:** `clean` in dry-run mode always returns `0` if the analysis succeeded, even if it proposes removing 200 GB. A dry run is not a failure.
 
@@ -647,7 +647,7 @@ Every `--json` output shares this structure:
 | `inform_only_skipped` | `warnings[]` | An inform-only finding of a selected, otherwise actionable category was left out of the plan; `broza explain <category>` says what to do instead. |
 | `expiry_pending` | `warnings[]` (dry run) | Sessions past their retention exist; `--apply` would expire them. `path` is the store. |
 | `expiry_declined` | `warnings[]` | The user declined the expiry prompt; the sessions stay and `broza quarantine expire` removes them. |
-| `cloud_walk_timed_out` | `warnings[]` | The walk of one cloud root (`path` names it) ran past its 10-second budget; what was left unwalked is missing, so the provider's figure is a floor. A slow File Provider never stalls `suggest`. |
+| `cloud_walk_timed_out` | `warnings[]` | The cloud roots share a 10-second budget; this root (`path` names it) was not walked to the end within it. What was left unwalked is missing, so the provider's figure is a floor, and a root stopped before any byte gives no finding. A slow File Provider never stalls `suggest`. |
 | `settings_not_opened` | `warnings[]` | `doctor --open` could not open System Settings; the printed steps still apply. |
 | `expiry_unreadable` | `warnings[]` | The store could not be read for the expiry step; the plan still ran. |
 | `<item error code>` | `errors[]` | One entry per item that was `skipped` or `failed`, with the item's `error` as the code (`cross_volume`, `not_found`, …) and its path; these make the run partial (exit `5`). |
@@ -1246,7 +1246,7 @@ Unreleased: everything below ships with the next minor version.
 - §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size and the `broza explain <category> <finding>` that prints their steps; the headline line that sums them is renamed accordingly. Totals are unchanged.
 - §3.2, §4.7: `broza explain <category> <finding>` prints the steps of one finding Broza only reports, without scanning; the JSON carries `finding` and `instructions`.
 - §4.1, §4.7: `schema_version` `1.2`. `explanation.next_steps`, an optional array present for categories only, carries what to do next; `broza explain <category>` prints it as a numbered `What to do next:` section.
-- §3.3, §4.1: each `cloud-synced` root is walked for at most 10 seconds; past that the rest of the root is left out with a `cloud_walk_timed_out` warning, so a slow File Provider cannot stall `suggest`. `settings_not_opened` is listed.
+- §3.3, §4.1: the `cloud-synced` roots are walked within 10 seconds in all; past that the rest is left out with a `cloud_walk_timed_out` warning, so a slow File Provider cannot stall `suggest`. `settings_not_opened` is listed.
 - §3.10 (new): `broza completions <shell>` and the hidden `broza man`, generated from the CLI definition.
 - §2: exit `8` is raised, as the table always said: another architecture than `arm64`, or a macOS major older than 26, ends every machine-reading command before anything is read. An unreadable version and a newer major are let through.
 - §3.1: `scan -i` browses the largest consumers by number; the human consumers list ends with a line saying how to look inside one; the progress line shows elapsed seconds, and a first scan says it is building the cache.

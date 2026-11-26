@@ -425,8 +425,8 @@ M5 progress:
       dist 0.32 writes `steps.cargo-cyclonedx.output.paths`, which uploads nothing; `allow-dirty =
       ["ci"]` keeps the fix); CI builds `--locked`; signing and notarization stay Phase 2.
 - [x] 6. README, PRD §16 traceability ("Covered by" column), spec 1.3.
-- [x] Time budget for the cloud-root walks (1.2): `WalkOptions::stop`, 10 s per root,
-      `cloud_walk_timed_out` warning.
+- [x] Time budget for the cloud-root walks (1.2): `WalkOptions::stop`, one 10 s deadline shared
+      by every root, `cloud_walk_timed_out` warning.
 - [ ] Open after review, post-1.0:
       a warning for a symlinked `scan <PATH>` root (today reported as the link's own size);
       leftovers under `~/Library/Caches` are credited to `user-cache` when both run, so

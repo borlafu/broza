@@ -16,7 +16,7 @@ Commands:
   quarantine   Manage the quarantine store
   doctor       Check Full Disk Access and show where Broza keeps its files
   about        Version, license, schema version and support link
-  completions  Print a shell completion script, for example: broza completions zsh > ~/.zfunc/_broza
+  completions  Print a shell completion script
 
 Options:
       --json            JSON output on stdout. Disables color, progress and interactivity

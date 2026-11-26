@@ -36,15 +36,15 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 - `broza explain <category>` ends with a numbered "What to do next" section; the JSON carries it
   as `explanation.next_steps` (schema 1.2).
 
-- `suggest` walks each cloud-synced root for at most 10 seconds; a File Provider that answers
-  slowly leaves the rest of its root out with a `cloud_walk_timed_out` warning instead of
-  stalling the run.
+- `suggest` walks the cloud-synced roots within 10 seconds in all; a File Provider that answers
+  slowly leaves the rest out with a `cloud_walk_timed_out` warning instead of stalling the run.
 
 ### Fixed
 
-- Exit code `8` was defined but never raised: Broza now refuses an Intel Mac or a macOS older
-  than 26 before reading anything, instead of running untested. `about`, `config` and `doctor`
-  still work there.
+- Exit code `8` was defined but never raised: Broza now refuses an Intel build or a macOS older
+  than 26 before reading anything, instead of running untested. `about`, `config`, `doctor` and
+  `explain <category>` still work there. Programs Broza runs no longer inherit
+  `SYSTEM_VERSION_COMPAT`, which made `sw_vers` report a legacy version.
 - A Mac with Full Disk Access on was told to grant it, because root-owned system folders
   (`.Spotlight-V100`, `.fseventsd`) are refused either way. The hint after a scan now follows a
   check of the setting: off, it sends you to `broza doctor --open`; on, it says privacy

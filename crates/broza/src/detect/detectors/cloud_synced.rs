@@ -30,8 +30,9 @@ use crate::detect::detector::{DetectContext, Detected, Detector};
 
 /// iCloud Drive and every iCloud-backed app container.
 const ICLOUD_ROOT: &str = "Library/Mobile Documents";
-/// How long one cloud root may be walked. A File Provider that answers slowly
-/// must not stall `suggest`; what is left unwalked makes the figure a floor.
+/// How long the cloud roots may be walked, all of them together. A File
+/// Provider that answers slowly must not stall `suggest`; what is left
+/// unwalked makes the figure a floor.
 const CLOUD_WALK_BUDGET: Duration = Duration::from_secs(10);
 /// Warning code: a cloud root's walk ran out of time.
 pub const CLOUD_WALK_TIMED_OUT_CODE: &str = "cloud_walk_timed_out";
@@ -170,12 +171,13 @@ impl Detector for CloudSynced {
     }
 }
 
-/// [`CloudSynced::detect`], each root's walk bounded by `budget`.
+/// [`CloudSynced::detect`], every root's walk bounded by one shared `budget`.
 fn detect_within(context: &DetectContext<'_>, budget: Duration) -> Result<Detected, BrozaError> {
+    let deadline = Instant::now() + budget;
     let mut detected = Detected::default();
     let mut by_provider: BTreeMap<Provider, Vec<Measured>> = BTreeMap::new();
     for (provider, root) in roots(context, &mut detected) {
-        let (outcome, timed_out) = measure(context, &root, budget);
+        let (outcome, timed_out) = measure(context, &root, deadline);
         if timed_out {
             detected.warnings.push(timed_out_warning(&root, budget));
         }
@@ -268,8 +270,8 @@ fn timed_out_warning(root: &Path, budget: Duration) -> Diagnostic {
     Diagnostic {
         code: CLOUD_WALK_TIMED_OUT_CODE.to_owned(),
         message: format!(
-            "the cloud-synced detector stopped walking {} after {} s; the provider answered slowly, \
-             so its size is a floor",
+            "the cloud-synced detector stopped walking {}: the cloud roots had {} s in all and the \
+             providers answered slowly, so its size is a floor",
             root.display(),
             budget.as_secs()
         ),
@@ -279,18 +281,17 @@ fn timed_out_warning(root: &Path, budget: Duration) -> Diagnostic {
 
 /// The local bytes and files of one root: a walk that counts placeholders as
 /// nothing and never enters a directory the provider has not downloaded, and
-/// stops descending after `budget`. The flag says whether it had to stop.
+/// stops descending at `deadline`. The flag says whether it had to stop.
 fn measure(
     context: &DetectContext<'_>,
     root: &Path,
-    budget: Duration,
+    deadline: Instant,
 ) -> (Result<Option<Measured>, BrozaError>, bool) {
-    let started = Instant::now();
     let timed_out = AtomicBool::new(false);
-    // ponytail: wall-clock budget per root, checked before each directory; a
-    // single directory listing that hangs is still bounded only by the provider.
+    // ponytail: one wall-clock deadline for every root, checked before each
+    // directory; a single listing that hangs is still bounded only by the provider.
     let stop = || {
-        let over = started.elapsed() >= budget;
+        let over = Instant::now() >= deadline;
         if over {
             timed_out.store(true, Ordering::Relaxed);
         }

@@ -1,6 +1,8 @@
 //! The volumes table of one container (`docs/cli-spec.md` §3.1).
 //!
-//! Three aligned columns — name, role, used bytes — and a trailing note that
+//! The table is the container's last branch, so it reads as part of the
+//! container and not of whatever follows it. Three aligned columns — name,
+//! role, used bytes — and a trailing note that
 //! says, in words, what the row's colour only hints at: which volume holds the
 //! user's data, which ones macOS keeps to itself, and which one Broza may not
 //! write to even though its role would allow it.
@@ -14,28 +16,24 @@ use crate::output::{ColorPolicy, format_bytes, paint};
 const COLUMN_GAP: &str = "  ";
 /// Minimum width of the volume-name column, so short names still line up.
 const MIN_NAME_WIDTH: usize = 16;
-/// Heading above the table.
-const TABLE_HEADING: &str = "Volumes in this container:";
+/// Heading of the branch that holds the table.
+const TABLE_HEADING: &str = "└─ Volumes";
+/// Indent of the rows below the heading, which is itself the container's last branch.
+const ROW_INDENT: &str = "   ";
 
-/// The volumes table of `container`, every line prefixed with `indent`.
+/// The volumes branch of `container`, every line prefixed with `indent`.
 pub fn render(container: &Container, indent: &str, policy: ColorPolicy) -> String {
     let widths = Widths::of(&container.volumes);
     let last = container.volumes.len().saturating_sub(1);
     let rows = container.volumes.iter().enumerate().map(|(index, volume)| {
-        format!("{indent}{} {}", branch(index, last), render_volume(volume, &widths, policy))
+        format!("{indent}{ROW_INDENT}{} {}", branch(index, last), render_volume(volume, &widths, policy))
     });
     std::iter::once(format!("{indent}{TABLE_HEADING}")).chain(rows).collect::<Vec<_>>().join("\n")
 }
 
-/// The box-drawing character that opens, continues or closes the table.
-const fn branch(index: usize, last: usize) -> char {
-    if index == last {
-        '└'
-    } else if index == 0 {
-        '┌'
-    } else {
-        '├'
-    }
+/// The branch that continues or closes the table.
+const fn branch(index: usize, last: usize) -> &'static str {
+    if index == last { "└─" } else { "├─" }
 }
 
 /// Column widths shared by every row of one table.
@@ -162,14 +160,15 @@ mod tests {
 
         let prefixes: Vec<char> =
             text.lines().skip(1).filter_map(|line| line.trim_start().chars().next()).collect();
-        assert_eq!(prefixes, vec!['┌', '├', '└']);
-        assert!(text.starts_with("   Volumes in this container:"), "{text}");
+        assert_eq!(prefixes, vec!['├', '├', '└']);
+        assert!(text.starts_with("   └─ Volumes"), "{text}");
+        assert!(text.lines().skip(1).all(|line| line.starts_with("      ")), "rows sit under the heading: {text}");
     }
 
     #[test]
     fn a_single_volume_closes_the_table_on_its_own() {
         let text = plain(&container(vec![volume("Kiro CLI", VolumeRole::User, 1)]));
-        assert_eq!(branch(0, 0), '└');
+        assert_eq!(branch(0, 0), "└─");
         assert!(text.lines().nth(1).is_some_and(|line| line.trim_start().starts_with('└')), "{text}");
     }
 
@@ -253,6 +252,6 @@ mod tests {
     #[test]
     fn an_empty_container_still_produces_only_its_heading() {
         let text = plain(&container(Vec::new()));
-        assert_eq!(text, "   Volumes in this container:");
+        assert_eq!(text, "   └─ Volumes");
     }
 }

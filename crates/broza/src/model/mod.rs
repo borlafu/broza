@@ -32,6 +32,7 @@
 
 pub mod category;
 pub mod disk;
+pub mod doctor;
 pub mod envelope;
 pub mod finding;
 pub mod finding_builder;
@@ -47,6 +48,7 @@ pub(crate) mod timestamp;
 
 pub use category::Category;
 pub use disk::{Container, Disk, FsKind, Snapshot, TIME_MACHINE_PREFIX, Volume, VolumeRole, is_uuid};
+pub use doctor::{AccessCheck, AccessState, DoctorReport};
 pub use envelope::{Diagnostic, Envelope, ErrorEntry, Host, Warning};
 pub use finding::{Action, Finding, FindingPath, Instructions, Risk};
 pub use finding_builder::FindingBuilder;

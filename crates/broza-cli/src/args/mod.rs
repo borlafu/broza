@@ -6,6 +6,7 @@
 
 pub mod clean;
 pub mod config;
+pub mod doctor;
 pub mod explain;
 pub mod quarantine;
 pub mod restore;
@@ -16,6 +17,7 @@ use clap::ValueEnum;
 
 pub use clean::CleanArgs;
 pub use config::{ConfigArgs, ConfigCommand};
+pub use doctor::DoctorArgs;
 pub use explain::ExplainArgs;
 pub use quarantine::{QuarantineArgs, QuarantineCommand};
 pub use restore::RestoreArgs;

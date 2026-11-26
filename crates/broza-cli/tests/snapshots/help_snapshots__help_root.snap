@@ -14,6 +14,7 @@ Commands:
   restore     Recover items from quarantine
   config      Read and write configuration keys
   quarantine  Manage the quarantine store
+  doctor      Check Full Disk Access and show where Broza keeps its files
   about       Version, license, schema version and support link
 
 Options:

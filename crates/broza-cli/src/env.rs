@@ -54,6 +54,9 @@ pub struct RuntimeEnv {
     /// `TMPDIR`: macOS points it inside the per-uid temporary directory, which
     /// is one of the roots Broza may write under (`docs/cli-spec.md` §3.4).
     pub tmpdir: Option<PathBuf>,
+    /// `TERM_PROGRAM`: which terminal application runs Broza, the one Full
+    /// Disk Access has to be granted to.
+    pub term_program: Option<String>,
 }
 
 /// Where macOS keeps the per-uid temporary directories.
@@ -75,6 +78,23 @@ impl RuntimeEnv {
             host_override: host_override(),
             fake_diskutil_fixtures: fake_diskutil_fixtures(),
             tmpdir: std::env::var_os("TMPDIR").map(PathBuf::from),
+            term_program: std::env::var("TERM_PROGRAM").ok().filter(|name| !name.is_empty()),
+        }
+    }
+
+    /// The terminal application by the name macOS lists it under in System
+    /// Settings, when `TERM_PROGRAM` names one Broza knows.
+    pub fn terminal_app(&self) -> Option<&'static str> {
+        match self.term_program.as_deref()? {
+            "Apple_Terminal" => Some("Terminal"),
+            "iTerm.app" => Some("iTerm"),
+            "vscode" => Some("Visual Studio Code"),
+            "WarpTerminal" => Some("Warp"),
+            "ghostty" => Some("Ghostty"),
+            "WezTerm" => Some("WezTerm"),
+            "Hyper" => Some("Hyper"),
+            "Tabby" => Some("Tabby"),
+            _ => None,
         }
     }
 
@@ -120,6 +140,7 @@ impl RuntimeEnv {
             host_override: None,
             fake_diskutil_fixtures: None,
             tmpdir: None,
+            term_program: None,
         }
     }
 

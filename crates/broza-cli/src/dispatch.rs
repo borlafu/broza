@@ -115,6 +115,17 @@ pub fn dispatch(
         Command::Quarantine(args) => {
             commands::quarantine::run(&args.command, &store_context(&inputs, generated_at))
         }
+        Command::Doctor(args) => commands::doctor::run(&commands::doctor::DoctorContext {
+            ports: &inputs.ports,
+            args,
+            home: inputs.runtime.home.as_deref(),
+            terminal: inputs.runtime.terminal_app(),
+            quarantine_path: inputs.runtime.home.as_deref().map(|home| inputs.effective.quarantine_dir(home)),
+            host: inputs.host,
+            generated_at,
+            warnings: inputs.warnings,
+            format: inputs.format,
+        }),
         Command::Explain(args) => commands::explain::run(&ExplainContext {
             ports: &inputs.ports,
             args,

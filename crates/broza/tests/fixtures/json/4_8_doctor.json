@@ -1,0 +1,13 @@
+{
+  "data": {
+    "full_disk_access": {
+      "state": "missing",
+      "probe_path": "/Users/dana/Library/Application Support/com.apple.TCC"
+    },
+    "terminal": "Terminal",
+    "settings_url": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+    "opened_settings": false,
+    "quarantine_path": "/Users/dana/.local/share/broza/quarantine",
+    "cache_path": "/Users/dana/.cache/broza"
+  }
+}

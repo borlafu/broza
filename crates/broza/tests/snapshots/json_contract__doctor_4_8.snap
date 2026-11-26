@@ -1,0 +1,17 @@
+---
+source: crates/broza/tests/json_contract.rs
+expression: value
+---
+{
+  "data": {
+    "cache_path": "/Users/dana/.cache/broza",
+    "full_disk_access": {
+      "probe_path": "/Users/dana/Library/Application Support/com.apple.TCC",
+      "state": "missing"
+    },
+    "opened_settings": false,
+    "quarantine_path": "/Users/dana/.local/share/broza/quarantine",
+    "settings_url": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+    "terminal": "Terminal"
+  }
+}

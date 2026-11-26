@@ -525,6 +525,45 @@ Freed 138.2 GB.
 
 ---
 
+### 3.9 `broza doctor`
+
+Checks what stands between Broza and a complete scan, and where Broza keeps its own files. Read-only; exits `0` whatever it finds, because the state is data, not an error. Supports `--json`; not `--csv` (exit `2`). Never shows the donation message.
+
+```
+broza doctor [--open]
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `--open` | bool | `false` | Ask macOS to open System Settings at Privacy & Security → Full Disk Access (`open x-apple.systempreferences:…`). Changes no setting by itself. If it fails, a `settings_not_opened` warning says so and the command still exits `0`. |
+
+**Full Disk Access** is checked by listing the first of `~/Library/Application Support/com.apple.TCC`, `~/Library/Safari`, `~/Library/Mail` and `~/Library/Messages` that exists: listed → `granted`, refused by macOS → `missing`, none exists or another error → `unknown`. The folders are under the home, so a refusal there is the privacy control and not file ownership. Root-owned system folders (`.Spotlight-V100`, `.fseventsd`, `.DocumentRevisions-V100`) are refused with or without Full Disk Access; `doctor` says so when access is granted. See [ADR 0011](adr/0011-doctor-and-full-disk-access-check.md).
+
+The **terminal application** comes from `TERM_PROGRAM` (`Apple_Terminal` → Terminal, `iTerm.app` → iTerm, `vscode` → Visual Studio Code, `WarpTerminal` → Warp, `ghostty` → Ghostty, `WezTerm`, `Hyper`, `Tabby`); anything else is called "your terminal application".
+
+```
+$ broza doctor
+Full Disk Access   missing
+  macOS refused to let Broza list ~/Library/Application Support/com.apple.TCC.
+  Without Full Disk Access, scans leave out Mail, Messages, Safari and other
+  protected data, and their sizes are missing from the totals.
+
+  To turn it on:
+  1. Run `broza doctor --open`, or open System Settings → Privacy & Security →
+     Full Disk Access.
+  2. Turn on Terminal. Not in the list? Click +, then add it from the
+     Applications folder.
+  3. Quit Terminal and open it again: macOS applies the change to new processes
+     only.
+  4. Run `broza doctor` again to check.
+
+Broza's own files
+  Quarantine  ~/.local/share/broza/quarantine
+  Scan cache  ~/.cache/broza
+```
+
+---
+
 ## 4. JSON contract
 
 > **This is the most important artefact in the specification.** It is the contract between the Rust core and the future SwiftUI GUI. Changing it later is expensive; designing it well now means Phase 2 rewrites nothing.
@@ -942,6 +981,33 @@ volume the working directory happens to be on.
 
 `explain` supports `--json` and `--short`. It does **not** support `--csv` (exit `2`).
 
+### 4.8 `doctor`
+
+```json
+{
+  "data": {
+    "full_disk_access": {
+      "state": "missing",
+      "probe_path": "/Users/dana/Library/Application Support/com.apple.TCC"
+    },
+    "terminal": "Terminal",
+    "settings_url": "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+    "opened_settings": false,
+    "quarantine_path": "/Users/dana/.local/share/broza/quarantine",
+    "cache_path": "/Users/dana/.cache/broza"
+  }
+}
+```
+
+| Field | Contract |
+|---|---|
+| `full_disk_access.state` | `granted` · `missing` · `unknown` (§3.9). Closed enum, produced by Broza only. |
+| `full_disk_access.probe_path` | Optional. The protected folder the verdict rests on; absent when none exists. |
+| `terminal` | Optional. The application to grant access to, when `TERM_PROGRAM` names one Broza knows. |
+| `settings_url` | The link that opens the Full Disk Access pane. |
+| `opened_settings` | `true` when this run asked macOS to open it (`--open`) and `open` succeeded. |
+| `quarantine_path`, `cache_path` | Optional; absent without a home directory. Where the quarantine store and the scan cache live. |
+
 ---
 
 ## 5. Donation message behaviour (RF-17)
@@ -985,7 +1051,7 @@ The figures follow principle 8: pending and freed bytes are reported separately 
 | List snapshots (`diskutil apfs listSnapshots`) | None |
 | Delete snapshots (`diskutil apfs deleteSnapshot -uuid`) | May require ownership of the disk or administrator privileges on macOS 26/27; Broza does not escalate |
 
-If *Full Disk Access* is missing, Broza **does not fail**: it completes what it can, adds a warning to `warnings[]` and explains on stderr how to grant it: **System Settings → Privacy & Security → Full Disk Access**, then add the terminal application (or the `broza` binary). It returns exit code `3` only when the operation was impossible without it: a `scan <PATH>` whose root itself macOS refuses to list. A refusal inside a readable root, or anywhere in a volume-wide scan, is a warning (`permission_denied`, summarised as `permission_denied_summary`).
+If *Full Disk Access* is missing, Broza **does not fail**: it completes what it can and adds a warning to `warnings[]`. When a run met a refusal, the stderr warning block ends with one hint, worded by a check of Full Disk Access (§3.9): **off** → it names the terminal application and sends the user to `broza doctor --open`, then to quit and reopen the application; **on** → it says the remaining locations belong to macOS or to other users and need nothing; **unknown** → it points to `broza doctor`. A command that ends on a refused path (exit `3`) prints the last form. `broza doctor` gives the full steps. It returns exit code `3` only when the operation was impossible without it: a `scan <PATH>` whose root itself macOS refuses to list. A refusal inside a readable root, or anywhere in a volume-wide scan, is a warning (`permission_denied`, summarised as `permission_denied_summary`).
 
 If `diskutil` refuses a snapshot deletion for lack of privileges, the item is marked `failed` with `error: "permission_denied"`, the exit code is `5`, and the `snapshot_needs_admin` warning carries the exact `diskutil` command the user may run with `sudo`. Broza never invokes `sudo` itself. The action keeps its historical name `tmutil_delete` in the contract.
 
@@ -1156,4 +1222,6 @@ Unreleased: everything below ships with the next minor version.
 - §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size and the `broza explain <category> <finding>` that prints their steps; the headline line that sums them is renamed accordingly. Totals are unchanged.
 - §3.2, §4.7: `broza explain <category> <finding>` prints the steps of one finding Broza only reports, without scanning; the JSON carries `finding` and `instructions`.
 - §4.1, §4.7: `schema_version` `1.2`. `explanation.next_steps`, an optional array present for categories only, carries what to do next; `broza explain <category>` prints it as a numbered `What to do next:` section.
+- §3.9, §4.8 (new): `broza doctor` checks Full Disk Access by listing a protected folder under the home, names the terminal application to grant it to, shows where the quarantine store and the scan cache live, and with `--open` opens the right System Settings pane. Read-only, exit `0`. [ADR 0011](adr/0011-doctor-and-full-disk-access-check.md).
+- §6: the Full Disk Access hint is worded by that check, so a Mac with access on is no longer told to grant it because root-owned system folders were refused.
 - §6: warnings on stderr form a block set apart from the report by a blank line, each wrapped under a `warning:` label with a blank line between two. The summary of many refused paths states the fact with three examples, and the Full Disk Access hint now follows it as it follows a single refusal.

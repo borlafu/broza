@@ -176,9 +176,10 @@ by deleting files by hand. Broza uses `tmutil` for this and never touches update
 - Apple Silicon (M-series). Intel Macs are not supported.
 - No special permissions to enumerate disks or scan your home folder.
 - Full Disk Access is optional. It lets Broza scan protected areas such as Mail, Safari, and
-  device backups. Without it, Broza scans what it can and tells you what it skipped: System
-  Settings → Privacy & Security → Full Disk Access, then add your terminal (or the `broza`
-  binary). Only a path you name that macOS refuses outright ends the command (exit `3`).
+  device backups. Without it, Broza scans what it can and tells you what it skipped. Run
+  `broza doctor` to check whether it is on and for which terminal app; `broza doctor --open`
+  opens the right System Settings pane. Quit and reopen the terminal after turning it on. Only
+  a path you name that macOS refuses outright ends the command (exit `3`).
 
 ## Scripting and JSON
 

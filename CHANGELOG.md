@@ -6,6 +6,13 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 
 ## [Unreleased]
 
+### Added
+
+- `broza doctor` checks Full Disk Access, names the terminal app to grant it to, lists the
+  steps (including quitting and reopening the terminal) and shows where the quarantine store
+  and the scan cache live. `--open` opens System Settings at the right pane. Read-only, exit `0`
+  (ADR 0011).
+
 ### Changed
 
 - `broza scan`: the volumes table is its container's last branch, indented under it, and a
@@ -23,6 +30,10 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 
 ### Fixed
 
+- A Mac with Full Disk Access on was told to grant it, because root-owned system folders
+  (`.Spotlight-V100`, `.fseventsd`) are refused either way. The hint after a scan now follows a
+  check of the setting: off, it sends you to `broza doctor --open`; on, it says nothing needs
+  doing.
 - The Full Disk Access hint was never printed when more than five locations were refused,
   because the summary that replaces them did not trigger it.
 

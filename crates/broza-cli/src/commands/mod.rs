@@ -17,6 +17,7 @@ pub mod clean_output;
 mod clean_tests;
 pub mod config;
 pub mod detection;
+pub mod doctor;
 pub mod explain;
 pub mod mount;
 pub mod quarantine;

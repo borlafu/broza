@@ -7,8 +7,8 @@ use broza::BrozaError;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::args::{
-    CleanArgs, ConfigArgs, ConfigCommand, ExplainArgs, QuarantineArgs, QuarantineCommand, RestoreArgs,
-    ScanArgs, SuggestArgs,
+    CleanArgs, ConfigArgs, ConfigCommand, DoctorArgs, ExplainArgs, QuarantineArgs, QuarantineCommand,
+    RestoreArgs, ScanArgs, SuggestArgs,
 };
 
 /// `-V/--version` text: binary version plus the JSON schema version, both read
@@ -95,6 +95,8 @@ pub enum Command {
     Config(ConfigArgs),
     /// Manage the quarantine store.
     Quarantine(QuarantineArgs),
+    /// Check Full Disk Access and show where Broza keeps its files.
+    Doctor(DoctorArgs),
     /// Version, license, schema version and support link.
     About,
 }
@@ -110,6 +112,7 @@ impl Command {
             Self::Restore(_) => "restore",
             Self::Config(_) => "config",
             Self::Quarantine(_) => "quarantine",
+            Self::Doctor(_) => "doctor",
             Self::About => "about",
         }
     }

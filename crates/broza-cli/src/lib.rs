@@ -25,7 +25,7 @@ use std::ffi::OsString;
 use std::sync::Arc;
 
 use broza::config::{CliOverrides, Config, EnvSnapshot};
-use broza::model::Warning;
+use broza::model::{AccessState, Warning};
 use broza::units::{ByteSize, DurationSpec};
 use broza::{BrozaError, ExitCode};
 use clap::Parser;
@@ -83,6 +83,7 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     let policy = ColorPolicy::resolve(cli.global.no_color, effective.color, runtime, format);
 
     let donate_prompt = effective.donate_prompt;
+    let fs = Arc::clone(&ports.fs);
     let outcome = dispatch(
         command,
         cli,
@@ -91,7 +92,16 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     )?;
     sink.write(&outcome.rendered)?;
     let stderr_policy = if runtime.stderr_is_tty { policy } else { ColorPolicy::Never };
-    report_warnings(&outcome.warnings, &cli.global, format, stderr_policy);
+    // One check of Full Disk Access, only for a run that met a refusal.
+    let hint = if reporting::needs_full_disk_access(&outcome.warnings) {
+        let state = runtime.home.as_deref().map_or(AccessState::Unknown, |home| {
+            broza::access::check_full_disk_access(fs.as_ref(), home).state
+        });
+        reporting::access_hint(state, runtime.terminal_app())
+    } else {
+        String::new()
+    };
+    report_warnings(&outcome.warnings, &cli.global, format, stderr_policy, &hint);
     donate_display::maybe_show(
         &donate_display::Run {
             outcome: &outcome,

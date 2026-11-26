@@ -6,6 +6,7 @@
 //!
 //! Safety invariants are documented in `AGENTS.md` §2 and `docs/prd.md` §7.3.
 
+pub mod access;
 pub mod adapters;
 pub mod clean;
 pub mod config;

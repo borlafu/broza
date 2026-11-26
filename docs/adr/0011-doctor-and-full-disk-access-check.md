@@ -30,7 +30,9 @@ established technique is to list a folder that only such a process may list.
   `--open` runs `open x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles`
   through the process port. It always exits `0`: the state is data.
 - The stderr hint after a run that met a refusal is worded by the same check, run once and
-  only then: off → `broza doctor --open`; on → nothing to do; unknown → `broza doctor`.
+  only then: off → `broza doctor --open`; on → privacy protection is not the cause, folders owned
+  by macOS or other users stay unreadable, and a refused folder of the user's own has its own
+  permissions to check; unknown → `broza doctor`.
 
 ## Alternatives considered
 

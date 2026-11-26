@@ -212,7 +212,7 @@ fn a_named_path_macos_refuses_exits_three_while_the_volume_scan_only_warns() {
     let whole = json_of(&["scan", "--json", "--volume", "disk3s5"]);
 
     assert_eq!(code, Some(3), "{stderr}");
-    assert!(stderr.contains("Full Disk Access"), "{stderr}");
+    assert!(stderr.contains("Full Disk Access") && stderr.contains("`broza doctor`"), "{stderr}");
     assert!(
         whole["warnings"].as_array().is_some_and(|w| w.iter().any(|w| w["code"] == "permission_denied")),
         "{whole}"
@@ -468,4 +468,33 @@ fn the_json_of_both_commands_is_a_valid_envelope() {
         assert_eq!(envelope["host"]["macos_version"], "26.1", "{args:?}");
         assert_eq!(envelope["errors"], serde_json::json!([]), "{args:?}");
     }
+}
+
+/// §6: a run that met a refusal on a machine without Full Disk Access ends
+/// with the hint that says so and how to turn it on.
+#[test]
+fn a_scan_without_full_disk_access_says_it_is_off_and_how_to_turn_it_on() {
+    let home = temp_home();
+    let output = broza(home.path()).env("TERM_PROGRAM", "Apple_Terminal").args(["scan"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("Full Disk Access is off for Terminal"), "{stderr}");
+    assert!(stderr.contains("`broza doctor --open`"), "{stderr}");
+}
+
+#[test]
+fn doctor_reports_the_recorded_machine_without_full_disk_access() {
+    let json = json_of(&["doctor", "--json"]);
+
+    assert_eq!(json["command"], "doctor");
+    assert_eq!(json["data"]["full_disk_access"]["state"], "missing");
+    assert_eq!(
+        json["data"]["full_disk_access"]["probe_path"],
+        "/System/Volumes/Data/Users/dana/Library/Application Support/com.apple.TCC"
+    );
+    assert_eq!(json["data"]["opened_settings"], false);
+    let human = stdout_of(&["doctor"]);
+    assert!(human.starts_with("Full Disk Access   missing"), "{human}");
+    assert!(human.contains("Turn on your terminal application."), "{human}");
 }

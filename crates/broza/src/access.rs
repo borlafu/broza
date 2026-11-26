@@ -20,19 +20,21 @@ use crate::ports::FileOps;
 const PROTECTED: [&str; 4] =
     ["Library/Application Support/com.apple.TCC", "Library/Safari", "Library/Mail", "Library/Messages"];
 
-/// List the first protected folder that exists under `home` and say what
-/// macOS answered.
+/// List the first protected folder under `home` that exists and say what
+/// macOS answered. Listing is the whole test: no `stat` first, so the answer
+/// never depends on macOS letting a protected folder be stated.
 pub fn check_full_disk_access(fs: &dyn FileOps, home: &Path) -> AccessCheck {
-    let Some(probe) = PROTECTED.iter().map(|relative| home.join(relative)).find(|path| fs.exists(path))
-    else {
-        return AccessCheck { state: AccessState::Unknown, probe_path: None };
-    };
-    let state = match fs.read_dir(&probe) {
-        Ok(_) => AccessState::Granted,
-        Err(BrozaError::PermissionDenied { .. }) => AccessState::Missing,
-        Err(_) => AccessState::Unknown,
-    };
-    AccessCheck { state, probe_path: Some(probe) }
+    for relative in PROTECTED {
+        let probe = home.join(relative);
+        let state = match fs.read_dir(&probe) {
+            Ok(_) => AccessState::Granted,
+            Err(BrozaError::PermissionDenied { .. }) => AccessState::Missing,
+            Err(BrozaError::TargetNotFound(_)) => continue,
+            Err(_) => AccessState::Unknown,
+        };
+        return AccessCheck { state, probe_path: Some(probe) };
+    }
+    AccessCheck { state: AccessState::Unknown, probe_path: None }
 }
 
 #[cfg(test)]
@@ -71,6 +73,24 @@ mod tests {
 
         assert_eq!(check.state, AccessState::Missing);
         assert_eq!(check.probe_path, Some(Path::new(HOME).join("Library/Mail")));
+    }
+
+    #[test]
+    fn the_first_protected_folder_found_decides_even_when_a_later_one_lists() {
+        let fs = home_with(PROTECTED[0])
+            .with_denied(Path::new(HOME).join(PROTECTED[0]))
+            .with_dir(Path::new(HOME).join("Library/Mail"));
+
+        assert_eq!(check_full_disk_access(&fs, Path::new(HOME)).state, AccessState::Missing);
+    }
+
+    #[test]
+    fn a_protected_path_that_is_not_a_folder_cannot_tell() {
+        let fs = FakeFileOps::new().with_root("/", 1).with_file(Path::new(HOME).join(PROTECTED[0]), b"x");
+
+        let check = check_full_disk_access(&fs, Path::new(HOME));
+
+        assert_eq!(check.state, AccessState::Unknown, "{check:?}");
     }
 
     #[test]

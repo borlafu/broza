@@ -25,7 +25,7 @@ const WARNING_LABEL: &str = "warning:";
 /// Hanging indent of a wrapped warning: the label's width plus its space.
 const WARNING_INDENT: &str = "         ";
 /// What to call the terminal when `TERM_PROGRAM` did not say.
-const ANY_TERMINAL: &str = "your terminal application";
+pub const ANY_TERMINAL: &str = "your terminal application";
 
 /// The one hint that follows a run which had to skip something (§6), worded
 /// by what a check of Full Disk Access found. Root-owned system folders are
@@ -37,8 +37,10 @@ pub fn access_hint(state: AccessState, terminal: Option<&str>) -> String {
             "Full Disk Access is off for {app}, so macOS kept Broza out of protected folders. Run \
              `broza doctor --open` to turn it on, then quit and reopen {app}."
         ),
-        AccessState::Granted => "Full Disk Access is on: the locations above belong to macOS or to \
-                                 other users and stay unreadable. Scans leave them out; nothing to do."
+        AccessState::Granted => "Full Disk Access is on, so privacy protection is not the cause. \
+                                 Locations owned by macOS or by other users stay unreadable and scans \
+                                 leave them out. If one of them is your own folder, check its \
+                                 permissions with `ls -ld <path>`."
             .to_owned(),
         _ => format!(
             "Some locations were skipped. `broza doctor` checks whether Full Disk Access is on for \
@@ -185,7 +187,8 @@ mod tests {
             "{missing}"
         );
         assert!(missing.ends_with("quit and reopen Terminal."), "{missing}");
-        assert!(granted.contains("nothing to do") && !granted.contains("doctor"), "{granted}");
+        assert!(granted.contains("not the cause") && granted.contains("ls -ld"), "{granted}");
+        assert!(!granted.contains("doctor"), "{granted}");
         assert!(
             unknown.contains("`broza doctor`") && unknown.contains("your terminal application"),
             "{unknown}"

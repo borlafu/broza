@@ -32,8 +32,8 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
 
 - A Mac with Full Disk Access on was told to grant it, because root-owned system folders
   (`.Spotlight-V100`, `.fseventsd`) are refused either way. The hint after a scan now follows a
-  check of the setting: off, it sends you to `broza doctor --open`; on, it says nothing needs
-  doing.
+  check of the setting: off, it sends you to `broza doctor --open`; on, it says privacy
+  protection is not the cause and points to the folder's own permissions.
 - The Full Disk Access hint was never printed when more than five locations were refused,
   because the summary that replaces them did not trigger it.
 

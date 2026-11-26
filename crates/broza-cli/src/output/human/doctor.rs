@@ -11,13 +11,12 @@ use broza::model::{AccessState, DoctorReport};
 
 use crate::output::human::scan::folders::abbreviate;
 use crate::output::wrap::{numbered, wrap};
+use crate::reporting::ANY_TERMINAL;
 
 /// Indent of the paragraphs under a heading.
 const INDENT: &str = "  ";
 /// Width of the labels in the storage block.
 const LABEL_WIDTH: usize = 12;
-/// What to call the terminal when `TERM_PROGRAM` did not say.
-const ANY_TERMINAL: &str = "your terminal application";
 
 /// Render `report`; paths under `home` print as `~/…`.
 pub fn render(report: &DoctorReport, home: Option<&Path>) -> String {
@@ -57,7 +56,8 @@ fn meaning(state: AccessState, probe: Option<&str>) -> String {
     match state {
         AccessState::Granted => "Broza can read the folders macOS protects. A few system folders \
             (.Spotlight-V100, .fseventsd, .DocumentRevisions-V100) stay unreadable even so: they belong \
-            to macOS, and scans leave them out. That is expected."
+            to macOS, and scans leave them out. A folder of your own that a scan cannot read has \
+            its own permissions to check (`ls -ld <path>`)."
             .to_owned(),
         AccessState::Missing => format!(
             "macOS refused to let Broza list {probe}. Without Full Disk Access, scans leave out Mail, \

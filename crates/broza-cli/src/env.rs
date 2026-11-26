@@ -264,4 +264,17 @@ mod tests {
         }
         assert!(RuntimeEnv::for_tests(PathBuf::from("/Users/d")).uid_temp_dirs().is_empty());
     }
+
+    #[test]
+    fn the_terminal_is_named_as_system_settings_lists_it_or_not_at_all() {
+        let with = |name: &str| RuntimeEnv {
+            term_program: Some(name.to_owned()),
+            ..RuntimeEnv::for_tests(PathBuf::from("/Users/d"))
+        };
+
+        assert_eq!(with("Apple_Terminal").terminal_app(), Some("Terminal"));
+        assert_eq!(with("iTerm.app").terminal_app(), Some("iTerm"));
+        assert_eq!(with("tmux").terminal_app(), None, "inside tmux the app is unknown");
+        assert_eq!(RuntimeEnv::for_tests(PathBuf::from("/Users/d")).terminal_app(), None);
+    }
 }

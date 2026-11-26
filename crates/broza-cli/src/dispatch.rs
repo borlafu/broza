@@ -57,6 +57,7 @@ pub fn dispatch(
 ) -> Result<Outcome, BrozaError> {
     let generated_at = jiff::Timestamp::now();
     let folders = folder_settings(cli, &inputs);
+    let doctor_home = walked_home(inputs.runtime);
     match command {
         Command::About => {
             let rendered = commands::about::About::new(inputs.host, generated_at, inputs.warnings.clone())
@@ -118,9 +119,9 @@ pub fn dispatch(
         Command::Doctor(args) => commands::doctor::run(&commands::doctor::DoctorContext {
             ports: &inputs.ports,
             args,
-            home: inputs.runtime.home.as_deref(),
+            home: doctor_home.as_deref(),
             terminal: inputs.runtime.terminal_app(),
-            quarantine_path: inputs.runtime.home.as_deref().map(|home| inputs.effective.quarantine_dir(home)),
+            quarantine_path: doctor_home.as_deref().map(|home| inputs.effective.quarantine_dir(home)),
             host: inputs.host,
             generated_at,
             warnings: inputs.warnings,
@@ -155,7 +156,7 @@ fn store_context<'a>(inputs: &'a Inputs<'a>, generated_at: jiff::Timestamp) -> S
 
 /// The home a folder walk starts from: the real one, or the recording's under
 /// the debug-only fixture seam, where the real one does not exist.
-fn walked_home(runtime: &RuntimeEnv) -> Option<PathBuf> {
+pub fn walked_home(runtime: &RuntimeEnv) -> Option<PathBuf> {
     crate::wiring::fixture_home(runtime).or_else(|| runtime.home.clone())
 }
 

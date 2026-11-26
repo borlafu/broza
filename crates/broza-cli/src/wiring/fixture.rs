@@ -120,6 +120,8 @@ const LEFTOVER: &str = "/System/Volumes/Data/Users/dana/Library/HTTPStorages/com
 const LEFTOVER_TOUCHED: &str = "2023-03-01T09:00:00Z";
 /// A folder Full Disk Access would be needed for; the recorded process has none.
 pub const DENIED_DIR: &str = "/System/Volumes/Data/Users/dana/Library/Accounts";
+/// The folder `broza doctor` lists to check Full Disk Access.
+pub const PRIVACY_DIR: &str = "/System/Volumes/Data/Users/dana/Library/Application Support/com.apple.TCC";
 /// The home directory of the recorded machine, in the spelling its files use.
 ///
 /// The seam swaps the filesystem for the recording, so the real `$HOME` of the
@@ -212,6 +214,9 @@ fn filesystem() -> FakeFileOps {
     // A folder macOS keeps from a process without Full Disk Access.
     fs.add_dir(DENIED_DIR);
     fs.add_denied(DENIED_DIR);
+    // The folder `broza doctor` checks: refused too, as it is without access.
+    fs.add_dir(PRIVACY_DIR);
+    fs.add_denied(PRIVACY_DIR);
     // Evicted from this disk: the provider holds it, the walk counts it as nothing.
     fs.add_dataless_file(
         "/System/Volumes/Data/Users/dana/Library/Mobile Documents/com~apple~CloudDocs/archive.zip",

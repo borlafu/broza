@@ -92,10 +92,12 @@ fn execute(cli: &Cli, runtime: &RuntimeEnv) -> Result<ExitCode, BrozaError> {
     )?;
     sink.write(&outcome.rendered)?;
     let stderr_policy = if runtime.stderr_is_tty { policy } else { ColorPolicy::Never };
-    // One check of Full Disk Access, only for a run that met a refusal.
-    let hint = if reporting::needs_full_disk_access(&outcome.warnings) {
-        let state = runtime.home.as_deref().map_or(AccessState::Unknown, |home| {
-            broza::access::check_full_disk_access(fs.as_ref(), home).state
+    // One check of Full Disk Access, only for a run that met a refusal and
+    // will print the hint.
+    let speaks = !cli.global.quiet && !format.is_machine_readable();
+    let hint = if speaks && reporting::needs_full_disk_access(&outcome.warnings) {
+        let state = dispatch::walked_home(runtime).map_or(AccessState::Unknown, |home| {
+            broza::access::check_full_disk_access(fs.as_ref(), &home).state
         });
         reporting::access_hint(state, runtime.terminal_app())
     } else {

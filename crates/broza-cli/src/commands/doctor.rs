@@ -81,6 +81,12 @@ pub fn run(context: &DoctorContext<'_>) -> Result<Outcome, BrozaError> {
 fn open_settings(ports: &Ports) -> (bool, Option<Warning>) {
     let failure = match ports.process.run(OPEN_PROGRAM, &[SETTINGS_URL], OPEN_TIMEOUT) {
         Ok(output) if output.success => return (true, None),
+        Ok(output) if output.stderr_text().trim().is_empty() => {
+            format!(
+                "`open` exited with {}",
+                output.code.map_or_else(|| "a signal".to_owned(), |c| c.to_string())
+            )
+        }
         Ok(output) => output.stderr_text(),
         Err(error) => error.to_string(),
     };

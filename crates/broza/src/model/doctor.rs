@@ -1,4 +1,4 @@
-//! `broza doctor` (`docs/cli-spec.md` §3.9, §4.9): what stands between Broza
+//! `broza doctor` (`docs/cli-spec.md` §3.9, §4.8): what stands between Broza
 //! and a complete scan, and where it keeps its own files.
 
 use std::path::PathBuf;

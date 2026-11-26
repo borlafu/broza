@@ -19,7 +19,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned: the compile-fail tests compare rustc's exact messages, which
+      # change between releases. Bump deliberately and re-bless with
+      # TRYBUILD=overwrite.
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy, rustfmt, llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
@@ -38,7 +41,10 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned: the compile-fail tests compare rustc's exact messages, which
+      # change between releases. Bump deliberately and re-bless with
+      # TRYBUILD=overwrite.
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2

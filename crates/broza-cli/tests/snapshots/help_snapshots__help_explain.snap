@@ -4,10 +4,12 @@ expression: help_for(args)
 ---
 Explain what a volume, path or cleanup category is
 
-Usage: broza explain [OPTIONS] <PATH|VOLUME|CATEGORY>
+Usage: broza explain [OPTIONS] <PATH|VOLUME|CATEGORY> [FINDING]
 
 Arguments:
   <PATH|VOLUME|CATEGORY>  Category id, volume (device id, name or mount point) or filesystem path
+  [FINDING]               With a category: a finding Broza only reports (for example icloud,
+                          docker-raw, unverified); prints the steps that free its space
 
 Options:
       --short           One-line summary only

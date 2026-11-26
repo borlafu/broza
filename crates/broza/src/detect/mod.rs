@@ -22,6 +22,7 @@ pub(crate) mod test_support;
 pub use detector::{DetectContext, DetectPorts, Detected, Detector, HomeWalk, LOCATION_UNREADABLE_CODE};
 pub use explain::{
     ExplainKind, ExplainReport, Explanation, category_summary, explain_category, explain_volume,
+    reported_findings,
 };
 pub use filter::RiskFilter;
 pub use registry::{DETECTOR_FAILED_CODE, DetectReport, Registry};

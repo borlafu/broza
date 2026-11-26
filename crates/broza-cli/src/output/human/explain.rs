@@ -44,6 +44,16 @@ const UNKNOWN_TARGET: &str = "Unknown target";
 /// Render `report` in full.
 pub fn render(report: &ExplainReport, policy: ColorPolicy) -> String {
     let mut text = header(report, policy);
+    if let (Some(id), Some(instructions)) = (&report.finding, &report.instructions) {
+        let _ignored = write!(
+            text,
+            "\n\nHow to free {id} ({}):\n{}\n{}",
+            instructions.provider,
+            wrap(&instructions.summary, PARAGRAPH_INDENT),
+            numbered(&instructions.steps, PARAGRAPH_INDENT)
+        );
+        return text;
+    }
     let paragraphs =
         [&report.explanation.what_it_is, &report.explanation.what_it_is_for, &report.explanation.is_it_safe];
     for (title, body) in SECTIONS.iter().zip(paragraphs) {
@@ -58,6 +68,10 @@ pub fn render(report: &ExplainReport, policy: ColorPolicy) -> String {
 
 /// Render `report` as the single line of `--short`.
 pub fn render_short(report: &ExplainReport, policy: ColorPolicy) -> String {
+    if let (Some(id), Some(instructions)) = (&report.finding, &report.instructions) {
+        return [id.as_str(), instructions.provider.as_str(), instructions.summary.as_str()]
+            .join(SHORT_SEPARATOR);
+    }
     match (report.kind, report.category, report.volume.as_ref()) {
         (ExplainKind::Category, Some(category), _) => {
             let risk = report.risk.map_or_else(String::new, |risk| risk_chip(policy, risk));
@@ -229,6 +243,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_finding_prints_only_its_steps_under_the_category_header() {
+        let report = ExplainReport::for_finding(Category::BuildCache, "docker-raw")
+            .unwrap_or_else(|| panic!("docker"));
+
+        let text = plain(&report);
+        let short = render_short(&report, ColorPolicy::Never);
+
+        assert!(
+            text.contains("\n\nHow to free build-cache.docker-raw (Docker Desktop):\n  Let Docker"),
+            "{text}"
+        );
+        assert!(text.contains("\n  1. Run `docker system prune`"), "{text}");
+        assert!(!text.contains("What it is:"), "the finding needs no category essay: {text}");
+        assert_eq!(
+            short,
+            "build-cache.docker-raw  ·  Docker Desktop  ·  Let Docker reclaim the space it no longer uses."
+        );
     }
 
     #[test]

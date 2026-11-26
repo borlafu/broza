@@ -200,12 +200,14 @@ a standing explanation.
 Explains in plain language what a volume, path or cleanup category is and what it is for. This command embodies principle 3: *understand* before cleaning.
 
 ```
-broza explain <PATH|VOLUME|CATEGORY> [OPTIONS]
+broza explain <PATH|VOLUME|CATEGORY> [FINDING] [OPTIONS]
 ```
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `--short` | bool | `false` | One-line summary only. |
+
+`FINDING` follows a category id and names one finding Broza only reports: `cloud-synced` `icloud`, `dropbox`, `onedrive`, `google-drive` or `other`; `build-cache` `docker-raw`; `unused-apps` `unverified`. The output is the category header and `How to free <category>.<finding> (<provider>):` with the provider's summary and numbered steps, the `instructions` of that finding; no scan runs. `--short` prints `<id>  ·  <provider>  ·  <summary>`. An unknown name exits `4` and lists the names that work; a `FINDING` after a volume or a path is a usage error (exit `2`). `suggest` names this command under every finding it only reports.
 
 The target is resolved in this order: exact category id (§3.3) → volume (device id, name or mount point) → filesystem path. Unknown targets exit `4`. A path target is made absolute against the working directory and cleaned of `.` and `..` **lexically** — nothing is followed and `..` never climbs above `/` — and it must exist: a path that does not exist is an unknown target, not an excuse to describe the working directory's volume. The explanation of a path is the explanation of the volume it lives on, plus one line naming that volume. The JSON form is §4.7; `--csv` exits `2`.
 
@@ -299,7 +301,7 @@ Supports `--json` and `--csv`. The CSV output is the flattened `findings` table 
 
 ```
 Potentially reclaimable space:  234.3 GB
-Reclaimable another way:        51.1 GB   (Broza only reports these; steps below)
+Reclaimable another way:        51.1 GB   (Broza only reports these; how below)
 
 SAFE (green) — 138.2 GB
    build-cache      121.4 GB   Xcode DerivedData (94.2 GB), Python bytecode caches (27.2 GB)
@@ -313,23 +315,16 @@ REVIEW (amber) — 96.1 GB
 
 RECLAIMABLE ANOTHER WAY — 51.1 GB   (not by Broza)
    build-cache       38.6 GB   Docker Desktop disk image
-                               Let Docker reclaim the space it no longer uses.
-                               1. Run `docker system prune` to remove the images, containers
-                                  and build cache Docker no longer uses; Broza only reports
-                                  Docker's disk image.
-                               2. To shrink Docker's disk image itself, open Docker Desktop →
-                                  Settings → Resources → Advanced and lower the disk image size.
-                               More: broza explain build-cache
+                               How: broza explain build-cache docker-raw
    cloud-synced      12.5 GB   Already backed up in iCloud Drive
-                               …
-                               More: broza explain cloud-synced
+                               How: broza explain cloud-synced icloud
 
 Next step:
   broza clean --risk green            (dry run, deletes nothing)
   broza clean --risk green --apply    (moves to quarantine; space is freed after expiry or purge)
 ```
 
-Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06). The headline and the risk groups count and list only actionable findings, so the number at the top is space Broza can actually make reclaimable; a risk group with nothing actionable is not printed. Inform-only findings are summed on the "Reclaimable another way" line and listed, biggest first, in a closing group of their own: each with its size, the provider's summary and numbered steps (`instructions`), and the `broza explain <category>` to read more. Within a risk group categories are ordered by their actionable bytes, biggest first. The "Next step" footer names the safest risk level that has something actionable, and is omitted when nothing is.
+Risk is always rendered with a text label (`SAFE`, `REVIEW`, `INFO ONLY`) in addition to color (RNF-06). The headline and the risk groups count and list only actionable findings, so the number at the top is space Broza can actually make reclaimable; a risk group with nothing actionable is not printed. Inform-only findings are summed on the "Reclaimable another way" line and listed, biggest first, in a closing group of their own: each with its size and, below it, the `broza explain <category> <finding>` that prints its steps (§3.2). Within a risk group categories are ordered by their actionable bytes, biggest first. The "Next step" footer names the safest risk level that has something actionable, and is omitted when nothing is.
 
 ---
 
@@ -937,6 +932,8 @@ An item of a session has this shape:
 | `explanation` | Always present. Three prose fields: `what_it_is`, `what_it_is_for`, `is_it_safe`. English, one paragraph each; the same text the human output prints under its three headings. Since schema `1.2`, an optional `next_steps` array of strings, present only for `kind` `category`: what to do next, in order — the `broza` commands that review and clean the category, then the manual steps for what Broza only reports (Docker's disk image, applications with no record of use, cloud-synced files). The human output prints it as a numbered `What to do next:` section. |
 | `risk` | Optional. Base risk of the category (§3.3). Present only for `kind` `category`. |
 | `action` | Optional. Default action of the category (§3.3). Present only for `kind` `category`. |
+| `finding` | Optional, schema `1.2`. The id of the finding asked about with `explain <category> <finding>`, for example `cloud-synced.icloud`. |
+| `instructions` | Optional, schema `1.2`. Present with `finding`: the same `Instructions` object as in §4.3 (`provider`, `summary`, `steps`). |
 
 A `path` target is explained through the volume it lives on: `volume` and `path` are both present,
 and the human output adds one line saying which volume the path is on. A path that does not exist
@@ -1156,6 +1153,7 @@ Shipped with 1.1.0.
 Unreleased: everything below ships with the next minor version.
 
 - §3.1: the volumes table is the container's last branch (`└─ Volumes`, rows indented under it) instead of a block after a blank line, and a gutter line separates two containers, so the table never reads as part of what follows it.
-- §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size, the provider's summary and numbered steps from `instructions`, and the `broza explain` to read more; the headline line that sums them is renamed accordingly. Totals are unchanged.
+- §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size and the `broza explain <category> <finding>` that prints their steps; the headline line that sums them is renamed accordingly. Totals are unchanged.
+- §3.2, §4.7: `broza explain <category> <finding>` prints the steps of one finding Broza only reports, without scanning; the JSON carries `finding` and `instructions`.
 - §4.1, §4.7: `schema_version` `1.2`. `explanation.next_steps`, an optional array present for categories only, carries what to do next; `broza explain <category>` prints it as a numbered `What to do next:` section.
 - §6: warnings on stderr form a block set apart from the report by a blank line, each wrapped under a `warning:` label with a blank line between two. The summary of many refused paths states the fact with three examples, and the Full Disk Access hint now follows it as it follows a single refusal.

@@ -37,6 +37,16 @@ const LEGACY_ROOTS: [(&str, Provider); 3] = [
     ("Google Drive", Provider::GoogleDrive),
 ];
 
+/// The provider's steps for the finding `cloud-synced.<name>`, by its name.
+pub(crate) fn instructions_for(name: &str) -> Option<(&'static str, Instructions)> {
+    Provider::ALL.into_iter().find(|provider| provider.slug() == name).map(|p| (p.slug(), p.instructions()))
+}
+
+/// Every finding name this detector can produce, in a stable order.
+pub(crate) fn finding_names() -> Vec<&'static str> {
+    Provider::ALL.iter().map(|provider| provider.slug()).collect()
+}
+
 /// A cloud provider Broza knows the official eviction steps of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Provider {
@@ -48,6 +58,9 @@ enum Provider {
 }
 
 impl Provider {
+    /// Every provider, in the order findings are listed.
+    const ALL: [Self; 5] = [Self::ICloud, Self::Dropbox, Self::OneDrive, Self::GoogleDrive, Self::Other];
+
     /// The provider a `~/Library/CloudStorage` entry belongs to, by its prefix.
     fn of_storage_entry(name: &str) -> Self {
         if name.starts_with("Dropbox") {

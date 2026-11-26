@@ -15,7 +15,9 @@ The JSON contract has its own version (`schema_version`, `docs/cli-spec.md` §4.
   examples.
 - `broza suggest`: space Broza only reports (Docker's disk image, cloud-synced files,
   applications with no record of use) has its own "Reclaimable another way" group with its size
-  and the steps that free it, instead of `0 B` rows inside the risk groups.
+  and the command that prints the steps, instead of `0 B` rows inside the risk groups.
+- `broza explain <category> <finding>` (for example `broza explain cloud-synced icloud`) prints
+  the steps that free one such finding, without scanning.
 - `broza explain <category>` ends with a numbered "What to do next" section; the JSON carries it
   as `explanation.next_steps` (schema 1.2).
 

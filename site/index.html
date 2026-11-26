@@ -197,7 +197,7 @@ Largest consumers on Macintosh HD - Data:
    61.7 GB  ~/Documents/</span></span>
 <span class="term-step" data-step="suggest" data-work="2600"><span class="line-cmd"><span class="prompt">$</span> <span class="cmd">broza suggest</span></span>
 <span class="out">Potentially reclaimable space:  <span class="strong">234.3 GB</span>
-Reclaimable another way:        51.1 GB   (Broza only reports these; steps below)
+Reclaimable another way:        51.1 GB   (Broza only reports these; how below)
 
 <span class="safe">SAFE (green) — 138.2 GB</span>
    build-cache      121.4 GB   Xcode DerivedData (94.2 GB), Python bytecode caches (27.2 GB)
@@ -211,10 +211,9 @@ Reclaimable another way:        51.1 GB   (Broza only reports these; steps below
 
 <span class="info">RECLAIMABLE ANOTHER WAY — 51.1 GB   (not by Broza)</span>
    build-cache       38.6 GB   Docker Desktop disk image
-                               1. Run `docker system prune` …
-                               More: broza explain build-cache
+                               How: broza explain build-cache docker-raw
    cloud-synced      12.5 GB   Already backed up in iCloud Drive
-                               More: broza explain cloud-synced
+                               How: broza explain cloud-synced icloud
 
 <span class="dim">Next step:
   broza clean --risk green            (dry run, deletes nothing)

@@ -17,7 +17,7 @@ use broza::model::{Category, Finding, Risk, SuggestReport};
 
 use crate::output::human::risk_chip;
 use crate::output::human::scan::folders::abbreviate;
-use crate::output::wrap::{numbered, wrap};
+
 use crate::output::{ColorPolicy, format_bytes};
 
 /// Width of the category column.
@@ -28,7 +28,7 @@ const SIZE_WIDTH: usize = 9;
 const EXPLAIN_PATHS: usize = 5;
 /// Label of the headline line and of the group for inform-only findings.
 const ANOTHER_WAY: &str = "Reclaimable another way";
-/// Indent of everything printed under a category row's description column.
+/// Indent of the line under an inform-only finding's description column.
 const DETAIL_INDENT: &str = "                               ";
 /// What is printed when no detector found anything.
 const NOTHING_FOUND: &str =
@@ -44,7 +44,7 @@ pub fn render(report: &SuggestReport, explain: bool, home: &Path, policy: ColorP
     if report.inform_only_bytes > 0 {
         let _ignored = write!(
             text,
-            "\n{:<32}{}   (Broza only reports these; steps below)",
+            "\n{:<32}{}   (Broza only reports these; how below)",
             format!("{ANOTHER_WAY}:"),
             format_bytes(report.inform_only_bytes)
         );
@@ -136,23 +136,20 @@ fn render_another_way(text: &mut String, report: &SuggestReport, explain: bool, 
             format_bytes(finding.reclaimable_bytes()),
             finding.title()
         );
-        render_steps(text, finding);
+        let _ignored = write!(text, "\n{DETAIL_INDENT}How: {}", how_command(finding));
         if explain {
             render_reasoning(text, finding, home);
         }
     }
 }
 
-/// The provider's summary and numbered steps under an inform-only finding,
-/// then where to read more.
-fn render_steps(text: &mut String, finding: &Finding) {
-    if let Some(instructions) = finding.instructions() {
-        let _ignored = write!(text, "\n{}", wrap(&instructions.summary, DETAIL_INDENT));
-        if !instructions.steps.is_empty() {
-            let _ignored = write!(text, "\n{}", numbered(&instructions.steps, DETAIL_INDENT));
-        }
-    }
-    let _ignored = write!(text, "\n{DETAIL_INDENT}More: broza explain {}", finding.category().as_str());
+/// The command that prints the steps for an inform-only finding:
+/// `broza explain <category> <finding>`.
+fn how_command(finding: &Finding) -> String {
+    let category = finding.category().as_str();
+    let id = finding.id().to_string();
+    let name = id.strip_prefix(category).and_then(|rest| rest.strip_prefix('.')).unwrap_or(&id);
+    format!("broza explain {category} {name}")
 }
 
 /// `Title (size)`, or `N Title (reason)` for a finding whose size macOS does
@@ -240,9 +237,7 @@ mod tests {
 
         assert!(text.starts_with("Potentially reclaimable space:  138.2 GB"), "{text}");
         assert!(
-            text.contains(
-                "Reclaimable another way:        12.5 GB   (Broza only reports these; steps below)"
-            ),
+            text.contains("Reclaimable another way:        12.5 GB   (Broza only reports these; how below)"),
             "{text}"
         );
         assert!(text.contains("SAFE (green) — 138.2 GB"), "{text}");
@@ -256,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn an_inform_only_finding_shows_its_size_its_steps_and_where_to_read_more() {
+    fn an_inform_only_finding_shows_its_size_and_the_command_with_its_steps() {
         let report = SuggestReport::from_findings(vec![
             finding("user-cache.a", Category::UserCache, 16_800_000_000, false),
             finding("cloud-synced.c", Category::CloudSynced, 12_500_000_000, true),
@@ -269,10 +264,7 @@ mod tests {
             group.trim_end(),
             "RECLAIMABLE ANOTHER WAY — 12.5 GB   (not by Broza)
    cloud-synced      12.5 GB   Title of cloud-synced
-                               Let the provider keep the file online only.
-                               1. Open Finder.
-                               2. Choose Remove Download.
-                               More: broza explain cloud-synced"
+                               How: broza explain cloud-synced c"
         );
     }
 

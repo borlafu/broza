@@ -17,9 +17,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::adapters::diskutil::purpose::RoleExplanation;
-use crate::model::{Action, Category, FsKind, Risk, Volume};
+use crate::model::{Action, Category, FsKind, Instructions, Risk, Volume};
 
 use super::category_text::{CategoryText, text_for};
+use super::detectors;
 
 /// The three paragraphs `broza explain` prints, in the order it prints them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +106,12 @@ pub struct ExplainReport {
     /// Default action of the category; absent for volumes and paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub action: Option<Action>,
+    /// The finding asked about with `explain <category> <finding>`, as its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finding: Option<String>,
+    /// How to free that finding's space outside Broza; present with `finding`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<Instructions>,
 }
 
 impl ExplainReport {
@@ -120,6 +127,8 @@ impl ExplainReport {
             explanation,
             risk: None,
             action: None,
+            finding: None,
+            instructions: None,
         }
     }
 
@@ -134,7 +143,21 @@ impl ExplainReport {
             explanation: explain_category(category),
             risk: Some(category.base_risk()),
             action: Some(category.default_action()),
+            finding: None,
+            instructions: None,
         }
+    }
+
+    /// Explain one finding of `category` that Broza only reports: the
+    /// category, plus the steps that free its space. `None` for a name that is
+    /// not one of [`reported_findings`].
+    pub fn for_finding(category: Category, name: &str) -> Option<Self> {
+        let instructions = finding_instructions(category, name)?;
+        Some(Self {
+            finding: Some(format!("{}.{name}", category.as_str())),
+            instructions: Some(instructions),
+            ..Self::for_category(category)
+        })
     }
 
     /// Explain `path` through the `volume` it was resolved to.
@@ -159,6 +182,31 @@ pub fn explain_category(category: Category) -> Explanation {
     text_for(category).into()
 }
 
+/// The findings of `category` Broza only reports, by name: what
+/// `explain <category> <finding>` accepts. Empty for a category with none.
+pub fn reported_findings(category: Category) -> Vec<&'static str> {
+    match category {
+        Category::CloudSynced => detectors::cloud_synced::finding_names(),
+        Category::BuildCache => vec![detectors::build_cache::DOCKER_FINDING],
+        Category::UnusedApps => vec![detectors::unused_apps::UNVERIFIED_FINDING],
+        _ => Vec::new(),
+    }
+}
+
+/// The steps that free the space of finding `<category>.<name>` outside Broza.
+fn finding_instructions(category: Category, name: &str) -> Option<Instructions> {
+    match category {
+        Category::CloudSynced => detectors::cloud_synced::instructions_for(name).map(|(_, steps)| steps),
+        Category::BuildCache if name == detectors::build_cache::DOCKER_FINDING => {
+            Some(detectors::build_cache::docker_instructions())
+        }
+        Category::UnusedApps if name == detectors::unused_apps::UNVERIFIED_FINDING => {
+            Some(detectors::unused_apps::unverified_instructions())
+        }
+        _ => None,
+    }
+}
+
 /// The one-line summary `--short` prints for `category`.
 pub fn category_summary(category: Category) -> &'static str {
     text_for(category).summary
@@ -170,6 +218,7 @@ mod tests {
 
     use super::{
         ExplainKind, ExplainReport, Explanation, category_summary, explain_category, explain_volume,
+        reported_findings,
     };
     use crate::model::{Action, Category, Risk, Volume, VolumeRole};
 
@@ -290,5 +339,27 @@ mod tests {
         let explanation: Explanation = role.into();
         assert_eq!(explanation.what_it_is, role.what_it_is);
         assert_eq!(explanation.is_it_safe, role.is_it_safe);
+    }
+
+    #[test]
+    fn every_finding_broza_only_reports_has_steps_explain_can_print() {
+        for category in Category::all() {
+            for name in reported_findings(category) {
+                let report = ExplainReport::for_finding(category, name)
+                    .unwrap_or_else(|| panic!("{}.{name} has no steps", category.as_str()));
+                assert_eq!(report.finding.as_deref(), Some(format!("{}.{name}", category.as_str()).as_str()));
+                assert!(
+                    report.instructions.is_some_and(|i| !i.steps.is_empty()),
+                    "{}.{name}",
+                    category.as_str()
+                );
+            }
+        }
+        assert!(reported_findings(Category::CloudSynced).contains(&"icloud"));
+        assert!(ExplainReport::for_finding(Category::CloudSynced, "nope").is_none());
+        assert!(
+            ExplainReport::for_finding(Category::Trash, "home").is_none(),
+            "trash is cleaned, not reported"
+        );
     }
 }

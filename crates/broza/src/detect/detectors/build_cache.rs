@@ -144,17 +144,25 @@ fn cargo_targets(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaEr
 fn docker_raw(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaError> {
     let path = context.under_home(DOCKER_RAW);
     let Ok(meta) = context.fs.metadata(&path) else { return Ok(None) };
-    let builder = start(Category::BuildCache, "docker-raw", "Docker Desktop disk image")?
+    let builder = start(Category::BuildCache, DOCKER_FINDING, "Docker Desktop disk image")?
         .description("The virtual disk every Docker image, container and volume lives in.")
         .risk(Risk::Amber)
         .action(Action::InformOnly)
         .reasoning("Deleting the file would destroy every container; only Docker can shrink it safely.")
-        .instructions(Instructions {
-            provider: "Docker Desktop".to_owned(),
-            summary: "Let Docker reclaim the space it no longer uses.".to_owned(),
-            steps: vec![DOCKER_PRUNE_STEP.to_owned(), DOCKER_SHRINK_STEP.to_owned()],
-        });
+        .instructions(docker_instructions());
     finish(builder, vec![path_with(&path, context.settled_allocated(&path, &meta), meta.modified)])
+}
+
+/// Name of the Docker finding: `build-cache.docker-raw`.
+pub(crate) const DOCKER_FINDING: &str = "docker-raw";
+
+/// What frees the Docker disk image: Docker's own tools.
+pub(crate) fn docker_instructions() -> Instructions {
+    Instructions {
+        provider: "Docker Desktop".to_owned(),
+        summary: "Let Docker reclaim the space it no longer uses.".to_owned(),
+        steps: vec![DOCKER_PRUNE_STEP.to_owned(), DOCKER_SHRINK_STEP.to_owned()],
+    }
 }
 
 #[cfg(test)]

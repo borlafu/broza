@@ -260,16 +260,24 @@ fn applications(mut paths: Vec<FindingPath>) -> Result<Option<Finding>, BrozaErr
     finish(builder, paths)
 }
 
+/// Name of the finding Broza only reports: `unused-apps.unverified`.
+pub(crate) const UNVERIFIED_FINDING: &str = "unverified";
+
+/// What to do with an application Spotlight has no record of.
+pub(crate) fn unverified_instructions() -> Instructions {
+    Instructions {
+        provider: "Finder".to_owned(),
+        summary: "Check these yourself: Spotlight has no record of them being opened.".to_owned(),
+        steps: vec![APP_OPEN_ONCE_STEP.to_owned(), APP_TRASH_STEP.to_owned()],
+    }
+}
+
 fn unverified_applications(mut paths: Vec<FindingPath>) -> Result<Option<Finding>, BrozaError> {
     paths.sort_by(by_size_then_path);
-    let builder = start(Category::UnusedApps, "unverified", "Applications with no record of use")?
+    let builder = start(Category::UnusedApps, UNVERIFIED_FINDING, "Applications with no record of use")?
         .risk(Risk::Red)
         .action(Action::InformOnly)
-        .instructions(Instructions {
-            provider: "Finder".to_owned(),
-            summary: "Check these yourself: Spotlight has no record of them being opened.".to_owned(),
-            steps: vec![APP_OPEN_ONCE_STEP.to_owned(), APP_TRASH_STEP.to_owned()],
-        })
+        .instructions(unverified_instructions())
         .description(
             "Applications Spotlight has no last-opened date for, judged by the bundle's own times alone.",
         )

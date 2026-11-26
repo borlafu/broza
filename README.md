@@ -49,10 +49,22 @@ Tab completion for your shell (zsh shown; `bash` and `fish` work the same way):
 mkdir -p ~/.zfunc && broza completions zsh > ~/.zfunc/_broza
 ```
 
+Check that Broza can see everything (Full Disk Access) and which terminal needs it:
+
+```bash
+broza doctor
+```
+
 See what is using your disk:
 
 ```bash
 broza scan
+```
+
+Open the biggest folders one by one, by number:
+
+```bash
+broza scan -i
 ```
 
 Get cleanup suggestions grouped by risk:
@@ -124,6 +136,13 @@ Ask what any volume, path or category actually is:
 ```bash
 broza explain /System/Volumes/Data
 broza explain cloud-synced --short
+```
+
+Space Broza only reports, such as Docker's disk image or files already in iCloud, comes with the
+command that prints the provider's own steps:
+
+```bash
+broza explain cloud-synced icloud
 ```
 
 ## Why it is safe

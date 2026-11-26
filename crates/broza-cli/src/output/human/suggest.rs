@@ -5,7 +5,7 @@
 //! well as a colour (RNF-06). The headline counts only what Broza can act on.
 //! Inform-only findings — space the user can reclaim another way, such as
 //! Docker's disk image — get a group of their own after the risk groups, with
-//! their size and the steps that free it, so the number at the top is never
+//! their size and the command that prints the steps that free it, so the number at the top is never
 //! inflated by space Broza will not free and a `0 B` row never hides gigabytes.
 //! The footer names the two commands that come next — the dry run first — for
 //! the safest non-empty group.
@@ -114,8 +114,9 @@ fn render_category(text: &mut String, category: Category, findings: &[&Finding],
     }
 }
 
-/// The inform-only findings, biggest first, each with its size and the steps
-/// that free the space outside Broza. Nothing when there are none.
+/// The inform-only findings, biggest first, each with its size and the
+/// command that prints the steps freeing it outside Broza. Nothing when there
+/// are none.
 fn render_another_way(text: &mut String, report: &SuggestReport, explain: bool, home: &Path) {
     let mut informed: Vec<&Finding> = report.findings.iter().filter(|f| !f.is_actionable()).collect();
     if informed.is_empty() {

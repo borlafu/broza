@@ -155,6 +155,9 @@ impl ExplainReport {
     /// The risk and action are the finding's, not the category's: these
     /// findings are reported only, whatever the category does with the rest.
     pub fn for_finding(category: Category, name: &str) -> Option<Self> {
+        // The full id, as `suggest --json` prints it, names the same finding.
+        let name =
+            name.strip_prefix(category.as_str()).and_then(|rest| rest.strip_prefix('.')).unwrap_or(name);
         let (risk, instructions) = finding_instructions(category, name)?;
         Some(Self {
             finding: Some(format!("{}.{name}", category.as_str())),
@@ -369,6 +372,12 @@ mod tests {
         assert_eq!((docker.risk, docker.action), (Some(Risk::Amber), Some(Action::InformOnly)));
         assert_eq!((apps.risk, apps.action), (Some(Risk::Red), Some(Action::InformOnly)));
         assert!(ExplainReport::for_finding(Category::CloudSynced, "nope").is_none());
+        assert_eq!(
+            ExplainReport::for_finding(Category::CloudSynced, "cloud-synced.icloud").and_then(|r| r.finding),
+            Some("cloud-synced.icloud".to_owned()),
+            "the full id works too"
+        );
+        assert!(ExplainReport::for_finding(Category::CloudSynced, "build-cache.icloud").is_none());
         assert!(
             ExplainReport::for_finding(Category::Trash, "home").is_none(),
             "trash is cleaned, not reported"

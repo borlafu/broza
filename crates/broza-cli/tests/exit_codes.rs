@@ -166,13 +166,19 @@ fn an_unsupported_mac_exits_eight_and_about_still_works() {
             &["scan"],
             &["explain", "/"],
             &["clean", "--risk", "green"],
-            &["quarantine", "list"],
+            &["quarantine", "expire"],
         ] {
             let refused = broza(home.path()).env("BROZA_HOST", host).args(command).output().unwrap();
             let stderr = String::from_utf8_lossy(&refused.stderr);
             assert_eq!(refused.status.code(), Some(8), "{host} {command:?}: {stderr}");
         }
-        for command in [&["about"][..], &["explain", "trash"], &["completions", "zsh"]] {
+        for command in [
+            &["about"][..],
+            &["explain", "trash"],
+            &["completions", "zsh"],
+            &["quarantine", "list"],
+            &["restore", "--list"],
+        ] {
             broza(home.path()).env("BROZA_HOST", host).args(command).assert().code(0);
         }
     }

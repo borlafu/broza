@@ -72,8 +72,8 @@ that behaves oddly afterwards can be put back exactly as it was.",
 proposed.",
         "Run `broza clean --category user-cache` for the dry run, then add `--apply` to move \
 the items to quarantine.",
-        "Changed your mind? `broza restore` puts them back until the quarantine session \
-expires.",
+        "Changed your mind? `broza restore --list` shows what can be put back until the \
+quarantine session expires.",
     ],
 };
 
@@ -201,7 +201,8 @@ not be.",
         "Run `broza suggest --category unused-apps --explain` to see each application with \
 the date it was last opened, and the leftovers of applications already gone.",
         "Run `broza clean --category unused-apps` for the dry run, then add `--apply` to move \
-the applications and the leftovers to quarantine; `broza restore` brings them back.",
+the applications and the leftovers to quarantine; `broza restore --list` shows how to \
+bring them back.",
         "Before removing a paid application, note its licence key; one from the App Store can \
 be downloaded again from your purchases.",
         APP_OPEN_ONCE_STEP,
@@ -249,8 +250,8 @@ so an over-eager choice can be undone.",
 proposed.",
         "Run `broza clean --category duplicates` for the dry run, then add `--apply` to move \
 the items to quarantine; the copy modified first in each group is kept.",
-        "Changed your mind? `broza restore` puts them back until the quarantine session \
-expires.",
+        "Changed your mind? `broza restore --list` shows what can be put back until the \
+quarantine session expires.",
     ],
 };
 
@@ -272,7 +273,7 @@ it was proposed.",
 between disks.",
         "Run `broza clean --category large-old-files` for the dry run, then add `--apply` to \
 move the items to quarantine.",
-        "Changed your mind? `broza restore` puts them back until the quarantine session \
-expires.",
+        "Changed your mind? `broza restore --list` shows what can be put back until the \
+quarantine session expires.",
     ],
 };

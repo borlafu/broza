@@ -314,10 +314,11 @@ REVIEW (amber) — 96.1 GB
 RECLAIMABLE ANOTHER WAY — 51.1 GB   (not by Broza)
    build-cache       38.6 GB   Docker Desktop disk image
                                Let Docker reclaim the space it no longer uses.
-                               1. Run `docker system prune` to remove unused images, containers
-                                  and build cache.
-                               2. In Docker Desktop, open Settings → Resources → Advanced and
-                                  lower the disk image size.
+                               1. Run `docker system prune` to remove the images, containers
+                                  and build cache Docker no longer uses; Broza only reports
+                                  Docker's disk image.
+                               2. To shrink Docker's disk image itself, open Docker Desktop →
+                                  Settings → Resources → Advanced and lower the disk image size.
                                More: broza explain build-cache
    cloud-synced      12.5 GB   Already backed up in iCloud Drive
                                …

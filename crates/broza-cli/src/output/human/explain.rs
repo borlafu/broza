@@ -25,6 +25,7 @@ use broza::model::{FsKind, Volume};
 
 use crate::output::human::scan::role_label;
 use crate::output::human::{action_label, risk_chip, role_style};
+use crate::output::wrap::numbered;
 use crate::output::{ColorPolicy, format_bytes, paint, wrap};
 
 /// Separator between the fields of a header or a `--short` line.
@@ -37,8 +38,6 @@ const PARAGRAPH_INDENT: &str = "  ";
 const SECTIONS: [&str; 3] = ["What it is:", "What it is for:", "Is it safe to touch?"];
 /// Title of the closing section a category carries.
 const NEXT_STEPS: &str = "What to do next:";
-/// Hanging indent of a numbered step, after the paragraph indent.
-const STEP_INDENT: &str = "   ";
 /// Said when a report somehow carries neither a volume nor a category.
 const UNKNOWN_TARGET: &str = "Unknown target";
 
@@ -51,24 +50,10 @@ pub fn render(report: &ExplainReport, policy: ColorPolicy) -> String {
         let _ignored = write!(text, "\n\n{title}\n{}", wrap(body, PARAGRAPH_INDENT));
     }
     if !report.explanation.next_steps.is_empty() {
-        let _ignored = write!(text, "\n\n{NEXT_STEPS}\n{}", numbered(&report.explanation.next_steps));
+        let _ignored =
+            write!(text, "\n\n{NEXT_STEPS}\n{}", numbered(&report.explanation.next_steps, PARAGRAPH_INDENT));
     }
     text
-}
-
-/// `steps` as a numbered list, each wrapped under its own number.
-fn numbered(steps: &[String]) -> String {
-    steps
-        .iter()
-        .enumerate()
-        .map(|(index, step)| {
-            let body = wrap(step, &format!("{PARAGRAPH_INDENT}{STEP_INDENT}"));
-            let number =
-                format!("{PARAGRAPH_INDENT}{:<width$}", format!("{}.", index + 1), width = STEP_INDENT.len());
-            format!("{number}{}", &body[number.len()..])
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// Render `report` as the single line of `--short`.
@@ -223,6 +208,27 @@ mod tests {
         let continuation = next.lines().nth(2).unwrap_or_default();
         assert!(continuation.starts_with("     "), "a wrapped step hangs under its text: {continuation:?}");
         assert!(!volume.contains(NEXT_STEPS), "{volume}");
+    }
+
+    #[test]
+    fn every_category_has_next_steps_and_every_command_they_quote_parses() {
+        use clap::Parser as _;
+
+        for category in Category::all() {
+            let steps = ExplainReport::for_category(category).explanation.next_steps;
+            assert!(!steps.is_empty(), "{} has no next steps", category.as_str());
+            for command in steps.iter().flat_map(|step| step.split('`').skip(1).step_by(2)) {
+                if !command.starts_with("broza ") {
+                    continue;
+                }
+                let argv: Vec<&str> = command.split_whitespace().collect();
+                assert!(
+                    crate::cli::Cli::try_parse_from(&argv).is_ok_and(|cli| cli.validate().is_ok()),
+                    "{}: `{command}` is not a valid command",
+                    category.as_str()
+                );
+            }
+        }
     }
 
     #[test]

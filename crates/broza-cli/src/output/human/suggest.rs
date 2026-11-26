@@ -17,7 +17,7 @@ use broza::model::{Category, Finding, Risk, SuggestReport};
 
 use crate::output::human::risk_chip;
 use crate::output::human::scan::folders::abbreviate;
-use crate::output::wrap::wrap;
+use crate::output::wrap::{numbered, wrap};
 use crate::output::{ColorPolicy, format_bytes};
 
 /// Width of the category column.
@@ -30,8 +30,6 @@ const EXPLAIN_PATHS: usize = 5;
 const ANOTHER_WAY: &str = "Reclaimable another way";
 /// Indent of everything printed under a category row's description column.
 const DETAIL_INDENT: &str = "                               ";
-/// Hanging indent of a numbered step, after the number.
-const STEP_INDENT: &str = "   ";
 /// What is printed when no detector found anything.
 const NOTHING_FOUND: &str =
     "Nothing to suggest: no finding passed the --category, --risk and --min-size filters.";
@@ -150,11 +148,8 @@ fn render_another_way(text: &mut String, report: &SuggestReport, explain: bool, 
 fn render_steps(text: &mut String, finding: &Finding) {
     if let Some(instructions) = finding.instructions() {
         let _ignored = write!(text, "\n{}", wrap(&instructions.summary, DETAIL_INDENT));
-        for (index, step) in instructions.steps.iter().enumerate() {
-            let body = wrap(step, &format!("{DETAIL_INDENT}{STEP_INDENT}"));
-            let numbered =
-                format!("{DETAIL_INDENT}{:<width$}", format!("{}.", index + 1), width = STEP_INDENT.len());
-            let _ignored = write!(text, "\n{numbered}{}", &body[numbered.len()..]);
+        if !instructions.steps.is_empty() {
+            let _ignored = write!(text, "\n{}", numbered(&instructions.steps, DETAIL_INDENT));
         }
     }
     let _ignored = write!(text, "\n{DETAIL_INDENT}More: broza explain {}", finding.category().as_str());

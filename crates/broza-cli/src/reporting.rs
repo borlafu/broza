@@ -15,7 +15,7 @@ use clap::error::ErrorKind;
 
 use crate::cli::GlobalArgs;
 use crate::output::style::{Style, paint};
-use crate::output::wrap::wrap;
+use crate::output::wrap::{hang, wrap};
 use crate::output::{ColorPolicy, OutputFormat};
 
 /// Warning code the mount table and the adapters use for a path macOS refused.
@@ -50,8 +50,7 @@ pub fn report_warnings(warnings: &[Warning], global: &GlobalArgs, format: Output
 pub fn warning_block(warnings: &[Warning], policy: ColorPolicy) -> String {
     let label = paint(policy, Style::Yellow, WARNING_LABEL);
     let reported = warnings.iter().map(|warning| {
-        let body = wrap(&warning.message, WARNING_INDENT);
-        format!("{label}{}", &body[WARNING_LABEL.len()..])
+        hang(WARNING_LABEL, &warning.message, WARNING_INDENT).replacen(WARNING_LABEL, &label, 1)
     });
     let hint = needs_full_disk_access(warnings).then(|| wrap(FULL_DISK_ACCESS_HINT, ""));
     let paragraphs: Vec<String> = reported.chain(hint).collect();
@@ -172,6 +171,13 @@ mod tests {
         assert!(lines.len() > 1, "{block}");
         assert!(lines[1..].iter().all(|line| line.starts_with(WARNING_INDENT)), "hanging indent: {block}");
         assert!(lines.iter().all(|line| line.chars().count() <= crate::output::wrap::WRAP_WIDTH), "{block}");
+    }
+
+    #[test]
+    fn an_empty_warning_message_prints_its_label_and_never_panics() {
+        let empty = Warning { code: "x".to_owned(), message: String::new(), path: None };
+
+        assert_eq!(warning_block(&[empty], ColorPolicy::Never), "\nwarning:\n");
     }
 
     #[test]

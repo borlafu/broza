@@ -19,6 +19,42 @@ pub fn wrap(text: &str, indent: &str) -> String {
     wrap_to(text, indent, WRAP_WIDTH)
 }
 
+/// `text` wrapped under `indent`, its first line opening with `label` in
+/// place of the indent: a hanging indent. A `label` wider than `indent` pushes
+/// the first line right; an empty `text` leaves the label alone.
+///
+/// ```
+/// use broza_cli::output::wrap::hang;
+/// assert_eq!(hang("1.", "one two", "   "), "1. one two");
+/// assert_eq!(hang("1.", "", "   "), "1.");
+/// ```
+pub fn hang(label: &str, text: &str, indent: &str) -> String {
+    let body = wrap(text, indent);
+    match body.strip_prefix(indent) {
+        Some(rest) => format!("{label:<width$}{rest}", width = indent.chars().count()),
+        None => label.to_owned(),
+    }
+}
+
+/// `steps` as a numbered list under `indent`, each step wrapped under its own
+/// text. Blank steps are skipped and the numbering stays continuous.
+///
+/// ```
+/// use broza_cli::output::wrap::numbered;
+/// let steps = ["one".to_owned(), " ".to_owned(), "two".to_owned()];
+/// assert_eq!(numbered(&steps, "  "), "  1. one\n  2. two");
+/// ```
+pub fn numbered(steps: &[String], indent: &str) -> String {
+    let kept: Vec<&String> = steps.iter().filter(|step| !step.trim().is_empty()).collect();
+    // Room for the widest number, its dot and one space.
+    let under = format!("{indent}{}", " ".repeat(kept.len().to_string().len() + 2));
+    kept.iter()
+        .enumerate()
+        .map(|(index, step)| hang(&format!("{indent}{}.", index + 1), step, &under))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// [`wrap`] to an explicit `width`; the seam the tests use.
 pub fn wrap_to(text: &str, indent: &str, width: usize) -> String {
     let budget = width.saturating_sub(indent.chars().count()).max(1);
@@ -88,5 +124,33 @@ install, your user libraries and caches.";
     fn empty_text_produces_no_line_at_all() {
         assert_eq!(wrap("", "  "), "");
         assert_eq!(wrap("   \n ", "  "), "");
+    }
+
+    #[test]
+    fn hang_never_panics_on_empty_or_blank_text() {
+        assert_eq!(hang("warning:", "", "         "), "warning:");
+        assert_eq!(hang("warning:", "   ", "         "), "warning:");
+        assert_eq!(hang("warning:", "é x", "         "), "warning: é x");
+    }
+
+    #[test]
+    fn a_tenth_step_widens_the_hang_instead_of_eating_a_character() {
+        let steps: Vec<String> = (1..=10).map(|n| format!("step{n}")).collect();
+
+        let list = numbered(&steps, "");
+
+        assert!(list.starts_with("1.  step1\n"), "{list}");
+        assert!(list.ends_with("\n10. step10"), "{list}");
+    }
+
+    #[test]
+    fn a_wrapped_step_continues_under_its_text() {
+        let long = vec!["aaa bbb ccc ddd".to_owned()];
+        assert_eq!(
+            numbered(&long, "").lines().map(str::to_owned).collect::<Vec<_>>(),
+            vec!["1. aaa bbb ccc ddd".to_owned()]
+        );
+        let narrow = wrap_to("aaa bbb", "   ", 7);
+        assert_eq!(narrow, "   aaa\n   bbb");
     }
 }

@@ -104,8 +104,9 @@ mod tests {
         let text = about().to_human();
         assert!(
             text.starts_with(&format!(
-                "Broza {}  ·  MIT License  ·  JSON schema 1.1",
-                env!("CARGO_PKG_VERSION")
+                "Broza {}  ·  MIT License  ·  JSON schema {}",
+                env!("CARGO_PKG_VERSION"),
+                broza::SCHEMA_VERSION
             )),
             "{text}"
         );

@@ -1,12 +1,12 @@
 # Broza — CLI Specification
 
-**Specification version:** 1.4
+**Specification version:** 1.5
 **Status:** Approved for implementation
 **Scope:** Phase 1 (open source CLI, MIT)
 **Platform:** macOS 26 and 27 (the two latest major versions), Apple Silicon only
-**Date:** 2026-09-23
+**Date:** 2026-11-26
 
-> This document supersedes draft 1.0 (`broza-cli-spec.md`, Spanish). All changes relative to 1.0 are listed in §9 "Changelog 1.0 → 1.1", §10 "Changelog 1.1 → 1.2", §11 "Changelog 1.2 → 1.3" and §12 "Changelog 1.3 → 1.4". Requirement identifiers (`RF-xx`, `RNF-xx`) refer to the Broza PRD. This specification is normative: "MUST", "MUST NOT", "SHOULD" and "MAY" are used in their RFC 2119 sense.
+> This document supersedes draft 1.0 (`broza-cli-spec.md`, Spanish). All changes relative to 1.0 are listed in §9 "Changelog 1.0 → 1.1", §10 "Changelog 1.1 → 1.2", §11 "Changelog 1.2 → 1.3", §12 "Changelog 1.3 → 1.4" and §13 "Changelog 1.4 → 1.5". Requirement identifiers (`RF-xx`, `RNF-xx`) refer to the Broza PRD. This specification is normative: "MUST", "MUST NOT", "SHOULD" and "MAY" are used in their RFC 2119 sense.
 
 ---
 
@@ -481,7 +481,7 @@ Prints version, license, JSON schema version, platform support and the support l
 
 ```
 $ broza about
-Broza 1.0.0  ·  MIT License  ·  JSON schema 1.1
+Broza 1.2.0  ·  MIT License  ·  JSON schema 1.2
 Safe disk cleanup for macOS 26/27 on Apple Silicon.
 Source:   https://github.com/borlafu/broza
 Support:  https://ko-fi.com/borlafu  (donation, nothing in return)
@@ -539,7 +539,7 @@ Every `--json` output shares this structure:
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "broza_version": "1.0.0",
   "generated_at": "2026-09-21T10:36:08Z",
   "command": "suggest",
@@ -933,7 +933,7 @@ An item of a session has this shape:
 | `category` | Optional. A value of the `category` enum of §4.1. Present only for `kind` `category`. |
 | `path` | Optional. The target path, made absolute and cleaned of `.` and `..` **lexically** — nothing is followed, and `..` never climbs above `/`. Present only for `kind` `path`. |
 | `filesystem` | Optional. The `type` of the container the volume belongs to (same open enum as §4.2), when Broza could determine it. The human header uses it to say `APFS role:` or `HFS+ role:` instead of assuming APFS. |
-| `explanation` | Always present. Three prose fields: `what_it_is`, `what_it_is_for`, `is_it_safe`. English, one paragraph each; the same text the human output prints under its three headings. |
+| `explanation` | Always present. Three prose fields: `what_it_is`, `what_it_is_for`, `is_it_safe`. English, one paragraph each; the same text the human output prints under its three headings. Since schema `1.2`, an optional `next_steps` array of strings, present only for `kind` `category`: what to do next, in order — the `broza` commands that review and clean the category, then the manual steps for what Broza only reports (Docker's disk image, applications with no record of use, cloud-synced files). The human output prints it as a numbered `What to do next:` section. |
 | `risk` | Optional. Base risk of the category (§3.3). Present only for `kind` `category`. |
 | `action` | Optional. Default action of the category (§3.3). Present only for `kind` `category`. |
 
@@ -1147,3 +1147,14 @@ Shipped with 1.1.0.
 - §5 (post-1.0): the message is set apart by blank lines and a `─` rule above and below; the first line is bold and the rest dim where color is enabled. Bold and dim only; no hues.
 - §8.2: "APFS clone-aware sizes" leaves the deferred list; what remains deferred is the accounting of the blocks a diverged clone owns.
 - §7 (post-1.0): the walk lists directories by descriptor and reaches deep ones by relative steps, so a tree deeper than `PATH_MAX` allows is measured to the bottom instead of ending in one `unreadable_entry` warning per blocked entry. [ADR 0010](adr/0010-walk-by-directory-descriptor.md).
+
+---
+
+## 13. Changelog 1.4 → 1.5
+
+Unreleased: everything below ships with the next minor version.
+
+- §3.1: the volumes table is the container's last branch (`└─ Volumes`, rows indented under it) instead of a block after a blank line, and a gutter line separates two containers, so the table never reads as part of what follows it.
+- §3.3: the risk groups list actionable findings only, and a risk group with nothing actionable is not printed. Inform-only findings are listed in a closing "Reclaimable another way" group with their size, the provider's summary and numbered steps from `instructions`, and the `broza explain` to read more; the headline line that sums them is renamed accordingly. Totals are unchanged.
+- §4.1, §4.7: `schema_version` `1.2`. `explanation.next_steps`, an optional array present for categories only, carries what to do next; `broza explain <category>` prints it as a numbered `What to do next:` section.
+- §6: warnings on stderr form a block set apart from the report by a blank line, each wrapped under a `warning:` label with a blank line between two. The summary of many refused paths states the fact with three examples, and the Full Disk Access hint now follows it as it follows a single refusal.

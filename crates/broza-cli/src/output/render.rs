@@ -88,7 +88,10 @@ mod tests {
     #[test]
     fn json_rendering_is_pretty_and_carries_the_schema_version() {
         let rendered = Fixture.render(OutputFormat::Json).unwrap();
-        assert!(rendered.contains("\"schema_version\": \"1.1\""), "{rendered}");
+        assert!(
+            rendered.contains(&format!("\"schema_version\": \"{}\"", broza::SCHEMA_VERSION)),
+            "{rendered}"
+        );
         assert!(rendered.contains('\n'), "pretty JSON must be multi-line");
     }
 

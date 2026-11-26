@@ -110,7 +110,7 @@ mod tests {
     fn serializes_with_schema_version_and_empty_arrays() {
         let env = Envelope::new("about", host(), at(), serde_json::json!({}));
         let json = serde_json::to_value(&env).unwrap_or_default();
-        assert_eq!(json["schema_version"], "1.1");
+        assert_eq!(json["schema_version"], "1.2");
         assert_eq!(json["command"], "about");
         assert_eq!(json["generated_at"], "2026-09-21T10:36:08Z");
         assert_eq!(json["warnings"], serde_json::json!([]));

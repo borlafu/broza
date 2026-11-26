@@ -31,6 +31,10 @@ pub struct Explanation {
     pub what_it_is_for: String,
     /// Answer to "Is it safe to touch?".
     pub is_it_safe: String,
+    /// "What to do next", in order. Categories only; absent for a volume or a
+    /// path, whose role says what it is but not what to clean.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next_steps: Vec<String>,
 }
 
 impl From<RoleExplanation> for Explanation {
@@ -39,6 +43,7 @@ impl From<RoleExplanation> for Explanation {
             what_it_is: role.what_it_is.to_owned(),
             what_it_is_for: role.what_it_is_for.to_owned(),
             is_it_safe: role.is_it_safe.to_owned(),
+            next_steps: Vec::new(),
         }
     }
 }
@@ -49,6 +54,7 @@ impl From<CategoryText> for Explanation {
             what_it_is: text.what_it_is.to_owned(),
             what_it_is_for: text.what_it_is_for.to_owned(),
             is_it_safe: text.is_it_safe.to_owned(),
+            next_steps: text.next_steps.iter().map(|step| (*step).to_owned()).collect(),
         }
     }
 }

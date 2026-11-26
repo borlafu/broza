@@ -22,7 +22,23 @@ pub(super) struct CategoryText {
     pub(super) what_it_is_for: &'static str,
     /// Whether it is safe to touch, and what Broza itself does.
     pub(super) is_it_safe: &'static str,
+    /// What to do next, in order: the commands that review and clean the
+    /// category, then the manual steps for what Broza only reports.
+    pub(super) next_steps: &'static [&'static str],
 }
+
+/// Docker's disk image, first step; also the detector's instructions.
+pub(crate) const DOCKER_PRUNE_STEP: &str = "Run `docker system prune` to remove the images, \
+containers and build cache Docker no longer uses; Broza only reports Docker's disk image.";
+/// Docker's disk image, second step; also the detector's instructions.
+pub(crate) const DOCKER_SHRINK_STEP: &str = "To shrink Docker's disk image itself, open Docker \
+Desktop → Settings → Resources → Advanced and lower the disk image size.";
+/// An application Spotlight has no date for, first step; also the detector's instructions.
+pub(crate) const APP_OPEN_ONCE_STEP: &str = "Applications with no record of use are never moved by \
+Broza: open each one once if you still use it, and Spotlight records the date.";
+/// An application Spotlight has no date for, second step; also the detector's instructions.
+pub(crate) const APP_TRASH_STEP: &str = "Otherwise drag it from /Applications to the Trash, then run \
+`broza suggest` again for its leftovers.";
 
 /// The paragraphs for `category`.
 pub(super) const fn text_for(category: Category) -> CategoryText {
@@ -51,6 +67,14 @@ directories on your behalf, so they only grow.",
     is_it_safe: "Yes. Every application recreates what it needs, at the cost of being a little \
 slower the first time. Broza moves the files to quarantine instead of deleting them, so a program \
 that behaves oddly afterwards can be put back exactly as it was.",
+    next_steps: &[
+        "Run `broza suggest --category user-cache --explain` to see every item and why it was \
+proposed.",
+        "Run `broza clean --category user-cache` for the dry run, then add `--apply` to move \
+the items to quarantine.",
+        "Changed your mind? `broza restore` puts them back until the quarantine session \
+expires.",
+    ],
 };
 
 /// `build-cache`: compiler and package-manager output.
@@ -65,6 +89,14 @@ reproducible from a repository and a build command.",
     is_it_safe: "Yes for the build outputs, which Broza moves to quarantine; the next build \
 recreates them. The Docker virtual disk is the exception: Broza only reports its size and points \
 at `docker system prune`, because shrinking that file is Docker's job, not a file manager's.",
+    next_steps: &[
+        "Run `broza suggest --category build-cache --explain` to see every item and why it \
+was proposed.",
+        "Run `broza clean --category build-cache` for the dry run, then add `--apply` to move \
+the items to quarantine; the next build recreates them.",
+        DOCKER_PRUNE_STEP,
+        DOCKER_SHRINK_STEP,
+    ],
 };
 
 /// `ios-simulators`: Xcode simulator runtimes and devices.
@@ -78,6 +110,14 @@ support.",
     is_it_safe: "Usually, with a look first. Removing a runtime undoes an Xcode download rather \
 than losing work — but a simulated device also holds the state of the apps you ran on it, and a \
 project that pins an old iOS version will ask you to download the runtime again.",
+    next_steps: &[
+        "Run `broza suggest --category ios-simulators --explain` to see every item and why it \
+was proposed.",
+        "Run `broza clean --category ios-simulators` for the dry run, then add `--apply` to \
+move the items to quarantine.",
+        "Xcode's own way: Xcode → Settings → Platforms removes whole runtimes, and `xcrun \
+simctl delete unavailable` removes the devices whose runtime is gone.",
+    ],
 };
 
 /// `trash`: the Trash of every mounted volume.
@@ -91,6 +131,13 @@ Trash full of video files.",
     is_it_safe: "It depends on you. Nothing here is needed by the system, but everything here was \
 put there by a person, and emptying the Trash is irreversible by definition: Broza cannot \
 quarantine what is already the last copy. Read the list before confirming.",
+    next_steps: &[
+        "Run `broza suggest --category trash --explain` to see every item and why it was \
+proposed.",
+        "Run `broza clean --category trash` for the dry run, then add `--apply`: after you \
+confirm, the items are deleted for good, because they were already in the Trash.",
+        "Or empty the Trash yourself from the Finder.",
+    ],
 };
 
 /// `snapshots`: APFS local snapshots, sized by nobody.
@@ -107,6 +154,12 @@ attached, and what lets a failed update roll back. They are also why a Mac repor
 macOS reports no size for a snapshot, so Broza lists them by name and never claims a number it \
 cannot measure. Update snapshots (com.apple.os.update-*) are never proposed: a pending update \
 needs them.",
+    next_steps: &[
+        "Run `broza suggest --category snapshots --explain` to see each snapshot by name.",
+        "Run `broza clean --category snapshots` for the dry run, then add `--apply` to delete \
+them through `tmutil`; Time Machine keeps the backups on its own disk.",
+        "Or do nothing: macOS deletes local snapshots by itself when the disk runs low.",
+    ],
 };
 
 /// `old-backups`: local iOS device backups.
@@ -121,6 +174,14 @@ gigabytes.",
 redundant; a backup of a device that no longer exists may be the only copy of what was on it. \
 Broza shows the device name and the date, moves nothing without confirmation, and quarantines \
 rather than deletes.",
+    next_steps: &[
+        "Run `broza suggest --category old-backups --explain` to see every item and why it \
+was proposed.",
+        "Run `broza clean --category old-backups` for the dry run, then add `--apply` to move \
+the items to quarantine.",
+        "Or remove one yourself: connect the device, select it in the Finder sidebar, \
+then choose Manage Backups in its General tab.",
+    ],
 };
 
 /// `unused-apps`: applications and the libraries they leave behind.
@@ -136,6 +197,16 @@ behind, and those are what accumulate.",
 for system applications macOS often reports nothing at all, so Broza marks those findings as low \
 confidence. An application you reinstall is an inconvenience; a licence file deleted with it may \
 not be.",
+    next_steps: &[
+        "Run `broza suggest --category unused-apps --explain` to see each application with \
+the date it was last opened, and the leftovers of applications already gone.",
+        "Run `broza clean --category unused-apps` for the dry run, then add `--apply` to move \
+the applications and the leftovers to quarantine; `broza restore` brings them back.",
+        "Before removing a paid application, note its licence key; one from the App Store can \
+be downloaded again from your purchases.",
+        APP_OPEN_ONCE_STEP,
+        APP_TRASH_STEP,
+    ],
 };
 
 /// `cloud-synced`: reported, never deleted (`AGENTS.md` §2.5).
@@ -151,6 +222,15 @@ deletion.",
     is_it_safe: "Broza never deletes these. Deleting a synced file with a file manager deletes it \
 from the cloud too, and from every other device, which is exactly the kind of mistake this tool \
 exists to avoid. Broza reports the size and prints the provider's own instructions for freeing it.",
+    next_steps: &[
+        "Broza never deletes these. Run `broza suggest --category cloud-synced` to see the \
+provider's own steps.",
+        "iCloud Drive: System Settings → your name → iCloud → iCloud Drive, then turn on \
+Optimize Mac Storage; or right-click a file in the Finder and choose Remove \
+Download.",
+        "Dropbox, OneDrive and Google Drive: mark a folder as online-only from the provider's \
+menu in the Finder.",
+    ],
 };
 
 /// `duplicates`: byte-identical files confirmed by hash.
@@ -164,6 +244,14 @@ imports run twice, from archives unpacked next to their originals.",
 copies of one asset may be two projects' dependencies, and a duplicate inside an application \
 bundle is part of that application. Broza keeps one copy of each group and quarantines the rest, \
 so an over-eager choice can be undone.",
+    next_steps: &[
+        "Run `broza suggest --category duplicates --explain` to see every item and why it was \
+proposed.",
+        "Run `broza clean --category duplicates` for the dry run, then add `--apply` to move \
+the items to quarantine; the copy modified first in each group is kept.",
+        "Changed your mind? `broza restore` puts them back until the quarantine session \
+expires.",
+    ],
 };
 
 /// `large-old-files`: size first, opinion nowhere.
@@ -177,4 +265,14 @@ Broza knows what they are.",
     is_it_safe: "Only you can say. This is the one category where Broza has no opinion about the \
 content: it reports where the space went and leaves the decision to you. Anything you accept is \
 quarantined, never deleted outright.",
+    next_steps: &[
+        "Run `broza suggest --category large-old-files --explain` to see every item and why \
+it was proposed.",
+        "Copy what you want to keep to an external disk first; Broza does not move files \
+between disks.",
+        "Run `broza clean --category large-old-files` for the dry run, then add `--apply` to \
+move the items to quarantine.",
+        "Changed your mind? `broza restore` puts them back until the quarantine session \
+expires.",
+    ],
 };

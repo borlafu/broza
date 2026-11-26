@@ -19,6 +19,7 @@ use crate::model::{Action, Category, Finding, Instructions, Risk};
 
 use super::node_modules::orphan_node_modules;
 use super::support::{by_size_then_path, finish, path_of, path_with, start};
+use crate::detect::category_text::{DOCKER_PRUNE_STEP, DOCKER_SHRINK_STEP};
 use crate::detect::detector::{DetectContext, Detected, Detector};
 
 /// Where Docker Desktop keeps its virtual disk, relative to the home.
@@ -151,11 +152,7 @@ fn docker_raw(context: &DetectContext<'_>) -> Result<Option<Finding>, BrozaError
         .instructions(Instructions {
             provider: "Docker Desktop".to_owned(),
             summary: "Let Docker reclaim the space it no longer uses.".to_owned(),
-            steps: vec![
-                "Run `docker system prune` to remove unused images, containers and build cache.".to_owned(),
-                "In Docker Desktop, open Settings → Resources → Advanced and lower the disk image size."
-                    .to_owned(),
-            ],
+            steps: vec![DOCKER_PRUNE_STEP.to_owned(), DOCKER_SHRINK_STEP.to_owned()],
         });
     finish(builder, vec![path_with(&path, context.settled_allocated(&path, &meta), meta.modified)])
 }

@@ -100,11 +100,11 @@ fn about_json_is_a_valid_envelope() {
     assert_eq!(output.status.code(), Some(0));
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| panic!("invalid json: {e}"));
-    assert_eq!(parsed["schema_version"], "1.1");
+    assert_eq!(parsed["schema_version"], "1.2");
     assert_eq!(parsed["command"], "about");
     assert_eq!(parsed["data"]["donate_url"], "https://ko-fi.com/borlafu");
     assert_eq!(parsed["data"]["license"], "MIT");
-    assert_eq!(parsed["data"]["schema_version"], "1.1");
+    assert_eq!(parsed["data"]["schema_version"], "1.2");
     assert!(parsed["warnings"].is_array());
     assert!(!parsed["generated_at"].as_str().unwrap_or_default().contains('.'));
     assert!(parsed["errors"].is_array());
@@ -151,5 +151,6 @@ fn invalid_config_file_exits_two() {
 #[test]
 fn version_reports_the_schema_version() {
     let home = temp_home();
-    broza(home.path()).arg("--version").assert().code(0).stdout(contains("JSON schema 1.1"));
+    let expected = format!("JSON schema {}", broza::SCHEMA_VERSION);
+    broza(home.path()).arg("--version").assert().code(0).stdout(contains(expected));
 }

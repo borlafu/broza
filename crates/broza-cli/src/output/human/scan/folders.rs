@@ -242,6 +242,50 @@ mod tests {
     }
 
     #[test]
+    fn every_number_printed_is_the_folder_browsable_puts_at_that_index() {
+        let other: VolumeId = "disk5s1".parse().unwrap();
+        let empty: VolumeId = "disk6s1".parse().unwrap();
+        let on = |path: &str, kind, volume: &VolumeId| LargestItem {
+            path: PathBuf::from(path),
+            size_bytes: 1,
+            kind,
+            volume_id: volume.clone(),
+        };
+        let largest = vec![
+            on("/a", ItemKind::Directory, &id()),
+            on("/b", ItemKind::File, &id()),
+            on("/c", ItemKind::Directory, &other),
+            on("/d", ItemKind::Directory, &id()),
+            on("/orphan", ItemKind::Directory, &"disk9s9".parse().unwrap()),
+        ];
+        let tree = |volume: &VolumeId, name: &str| VolumeTree {
+            volume_id: volume.clone(),
+            name: name.to_owned(),
+            tree: TreeView { root: leaf("/", "/", 0, 100.0) },
+        };
+        let trees = vec![tree(&id(), "Data"), tree(&empty, "Empty"), tree(&other, "Other")];
+
+        let text = render_largest_numbered(&largest, &trees, None);
+        let printed: Vec<(usize, &str)> = text
+            .lines()
+            .filter_map(|line| {
+                let mut words = line.split_whitespace();
+                let number = words.next()?.parse().ok()?;
+                Some((number, words.nth(2)?))
+            })
+            .collect();
+        let dirs: Vec<String> =
+            browsable(&largest, &trees).iter().map(|item| format!("{}/", item.path.display())).collect();
+
+        assert_eq!(printed.len(), dirs.len(), "{text}");
+        for (number, path) in printed {
+            assert_eq!(dirs[number - 1], path, "number {number} in:\n{text}");
+        }
+        assert!(text.contains("Largest consumers on Empty:\n  (nothing at or above --min-size)"), "{text}");
+        assert!(!text.contains("/orphan"), "an item of no listed volume is neither printed nor numbered");
+    }
+
+    #[test]
     fn the_hint_quotes_a_path_only_when_a_shell_needs_it() {
         let trees = vec![volume(TreeView { root: leaf("/", "/", 0, 100.0) })];
         let plain = vec![item("/Users/dana/Library/Caches", 1, ItemKind::Directory)];
@@ -261,6 +305,15 @@ mod tests {
             drill_down_hint(&[item("/f", 1, ItemKind::File)], &trees, home).is_none(),
             "files cannot be opened"
         );
+        for (raw, quoted) in [
+            ("/x/it's", "'/x/it'\\''s'"),
+            ("/x/$HOME dir", "'/x/$HOME dir'"),
+            ("/x/a`b", "'/x/a`b'"),
+            ("/x/a\nb", "'/x/a\nb'"),
+        ] {
+            let hint = drill_down_hint(&[item(raw, 1, ItemKind::Directory)], &trees, home).unwrap();
+            assert!(hint.contains(&format!("broza scan {quoted}   ")), "{raw}: {hint}");
+        }
     }
 
     #[test]

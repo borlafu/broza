@@ -188,7 +188,7 @@ Largest consumers on Macintosh HD - Data:
 
 Below the consumers list, when it holds a directory, one line says how to look inside: `Look inside one: broza scan <largest directory>   ·   browse them all: broza scan -i` (the path as `~/…`, or quoted in full when a shell would need it).
 
-**Interactive browsing (`-i`).** The report is printed with every directory of the consumers lists numbered, across volumes in print order. Then stderr asks `Open a number, .. to go back, q to quit:`. A number walks that folder — warm from the cache — and prints `Largest consumers in <folder>:` with its own directories numbered; `..` returns to the previous screen and its numbers; `q` or end of input quits. A wrong answer or a folder that cannot be walked is said on stderr and the loop goes on. Warnings from every walk are reported once, after quitting. Nothing is written.
+**Interactive browsing (`-i`).** The report is printed with every directory of the consumers lists numbered, across volumes in print order. Then stderr asks `Open a number, .. to go back, q to quit:`. A number walks that folder — warm from the cache — and prints `Largest consumers in <folder>:` with its own directories numbered; `..` prints the previous screen again and its numbers apply; `q` (or `quit`, any case) or end of input quits. A wrong answer or a folder that cannot be walked is said on stderr and the loop goes on. Warnings from every walk are reported once, after quitting. Nothing is written.
 
 While walking, stderr shows `Scanning… <entries> entries, <bytes> seen  ·  <seconds> s`. Before a scan that has no cache yet, one line says it is the first and that later scans are faster.
 

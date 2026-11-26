@@ -17,6 +17,8 @@ use crate::output::human::scan::folders::{abbreviate, render_listing};
 
 /// What the user is asked after every screen.
 pub const PROMPT: &str = "Open a number, .. to go back, q to quit: ";
+/// Said for an answer that names no folder.
+const WRONG_ANSWER: &str = "Type the number of a folder listed above, .. or q.";
 
 /// Where the loop reads the user's answers and says what it has to say.
 pub trait LineInput {
@@ -24,6 +26,8 @@ pub trait LineInput {
     fn read_line(&mut self, prompt: &str) -> Option<String>;
     /// Tell the user something that is not a listing.
     fn say(&mut self, message: &str);
+    /// The loop is over: leave the terminal on a fresh line.
+    fn finish(&mut self) {}
 }
 
 /// The terminal: prompt and messages on stderr, answers from stdin.
@@ -43,6 +47,11 @@ impl LineInput for Terminal {
 
     fn say(&mut self, message: &str) {
         let _ignored = writeln!(std::io::stderr(), "{message}");
+    }
+
+    fn finish(&mut self) {
+        // After `q` or end of input the cursor still sits after the prompt.
+        let _ignored = writeln!(std::io::stderr());
     }
 }
 
@@ -69,34 +78,45 @@ pub fn browse(
     let mut stack = vec![Screen { listing: first_listing, dirs: first }];
     let mut warnings = Vec::new();
     while let Some(line) = input.read_line(PROMPT) {
-        match line.trim() {
-            "q" | "quit" => break,
-            ".." => {
-                if stack.len() > 1 {
-                    stack.pop();
-                    if let Some(screen) = stack.last() {
-                        let _ignored = writeln!(out, "\n{}\n", screen.listing);
-                    }
-                } else {
-                    input.say("Already at the top.");
-                }
+        let answer = line.trim();
+        if answer.eq_ignore_ascii_case("q") || answer.eq_ignore_ascii_case("quit") {
+            break;
+        }
+        if answer == ".." {
+            back(&mut stack, out, input);
+            continue;
+        }
+        if answer.is_empty() {
+            continue;
+        }
+        let Some(dir) = answer.parse::<usize>().ok().and_then(|n| pick(&stack, n)) else {
+            input.say(WRONG_ANSWER);
+            continue;
+        };
+        match walk_into(&dir.path) {
+            Ok((items, walked)) => {
+                warnings.extend(walked);
+                let screen = screen_of(&dir.path, &items, home);
+                let _ignored = writeln!(out, "\n{}\n", screen.listing);
+                stack.push(screen);
             }
-            "" => {}
-            answer => match answer.parse::<usize>().ok().and_then(|n| pick(&stack, n)) {
-                Some(dir) => match walk_into(&dir.path) {
-                    Ok((items, walked)) => {
-                        warnings.extend(walked);
-                        let screen = screen_of(&dir.path, &items, home);
-                        let _ignored = writeln!(out, "\n{}\n", screen.listing);
-                        stack.push(screen);
-                    }
-                    Err(error) => input.say(&format!("Cannot open {}: {error}", abbreviate(&dir.path, home))),
-                },
-                None => input.say("Type the number of a folder listed above, .. or q."),
-            },
+            Err(error) => input.say(&format!("Cannot open {}: {error}", abbreviate(&dir.path, home))),
         }
     }
+    input.finish();
     warnings
+}
+
+/// `..`: drop the current screen and print the one below it again.
+fn back(stack: &mut Vec<Screen>, out: &mut dyn Write, input: &mut dyn LineInput) {
+    if stack.len() < 2 {
+        input.say("Already at the top.");
+        return;
+    }
+    stack.pop();
+    if let Some(screen) = stack.last() {
+        let _ignored = writeln!(out, "\n{}\n", screen.listing);
+    }
 }
 
 /// The `n`th directory of the current screen, counting from 1.
@@ -221,5 +241,43 @@ mod tests {
             browse(vec![dir("/x", 1)], "FIRST".to_owned(), &mut input, &mut Vec::new(), &mut walk, None);
 
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn answers_that_name_no_folder_are_refused_and_the_loop_goes_on() {
+        let refused = ["0", "2", "99999999999999999999999", "abc", "-1"];
+        for answer in refused {
+            let mut input = script(&[answer, "Q"]);
+            let mut walk = |_: &Path| -> Result<Walked, BrozaError> { panic!("{answer} opened something") };
+
+            browse(vec![dir("/x", 1)], "FIRST".to_owned(), &mut input, &mut Vec::new(), &mut walk, None);
+
+            assert_eq!(input.said, vec![WRONG_ANSWER.to_owned()], "{answer}");
+            assert!(input.answers.is_empty(), "{answer}: Q quits");
+        }
+    }
+
+    #[test]
+    fn blank_lines_are_ignored_and_end_of_input_quits() {
+        let mut input = script(&["", "   "]);
+        let mut walk = |_: &Path| -> Result<Walked, BrozaError> { panic!("nothing to open") };
+
+        let warnings = browse(Vec::new(), "FIRST".to_owned(), &mut input, &mut Vec::new(), &mut walk, None);
+
+        assert!(warnings.is_empty() && input.said.is_empty());
+    }
+
+    #[test]
+    fn a_screen_without_folders_opens_nothing_and_a_failed_walk_keeps_the_screen() {
+        let mut input = script(&["1", "1", "..", "q"]);
+        let mut calls = 0;
+        let mut walk = |_: &Path| -> Result<Walked, BrozaError> {
+            calls += 1;
+            if calls == 1 { Ok((Vec::new(), Vec::new())) } else { panic!("the empty screen has no folder 1") }
+        };
+
+        browse(vec![dir("/x", 1)], "FIRST".to_owned(), &mut input, &mut Vec::new(), &mut walk, None);
+
+        assert_eq!(input.said, vec![WRONG_ANSWER.to_owned()], "only the second 1 was refused");
     }
 }

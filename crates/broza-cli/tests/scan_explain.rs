@@ -498,3 +498,12 @@ fn doctor_reports_the_recorded_machine_without_full_disk_access() {
     assert!(human.starts_with("Full Disk Access   missing"), "{human}");
     assert!(human.contains("Turn on your terminal application."), "{human}");
 }
+
+/// §3.1: `scan -i` asks questions, so it refuses to run where it cannot.
+#[test]
+fn scan_interactive_without_a_terminal_or_with_a_machine_format_is_a_usage_error() {
+    for args in [&["scan", "-i"][..], &["scan", "-i", "--json"], &["scan", "-i", "--tree"]] {
+        let (code, stderr) = failure_of(args);
+        assert_eq!(code, Some(2), "{args:?}: {stderr}");
+    }
+}

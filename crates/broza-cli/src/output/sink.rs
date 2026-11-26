@@ -41,8 +41,10 @@ impl Sink {
     }
 }
 
+/// `payload` ending in exactly one newline; nothing stays nothing, so a
+/// command that printed its own output (`scan -i`) adds no blank line.
 fn ensure_trailing_newline(payload: &str) -> String {
-    if payload.ends_with('\n') { payload.to_owned() } else { format!("{payload}\n") }
+    if payload.is_empty() || payload.ends_with('\n') { payload.to_owned() } else { format!("{payload}\n") }
 }
 
 fn io_error(context: &str, source: std::io::Error) -> BrozaError {
@@ -54,6 +56,12 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    #[test]
+    fn an_empty_payload_writes_nothing_not_a_blank_line() {
+        assert_eq!(ensure_trailing_newline(""), "");
+        assert_eq!(ensure_trailing_newline("a"), "a\n");
+    }
 
     #[test]
     fn without_the_flag_data_goes_to_stdout() {

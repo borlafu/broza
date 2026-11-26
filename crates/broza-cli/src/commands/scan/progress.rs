@@ -35,11 +35,15 @@ fn progress_line(progress: ScanProgress, elapsed: Duration) -> String {
 /// Said once before a walk that has no cache to start from, so a long first
 /// scan reads as expected rather than as slow.
 pub fn announce_first_scan(home: Option<&Path>, no_cache: bool, ports: &Ports) {
-    let Some(home) = home else { return };
-    if no_cache || ports.fs.exists(&home.join(CACHE_DIR)) {
-        return;
+    if let Some(note) = first_scan_note(home, no_cache, ports) {
+        let _ignored = writeln!(std::io::stderr(), "{note}");
     }
-    let _ignored = writeln!(std::io::stderr(), "{FIRST_SCAN_NOTE}");
+}
+
+/// The note, when there is a cache to build and none exists yet.
+fn first_scan_note(home: Option<&Path>, no_cache: bool, ports: &Ports) -> Option<&'static str> {
+    let home = home?;
+    (!no_cache && !ports.fs.exists(&home.join(CACHE_DIR))).then_some(FIRST_SCAN_NOTE)
 }
 
 /// Wipe the progress line before the report is printed.
@@ -61,5 +65,19 @@ mod tests {
             progress_line(progress, Duration::from_millis(12_900)),
             "Scanning… 1234 entries, 5.0 GB seen  ·  12 s"
         );
+    }
+
+    #[test]
+    fn the_first_scan_note_is_said_only_when_a_cache_is_wanted_and_missing() {
+        let (ports, handles) = broza::testing::fake_ports();
+        handles.fs.add_root("/", 1);
+        handles.fs.add_dir("/Users/dana");
+        let home = Some(Path::new("/Users/dana"));
+
+        assert_eq!(first_scan_note(home, false, &ports), Some(FIRST_SCAN_NOTE));
+        assert_eq!(first_scan_note(home, true, &ports), None, "--no-cache builds nothing");
+        assert_eq!(first_scan_note(None, false, &ports), None, "no home, no cache");
+        handles.fs.add_dir("/Users/dana/.cache/broza");
+        assert_eq!(first_scan_note(home, false, &ports), None, "a cache exists");
     }
 }
